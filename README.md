@@ -19,7 +19,7 @@ A minimal public Shopify app for merchants who want Aura Historia to receive pro
 | --- | --- |
 | `products/create`, `products/update`, `products/delete` | Aura Historia AWS EventBridge partner source |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia AWS EventBridge partner source |
-| `app/uninstalled` | `https://aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
+| `app/uninstalled` | `https://shopify.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
 
 ## Repository design
 
