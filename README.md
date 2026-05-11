@@ -1,6 +1,6 @@
 # Aura Historia Partner Connect
 
-A minimal public Shopify app for merchants who want Aura Historia to receive product lifecycle events over Amazon EventBridge.
+A minimal public Shopify app that forwards merchant product lifecycle events to Aura Historia over Amazon EventBridge.
 
 ## What this app does
 
@@ -11,7 +11,16 @@ A minimal public Shopify app for merchants who want Aura Historia to receive pro
   - `customers/redact`
   - `shop/redact`
 - Handles `app/uninstalled` in-app so stored Shopify sessions are cleaned up.
+- Redirects merchants to `/success` after Shopify approves installation.
 - Keeps all AWS EventBridge consumers out of this repository.
+
+## Install flow
+
+This app is listed publicly, so the preferred install flow is the Shopify App Store or a Shopify admin launch.
+
+In that flow, Shopify provides store context in the query string, including `shop` and `host`, and the app uses that context automatically. Merchants usually should **not** need to type their `myshopify.com` domain manually.
+
+Manual shop-domain entry still exists, but only as a fallback for opening the app URL directly outside Shopify.
 
 ## Webhook delivery
 
@@ -21,14 +30,48 @@ A minimal public Shopify app for merchants who want Aura Historia to receive pro
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia AWS EventBridge partner source |
 | `app/uninstalled` | `https://shopify.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
 
+## Public review surfaces
+
+The public routes `/`, `/auth/login`, and `/success` all expose:
+
+- a link to `https://aura-historia.com`
+- a link to `https://aura-historia.com/privacy`
+- a link to `https://aura-historia.com/imprint`
+- a link to `https://aura-historia.com/terms-and-conditions`
+- the direct contact email `contact@aura-historia.com`
+
+The install-success route lives at `/success`, for example `https://shopify.aura-historia.com/success` when the app is hosted on that domain.
+
 ## Repository design
 
 This repository intentionally stays small:
 
-- React Router handles install/auth and the embedded app shell.
+- React Router handles install/auth, the embedded app shell, and the public success page.
 - Prisma stores Shopify sessions using SQLite by default.
 - There is no sample GraphQL mutation logic, demo navigation, or placeholder business logic.
 - AWS routing, rules, and consumers live in another repository.
+
+## Stage-dependent Shopify configuration
+
+App-specific webhook subscriptions live in `shopify.app*.toml`, not `shopify.web.toml`.
+
+This repository keeps two app configurations:
+
+- `shopify.app.toml`: default local and stage-oriented config using the `...aura-historia-backend-dev` EventBridge partner source
+- `shopify.app.prod.toml`: production config using the `...aura-historia-backend-prod` EventBridge partner source
+
+Helpful commands:
+
+```bash
+npm run config:use:prod
+npm run deploy:prod
+```
+
+If you stay on the default config, use:
+
+```bash
+npm run deploy
+```
 
 ## Local development
 
@@ -98,14 +141,6 @@ GitHub Actions runs the following checks on pushes and pull requests:
 
 The workflow lives at `.github/workflows/ci.yml`.
 
-## Deploying webhook changes
-
-Changes to `shopify.app.toml` are applied to your development store during `shopify app dev` and are released to production stores when you deploy a new app version:
-
-```bash
-npm run deploy
-```
-
 ## Public app checklist
 
 Before submitting the app for Shopify App Store review:
@@ -114,3 +149,4 @@ Before submitting the app for Shopify App Store review:
 - Confirm the mandatory compliance topics remain subscribed.
 - Confirm your Partner Dashboard listing includes a privacy policy URL.
 - Confirm the configured redirect URLs include the app auth callback URLs used by this app.
+- Confirm the public routes still expose privacy, imprint, terms, and `contact@aura-historia.com`.

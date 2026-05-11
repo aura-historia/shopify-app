@@ -1,7 +1,8 @@
 name = "Aura Historia Partner Connect"
 roles = ["frontend", "backend"]
+# App-specific webhook subscriptions are declared in shopify.app.toml.
 # Localhost development keeps the app/uninstalled subscription on the deployed
-# app URL declared in shopify.app.toml.
+# app URL declared there, so this file does not control the EventBridge ARN.
 webhooks_path = "/webhooks/app/uninstalled"
 
 [commands]

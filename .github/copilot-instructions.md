@@ -31,8 +31,27 @@
   - `products/delete`
 - Preserve the `app/uninstalled` subscription so session cleanup continues to work.
 - Keep `app/shopify.server.ts` API version aligned with `shopify.app.toml`.
+- Keep production-only webhook differences in `shopify.app.prod.toml` instead of trying to drive EventBridge ARNs from `shopify.web.toml`.
 - Do not widen Shopify access scopes unless there is a documented product requirement.
 - If you change authentication behavior, keep `authPathPrefix = "/auth"` and ensure the redirect URLs still include the callback route.
+- Prefer Shopify-provided install context such as `shop` and `host` query parameters. Treat manual `myshopify.com` entry as a fallback only.
+- Preserve the post-install redirect from the auth callback flow to `/success` unless the onboarding flow changes deliberately.
+
+## Public page requirements
+
+- Keep the public routes `/`, `/auth/login`, and `/success` polished and review-friendly.
+- Keep visible links to:
+  - `https://aura-historia.com`
+  - `https://aura-historia.com/privacy`
+  - `https://aura-historia.com/imprint`
+  - `https://aura-historia.com/terms-and-conditions`
+- Keep the direct contact email `contact@aura-historia.com` visibly present on public pages.
+
+## Design rules
+
+- When changing UI, follow the Aura Historia design direction from `.agent/rules/design-guidelines.md`.
+- Favor the mahogany/parchment/gold palette, editorial spacing, Newsreader-style headline treatment, and tonal separation instead of hard divider lines.
+- Avoid turning the public pages into generic SaaS dashboards.
 
 ## Preferred implementation style
 
@@ -50,5 +69,5 @@
 
 ## Testing expectations
 
-- Add or update tests when changing login validation, Shopify app configuration, package scripts, or CI-sensitive tooling.
+- Add or update tests when changing login validation, Shopify app configuration, public routes, package scripts, or CI-sensitive tooling.
 - Prefer focused unit tests and config-guard tests over large test harnesses.

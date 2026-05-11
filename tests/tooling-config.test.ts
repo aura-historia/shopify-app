@@ -24,4 +24,18 @@ describe("tooling configuration", () => {
       "biome check --files-ignore-unknown=true .",
     );
   });
+
+  it("keeps a production config selection script", () => {
+    assert.equal(
+      packageJson.scripts["config:use:prod"],
+      "shopify app config use prod",
+    );
+  });
+
+  it("keeps a production deploy script", () => {
+    assert.equal(
+      packageJson.scripts["deploy:prod"],
+      "shopify app deploy --config=prod --allow-updates",
+    );
+  });
 });

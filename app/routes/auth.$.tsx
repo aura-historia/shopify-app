@@ -3,7 +3,22 @@ import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const url = new URL(request.url);
+  const { redirect, session } = await authenticate.admin(request);
+
+  if (url.pathname.endsWith("/callback")) {
+    const successParams = new URLSearchParams();
+    successParams.set("shop", session.shop);
+
+    const host = url.searchParams.get("host");
+    if (host) {
+      successParams.set("host", host);
+    }
+
+    return redirect(`/success?${successParams.toString()}`, {
+      target: "_parent",
+    });
+  }
 
   return null;
 };
