@@ -2,7 +2,7 @@
 
 client_id = "c16ab3575bcbffd285d378b5caaeb0f8"
 name = "aura-historia-partner-connect"
-application_url = "https://aura-historia.com"
+application_url = "https://shopify.aura-historia.com"
 embedded = true
 
 [access_scopes]
@@ -19,7 +19,7 @@ api_version = "2026-04"
 
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled"]
-  uri = "https://aura-historia.com/webhooks/app/uninstalled"
+  uri = "https://shopify.aura-historia.com/webhooks/app/uninstalled"
 
   [[webhooks.subscriptions]]
   compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
@@ -27,12 +27,11 @@ api_version = "2026-04"
 
 [auth]
 redirect_urls = [
-  "https://aura-historia.com/auth/callback",
-  "https://stage.aura-historia.com/auth/callback"
+  "https://shopify.aura-historia.com/auth/callback",
 ]
 
 [app_preferences]
-url = "https://aura-historia.com/partners"
+url = "https://shopify.aura-historia.com/partners"
 
 [build]
 include_config_on_deploy = true
