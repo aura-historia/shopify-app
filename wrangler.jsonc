@@ -7,17 +7,10 @@
   },
   "main": "./workers/app.ts",
   "compatibility_flags": ["nodejs_compat"],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "aura-historia-db",
-      "database_id": "<your-d1-id-from-the-creation-step>"
-    }
-  ],
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "<your-namespace-id>"
+      "id": "kv-session-storage"
     }
   ]
 }
