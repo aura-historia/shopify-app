@@ -1,8 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { redirect, Form, useLoaderData } from "react-router";
-
-import { login } from "../../shopify.server";
-
+import { Form, redirect } from "react-router";
 import styles from "./styles.module.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -12,43 +9,51 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
 
-  return { showForm: Boolean(login) };
+  return null;
 };
 
-export default function App() {
-  const { showForm } = useLoaderData<typeof loader>();
-
+export default function MarketingIndex() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>A short heading about [your app]</h1>
+        <h1 className={styles.heading}>
+          Connect Shopify product changes to Aura Historia
+        </h1>
         <p className={styles.text}>
-          A tagline about [your app] that describes your value proposition.
+          Install the app to stream product create, update, and delete events
+          from your shop to Aura Historia over Amazon EventBridge.
         </p>
-        {showForm && (
-          <Form className={styles.form} method="post" action="/auth/login">
-            <label className={styles.label}>
-              <span>Shop domain</span>
-              <input className={styles.input} type="text" name="shop" />
-              <span>e.g: my-shop-domain.myshopify.com</span>
-            </label>
-            <button className={styles.button} type="submit">
-              Log in
-            </button>
-          </Form>
-        )}
+        <Form className={styles.form} method="post" action="/auth/login">
+          <label className={styles.label}>
+            <span>Shop domain</span>
+            <input
+              className={styles.input}
+              type="text"
+              name="shop"
+              autoComplete="on"
+              placeholder="your-store.myshopify.com"
+            />
+            <span>
+              Use your permanent <code>.myshopify.com</code> domain.
+            </span>
+          </label>
+          <button className={styles.button} type="submit">
+            Install app
+          </button>
+        </Form>
         <ul className={styles.list}>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Automatic product sync.</strong> Shopify pushes product
+            lifecycle events without polling.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Minimal access.</strong> The app only requests the
+            <code> read_products </code>
+            scope.
           </li>
           <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
+            <strong>Public app ready.</strong> Mandatory compliance webhooks are
+            subscribed for App Store review.
           </li>
         </ul>
       </div>

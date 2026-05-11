@@ -1,5 +1,7 @@
-name = "React Router"
+name = "Aura Historia Partner Connect"
 roles = ["frontend", "backend"]
+# Localhost development keeps the app/uninstalled subscription on the deployed
+# app URL declared in shopify.app.toml.
 webhooks_path = "/webhooks/app/uninstalled"
 
 [commands]
