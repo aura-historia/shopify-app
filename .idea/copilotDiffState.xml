@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotDiffPersistence">
+    <option name="pendingDiffs">
+      <map>
+        <entry key="$PROJECT_DIR$/env.d.ts">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/env.d.ts" />
+              <option name="originalContent" value="/// &lt;reference types=&quot;vite/client&quot; /&gt;&#10;/// &lt;reference types=&quot;@react-router/node&quot; /&gt;&#10;" />
+              <option name="updatedContent" value="/// &lt;reference types=&quot;vite/client&quot; /&gt;&#10;/// &lt;reference types=&quot;@react-router/node&quot; /&gt;&#10;&#10;declare module &quot;virtual:react-router/server-build&quot; {&#10;&#9;const serverBuild: unknown;&#10;&#9;export default serverBuild;&#10;}&#10;&#10;declare interface Env {}&#10;&#10;declare interface ExecutionContext {&#10;&#9;waitUntil(promise: Promise&lt;unknown&gt;): void;&#10;}&#10;&#10;declare interface ExportedHandler&lt;ContextEnv = unknown&gt; {&#10;&#9;fetch(&#10;&#9;&#9;request: Request,&#10;&#9;&#9;env: ContextEnv,&#10;&#9;&#9;ctx: ExecutionContext,&#10;&#9;): Response | Promise&lt;Response&gt;;&#10;}&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>
