@@ -4,8 +4,7 @@ import {
   AppDistribution,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
-import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import prisma from "./db.server";
+import { KVSessionStorage } from "@shopify/shopify-app-session-storage-kv";
 
 const apiVersion = ApiVersion.April26;
 const scopes =
@@ -20,7 +19,7 @@ const shopify = shopifyApp({
   scopes,
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new PrismaSessionStorage(prisma),
+  sessionStorage: new KVSessionStorage(process.env.KV),
   distribution: AppDistribution.AppStore,
   future: {
     expiringOfflineAccessTokens: true,

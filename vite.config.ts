@@ -2,6 +2,9 @@ import { reactRouter } from "@react-router/dev/vite";
 import { type UserConfig, defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
+
 if (
   process.env.HOST &&
   (!process.env.SHOPIFY_APP_URL ||
@@ -44,7 +47,15 @@ export default defineConfig({
       allow: ["app", "node_modules"],
     },
   },
-  plugins: [reactRouter(), tsconfigPaths()],
+  plugins: [
+    reactRouter(),
+    tsconfigPaths(),
+    cloudflare({
+      viteEnvironment: {
+        name: "ssr",
+      },
+    }),
+  ],
   build: {
     assetsInlineLimit: 0,
   },

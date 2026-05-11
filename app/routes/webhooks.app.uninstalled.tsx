@@ -1,15 +1,17 @@
 import type { ActionFunctionArgs } from "react-router";
-import db from "../db.server";
-import { authenticate } from "../shopify.server";
+import shopify, { authenticate } from "../shopify.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, topic } = await authenticate.webhook(request);
-  const deletedSessions = await db.session.deleteMany({ where: { shop } });
+  const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
+  await shopify.sessionStorage.deleteSessions(
+    sessions.map((session) => session.id),
+  );
 
   console.info("Processed app/uninstalled webhook", {
     shop,
     topic,
-    deletedSessions: deletedSessions.count,
+    deletedSessions: sessions.length,
   });
 
   return new Response(null, { status: 200 });
