@@ -35,6 +35,12 @@ const hmrConfig =
       };
 
 export default defineConfig({
+  resolve: {
+    // Tunnel mode runs the app through Vite's SSR dev pipeline. Dedupe these
+    // core packages so React Router hooks and Shopify's AppProvider always use
+    // the same React dispatcher/context instance.
+    dedupe: ["react", "react-dom", "react-router"],
+  },
   server: {
     allowedHosts: [host],
     cors: {
