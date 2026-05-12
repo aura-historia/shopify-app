@@ -4,7 +4,6 @@ import tsconfigPaths from "vite-tsconfig-paths";
 
 import { cloudflare } from "@cloudflare/vite-plugin";
 
-
 if (
   process.env.HOST &&
   (!process.env.SHOPIFY_APP_URL ||

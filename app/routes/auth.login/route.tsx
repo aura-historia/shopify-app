@@ -1,4 +1,4 @@
- import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
 import { getShopify } from "../../shopify.server";
 import styles from "../../styles/public-page.module.css";

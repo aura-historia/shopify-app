@@ -1,11 +1,11 @@
 import "@shopify/shopify-api/adapters/cf-worker";
+import type { KVNamespace } from "@cloudflare/workers-types";
 import {
   ApiVersion,
   AppDistribution,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { KVSessionStorage } from "@shopify/shopify-app-session-storage-kv";
-import type { KVNamespace } from "@cloudflare/workers-types";
 import type { AppLoadContext } from "react-router";
 
 export interface CloudflareShopifyEnv {

@@ -48,11 +48,13 @@ export default function AppIndex() {
           <section className={styles.panelMuted}>
             <h2 className={styles.cardTitle}>Granted scope</h2>
             <div className={styles.tagList}>
-              {(scopes.length > 0 ? scopes : ["read_products"]).map((scope: string) => (
-                <span key={scope} className={styles.tag}>
-                  {scope}
-                </span>
-              ))}
+              {(scopes.length > 0 ? scopes : ["read_products"]).map(
+                (scope: string) => (
+                  <span key={scope} className={styles.tag}>
+                    {scope}
+                  </span>
+                ),
+              )}
             </div>
           </section>
 
