@@ -5,7 +5,7 @@
   "observability": {
     "enabled": true
   },
-  "main": "build/server/index.js",
+  "main": "workers/app.ts",
   "assets": {
     "directory": "build/client"
   },

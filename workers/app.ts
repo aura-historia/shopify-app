@@ -1,10 +1,11 @@
 import { createRequestHandler } from "react-router";
+import type { CloudflareShopifyEnv } from "../app/shopify.server";
 
 declare module "react-router" {
   export interface AppLoadContext {
     cloudflare: {
-      env: Env;
-      ctx: ExecutionContext;
+      env: CloudflareShopifyEnv;
+      ctx: unknown;
     };
   }
 }
@@ -15,9 +16,9 @@ const requestHandler = createRequestHandler(
 );
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: Request, env: CloudflareShopifyEnv, ctx: unknown) {
     return requestHandler(request, {
       cloudflare: { env, ctx },
     });
   },
-} satisfies ExportedHandler<Env>;
+};

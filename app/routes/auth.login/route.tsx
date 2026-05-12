@@ -1,6 +1,6 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
-import { login } from "../../shopify.server";
+import { getShopify } from "../../shopify.server";
 import styles from "../../styles/public-page.module.css";
 import { loginErrorMessage } from "./error.server";
 
@@ -13,12 +13,16 @@ const legalLinks = [
   },
 ];
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  return { errors: loginErrorMessage(await login(request)) };
+export const loader = async ({ request, context }: LoaderFunctionArgs) => {
+  return {
+    errors: loginErrorMessage(await getShopify(context).login(request)),
+  };
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  return { errors: loginErrorMessage(await login(request)) };
+export const action = async ({ request, context }: ActionFunctionArgs) => {
+  return {
+    errors: loginErrorMessage(await getShopify(context).login(request)),
+  };
 };
 
 export default function AuthLogin() {

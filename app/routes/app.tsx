@@ -2,12 +2,12 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { Outlet, useLoaderData, useRouteError } from "react-router";
-import { authenticate } from "../shopify.server";
+import { getShopify, getShopifyApiKey } from "../shopify.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+export const loader = async ({ request, context }: LoaderFunctionArgs) => {
+  await getShopify(context).authenticate.admin(request);
 
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  return { apiKey: getShopifyApiKey(context) };
 };
 
 export default function App() {

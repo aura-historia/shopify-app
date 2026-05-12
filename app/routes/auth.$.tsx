@@ -1,10 +1,12 @@
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import { getShopify } from "../shopify.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
+export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
-  const { redirect, session } = await authenticate.admin(request);
+  const { redirect, session } = await getShopify(context).authenticate.admin(
+    request,
+  );
 
   if (url.pathname.endsWith("/callback")) {
     const successParams = new URLSearchParams();
