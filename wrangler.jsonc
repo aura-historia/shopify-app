@@ -5,7 +5,10 @@
   "observability": {
     "enabled": true
   },
-  "main": "./workers/app.ts",
+  "main": "build/server/index.js",
+  "assets": {
+    "directory": "build/client"
+  },
   "compatibility_flags": ["nodejs_compat"],
   "kv_namespaces": [
     {
