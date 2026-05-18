@@ -1,10 +1,12 @@
 .page {
   min-height: 100vh;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at top right,
       rgba(255, 222, 165, 0.24),
       transparent 28rem
-    ), linear-gradient(180deg, #f7f4e9 0%, #efe8de 100%);
+    ),
+    linear-gradient(180deg, #f7f4e9 0%, #efe8de 100%);
 }
 
 .shell {
@@ -156,8 +158,11 @@
   font: inherit;
   font-weight: 800;
   text-decoration: none;
-  transition: transform 300ms ease-out, background-color 300ms ease-out,
-    border-color 300ms ease-out, color 300ms ease-out;
+  transition:
+    transform 300ms ease-out,
+    background-color 300ms ease-out,
+    border-color 300ms ease-out,
+    color 300ms ease-out;
   cursor: pointer;
 }
 
