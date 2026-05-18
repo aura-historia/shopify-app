@@ -36,7 +36,7 @@
     "vite-tsconfig-paths": "^5.1.4"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
+    "@biomejs/biome": "^2.4.15",
     "@cloudflare/vite-plugin": "^1.36.3",
     "@cloudflare/workers-types": "^4.20260511.1",
     "@shopify/polaris-types": "1.0.1",
