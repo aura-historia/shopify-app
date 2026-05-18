@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aura-historia-shopify-connect",
+  "compatibility_date": "2026-05-11",
+  "observability": {
+    "enabled": true
+  },
+  "main": "workers/app.ts",
+  "assets": {
+    "directory": "build/client"
+  },
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "35d22f3199a94867a04c109ec5f2cce3"
+    }
+  ],
+  "vars": {
+    "SHOPIFY_API_VERSION": "2026-04",
+    "SHOPIFY_APP_URL": "https://shopify.aura-historia.com",
+    "SCOPE": "read_products"
+  }
+}

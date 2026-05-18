@@ -6,6 +6,7 @@
     "dev": "shopify app dev --use-localhost",
     "dev:tunnel": "shopify app dev",
     "config:use:prod": "shopify app config use prod",
+    "cf-deploy": "npm run build && wrangler deploy",
     "deploy": "shopify app deploy",
     "deploy:prod": "shopify app deploy --config=prod --allow-updates",
     "start": "react-router-serve ./build/server/index.js",
@@ -14,22 +15,21 @@
     "lint": "biome check --files-ignore-unknown=true .",
     "lint:fix": "biome check --write --unsafe --files-ignore-unknown=true .",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "preview": "npm run build && wrangler dev",
+    "cf-typegen": "wrangler types"
   },
   "type": "module",
   "engines": {
-    "node": ">=20.19 <22 || >=22.12"
+    "node": ">=24.15.0"
   },
   "dependencies": {
-    "@prisma/client": "^6.16.3",
     "@react-router/dev": "^7.12.0",
     "@react-router/fs-routes": "^7.12.0",
     "@react-router/node": "^7.12.0",
     "@react-router/serve": "^7.12.0",
-    "@shopify/shopify-app-react-router": "1.1.0",
-    "@shopify/shopify-app-session-storage-prisma": "8.0.0",
-    "isbot": "^5.1.31",
-    "prisma": "^6.16.3",
+    "@shopify/shopify-app-react-router": "^1.2.0",
+    "@shopify/shopify-app-session-storage-kv": "^6.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "^7.12.0",
@@ -37,13 +37,17 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@cloudflare/vite-plugin": "^1.36.3",
+    "@cloudflare/workers-types": "^4.20260511.1",
     "@shopify/polaris-types": "1.0.1",
     "@types/node": "^22.18.8",
     "@types/react": "^18.3.25",
     "@types/react-dom": "^18.3.7",
+    "isbot": "^5.1.40",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vite": "^6.3.6"
+    "vite": "^6.3.6",
+    "wrangler": "^4.90.0"
   },
   "overrides": {
     "p-map": "^4.0.0"

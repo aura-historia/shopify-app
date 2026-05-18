@@ -2,6 +2,8 @@ import { reactRouter } from "@react-router/dev/vite";
 import { type UserConfig, defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 if (
   process.env.HOST &&
   (!process.env.SHOPIFY_APP_URL ||
@@ -33,6 +35,12 @@ const hmrConfig =
       };
 
 export default defineConfig({
+  resolve: {
+    // Tunnel mode runs the app through Vite's SSR dev pipeline. Dedupe these
+    // core packages so React Router hooks and Shopify's AppProvider always use
+    // the same React dispatcher/context instance.
+    dedupe: ["react", "react-dom", "react-router"],
+  },
   server: {
     allowedHosts: [host],
     cors: {
@@ -41,10 +49,18 @@ export default defineConfig({
     port: Number(process.env.PORT || 3000),
     hmr: hmrConfig,
     fs: {
-      allow: ["app", "node_modules"],
+      allow: ["app", "node_modules", "workers"],
     },
   },
-  plugins: [reactRouter(), tsconfigPaths()],
+  plugins: [
+    reactRouter(),
+    tsconfigPaths(),
+    cloudflare({
+      viteEnvironment: {
+        name: "ssr",
+      },
+    }),
+  ],
   build: {
     assetsInlineLimit: 0,
   },

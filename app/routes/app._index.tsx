@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData } from "react-router";
-import { authenticate } from "../shopify.server";
+import { getShopify } from "../shopify.server";
 import styles from "../styles/app-home.module.css";
 
 const productTopics = ["products/create", "products/update", "products/delete"];
@@ -12,15 +12,15 @@ const complianceTopics = [
   "app/uninstalled",
 ];
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+export const loader = async ({ request, context }: LoaderFunctionArgs) => {
+  const { session } = await getShopify(context).authenticate.admin(request);
 
   return {
     shop: session.shop,
     scopes:
       session.scope
         ?.split(",")
-        .map((scope) => scope.trim())
+        .map((scope: string) => scope.trim())
         .filter(Boolean) ?? [],
   };
 };
@@ -48,11 +48,13 @@ export default function AppIndex() {
           <section className={styles.panelMuted}>
             <h2 className={styles.cardTitle}>Granted scope</h2>
             <div className={styles.tagList}>
-              {(scopes.length > 0 ? scopes : ["read_products"]).map((scope) => (
-                <span key={scope} className={styles.tag}>
-                  {scope}
-                </span>
-              ))}
+              {(scopes.length > 0 ? scopes : ["read_products"]).map(
+                (scope: string) => (
+                  <span key={scope} className={styles.tag}>
+                    {scope}
+                  </span>
+                ),
+              )}
             </div>
           </section>
 
