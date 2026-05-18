@@ -1,8 +1,7 @@
-import { reactRouter } from "@react-router/dev/vite";
-import { type UserConfig, defineConfig } from "vite";
-import tsconfigPaths from "vite-tsconfig-paths";
-
 import { cloudflare } from "@cloudflare/vite-plugin";
+import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig, type UserConfig } from "vite";
+import tsconfigPaths from "vite-tsconfig-paths";
 
 if (
   process.env.HOST &&
