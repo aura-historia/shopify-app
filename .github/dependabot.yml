@@ -23,6 +23,9 @@ updates:
       react:
         patterns:
           - "react*"
+      react-router:
+        patterns:
+          - "@react-router*"
       shopify:
         patterns:
           - "@shopify*"
