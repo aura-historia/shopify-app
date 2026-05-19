@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@react-router/dev": "^7.15.1",
-    "@react-router/fs-routes": "^7.12.0",
+    "@react-router/fs-routes": "^7.15.1",
     "@react-router/node": "^7.12.0",
     "@react-router/serve": "^7.12.0",
     "@shopify/shopify-app-react-router": "^1.2.0",
