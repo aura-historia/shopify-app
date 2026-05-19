@@ -31,7 +31,7 @@
     "@shopify/shopify-app-react-router": "^1.2.0",
     "@shopify/shopify-app-session-storage-kv": "^6.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.2.6",
     "react-router": "^7.12.0",
     "vite-tsconfig-paths": "^5.1.4"
   },
@@ -42,7 +42,7 @@
     "@shopify/polaris-types": "1.0.1",
     "@types/node": "^22.18.8",
     "@types/react": "^18.3.25",
-    "@types/react-dom": "^18.3.7",
+    "@types/react-dom": "^19.2.3",
     "isbot": "^5.1.40",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
