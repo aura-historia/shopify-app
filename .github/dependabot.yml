@@ -16,3 +16,16 @@ updates:
       timezone: Europe/Berlin
     cooldown:
       default-days: 1
+    groups:
+      ts-types:
+        patterns:
+          - "@types*"
+      react:
+        patterns:
+          - "react*"
+      shopify:
+        patterns:
+          - "@shopify*"
+      cloudflare:
+        patterns:
+          - "@cloudflare*"
