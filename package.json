@@ -46,7 +46,7 @@
     "isbot": "^5.1.40",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
-    "vite": "^6.3.6",
+    "vite": "^8.0.13",
     "wrangler": "^4.92.0"
   },
   "overrides": {
