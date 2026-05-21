@@ -44,7 +44,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "isbot": "^5.1.40",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.13",
     "wrangler": "^4.92.0"
