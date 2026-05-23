@@ -9,6 +9,7 @@ import { KVSessionStorage } from "@shopify/shopify-app-session-storage-kv";
 import type { AppLoadContext } from "react-router";
 
 export interface CloudflareShopifyEnv {
+  AURA_HISTORIA_API_BASE_URL?: string;
   KV: KVNamespace;
   SCOPES?: string;
   SHOPIFY_API_KEY?: string;
@@ -65,8 +66,9 @@ type BulkOperationRunQueryResult = {
 
 const apiVersion = ApiVersion.April26;
 const shopifyCache = new Map<string, ReturnType<typeof shopifyApp>>();
-export const BULK_OPERATION_FINISH_WEBHOOK_URL =
-  "https://example.com/shopify/bulk-operations/finish";
+export const AURA_HISTORIA_SYNC_WEBHOOK_PATH = "/api/v1/webhooks/shopify/sync";
+export const DEFAULT_AURA_HISTORIA_API_BASE_URL =
+  "https://api.dev.aura-historia.com";
 export const PRODUCT_BULK_BACKFILL_QUERY = `{
   products {
     edges {
@@ -77,6 +79,27 @@ export const PRODUCT_BULK_BACKFILL_QUERY = `{
         status
         createdAt
         updatedAt
+        descriptionHtml
+        images {
+          edges {
+            node {
+              id
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
+        variants {
+          edges {
+            node {
+              id
+              price
+              availableForSale
+            }
+          }
+        }
       }
     }
   }
@@ -124,7 +147,14 @@ function getUserErrorMessage(userErrors: GraphqlUserError[] | undefined) {
   return userErrors?.map((userError) => userError.message).join("; ");
 }
 
-async function ensureBulkOperationFinishWebhook(admin: AdminGraphqlClient) {
+export function getBulkOperationFinishWebhookUrl(baseUrl: string) {
+  return new URL(AURA_HISTORIA_SYNC_WEBHOOK_PATH, baseUrl).toString();
+}
+
+async function ensureBulkOperationFinishWebhook(
+  admin: AdminGraphqlClient,
+  webhookUrl: string,
+) {
   const existingWebhooksResponse = await admin.graphql(
     EXISTING_BULK_OPERATION_FINISH_WEBHOOKS_QUERY,
   );
@@ -136,11 +166,7 @@ async function ensureBulkOperationFinishWebhook(admin: AdminGraphqlClient) {
       .filter((callbackUrl): callbackUrl is string => Boolean(callbackUrl)) ??
     [];
 
-  if (
-    callbackUrls.some(
-      (callbackUrl) => callbackUrl === BULK_OPERATION_FINISH_WEBHOOK_URL,
-    )
-  ) {
+  if (callbackUrls.some((callbackUrl) => callbackUrl === webhookUrl)) {
     return;
   }
 
@@ -148,7 +174,7 @@ async function ensureBulkOperationFinishWebhook(admin: AdminGraphqlClient) {
     CREATE_BULK_OPERATION_FINISH_WEBHOOK_MUTATION,
     {
       variables: {
-        callbackUrl: BULK_OPERATION_FINISH_WEBHOOK_URL,
+        callbackUrl: webhookUrl,
       },
     },
   );
@@ -167,10 +193,13 @@ async function ensureBulkOperationFinishWebhook(admin: AdminGraphqlClient) {
 
 export async function startInstallationProductBackfill(
   admin: AdminGraphqlClient,
+  apiBaseUrl: string,
   shop: string,
 ) {
+  const webhookUrl = getBulkOperationFinishWebhookUrl(apiBaseUrl);
+
   try {
-    await ensureBulkOperationFinishWebhook(admin);
+    await ensureBulkOperationFinishWebhook(admin, webhookUrl);
 
     const backfillResponse = await admin.graphql(
       START_PRODUCT_BULK_BACKFILL_MUTATION,
@@ -194,13 +223,13 @@ export async function startInstallationProductBackfill(
       bulkOperationId:
         backfillBody.data?.bulkOperationRunQuery?.bulkOperation?.id ?? null,
       shop,
-      webhookTarget: BULK_OPERATION_FINISH_WEBHOOK_URL,
+      webhookTarget: webhookUrl,
     });
   } catch (error) {
     console.error("Failed to initialize installation product backfill", {
       error,
       shop,
-      webhookTarget: BULK_OPERATION_FINISH_WEBHOOK_URL,
+      webhookTarget: webhookUrl,
     });
   }
 }
@@ -215,6 +244,10 @@ function getResolvedConfig(env: CloudflareShopifyEnv) {
     apiSecretKey:
       env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_API_SECRET ?? "",
     appUrl: env.SHOPIFY_APP_URL ?? process.env.SHOPIFY_APP_URL ?? "",
+    auraHistoriaApiBaseUrl:
+      env.AURA_HISTORIA_API_BASE_URL ??
+      process.env.AURA_HISTORIA_API_BASE_URL ??
+      DEFAULT_AURA_HISTORIA_API_BASE_URL,
     scopes: getScopes(env.SCOPES ?? process.env.SCOPES),
     customShopDomain:
       env.SHOP_CUSTOM_DOMAIN ?? process.env.SHOP_CUSTOM_DOMAIN ?? "",
@@ -228,6 +261,7 @@ function getCacheKey(env: CloudflareShopifyEnv) {
     config.apiKey,
     config.apiSecretKey,
     config.appUrl,
+    config.auraHistoriaApiBaseUrl,
     config.scopes.join(","),
     config.customShopDomain,
   ].join("|");
@@ -266,7 +300,11 @@ export function getShopify(context: AppLoadContext) {
     },
     hooks: {
       afterAuth: async ({ admin, session }) => {
-        await startInstallationProductBackfill(admin, session.shop);
+        await startInstallationProductBackfill(
+          admin,
+          config.auraHistoriaApiBaseUrl,
+          session.shop,
+        );
       },
     },
     ...(config.customShopDomain

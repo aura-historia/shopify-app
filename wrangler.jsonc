@@ -17,8 +17,16 @@
     }
   ],
   "vars": {
+    "AURA_HISTORIA_API_BASE_URL": "https://api.dev.aura-historia.com",
     "SHOPIFY_API_VERSION": "2026-04",
     "SHOPIFY_APP_URL": "https://shopify.aura-historia.com",
     "SCOPE": "read_products"
+  },
+  "env": {
+    "production": {
+      "vars": {
+        "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com"
+      }
+    }
   }
 }

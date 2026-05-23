@@ -28,7 +28,7 @@ Manual shop-domain entry still exists, but only as a fallback for opening the ap
 | Topic(s) | Delivery target |
 | --- | --- |
 | `products/create`, `products/update`, `products/delete` | Aura Historia AWS EventBridge partner source |
-| `bulk_operations/finish` | hardcoded placeholder HTTPS target in `app/shopify.server.ts` for install-time product backfill completion |
+| `bulk_operations/finish` | `AURA_HISTORIA_API_BASE_URL + /api/v1/webhooks/shopify/sync` in `app/shopify.server.ts` (`https://api.dev.aura-historia.com` by default, `https://api.aura-historia.com` for production) |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia AWS EventBridge partner source |
 | `app/uninstalled` | `https://shopify.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
 
