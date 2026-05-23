@@ -32,7 +32,7 @@ redirect_urls = [
 ]
 
 [app_preferences]
-url = "https://shopify.aura-historia.com/partners"
+url = "https://shopify.aura-historia.com/app"
 
 [build]
 include_config_on_deploy = true
