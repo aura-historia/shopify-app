@@ -17,8 +17,189 @@ export interface CloudflareShopifyEnv {
   SHOP_CUSTOM_DOMAIN?: string;
 }
 
+type GraphqlResponse = {
+  json: () => Promise<unknown>;
+};
+
+type AdminGraphqlClient = {
+  graphql: (
+    operation: string,
+    options?: { variables?: Record<string, string> },
+  ) => Promise<GraphqlResponse>;
+};
+
+type GraphqlUserError = {
+  message: string;
+};
+
+type WebhookSubscriptionsQueryResult = {
+  data?: {
+    webhookSubscriptions?: {
+      edges?: Array<{
+        node?: {
+          callbackUrl?: string | null;
+        } | null;
+      }>;
+    };
+  };
+};
+
+type WebhookSubscriptionCreateResult = {
+  data?: {
+    webhookSubscriptionCreate?: {
+      userErrors?: GraphqlUserError[];
+    };
+  };
+};
+
+type BulkOperationRunQueryResult = {
+  data?: {
+    bulkOperationRunQuery?: {
+      bulkOperation?: {
+        id?: string | null;
+      } | null;
+      userErrors?: GraphqlUserError[];
+    };
+  };
+};
+
 const apiVersion = ApiVersion.April26;
 const shopifyCache = new Map<string, ReturnType<typeof shopifyApp>>();
+export const BULK_OPERATION_FINISH_WEBHOOK_URL =
+  "https://example.com/shopify/bulk-operations/finish";
+export const PRODUCT_BULK_BACKFILL_QUERY = `{
+  products {
+    edges {
+      node {
+        id
+        title
+        handle
+        status
+        createdAt
+        updatedAt
+      }
+    }
+  }
+}`;
+
+const EXISTING_BULK_OPERATION_FINISH_WEBHOOKS_QUERY = `#graphql
+  query ExistingBulkOperationFinishWebhooks {
+    webhookSubscriptions(first: 50, topics: [BULK_OPERATIONS_FINISH]) {
+      edges {
+        node {
+          callbackUrl
+        }
+      }
+    }
+  }
+`;
+
+const CREATE_BULK_OPERATION_FINISH_WEBHOOK_MUTATION = `#graphql
+  mutation CreateBulkOperationFinishWebhook($callbackUrl: URL!) {
+    webhookSubscriptionCreate(
+      topic: BULK_OPERATIONS_FINISH
+      webhookSubscription: { callbackUrl: $callbackUrl, format: JSON }
+    ) {
+      userErrors {
+        message
+      }
+    }
+  }
+`;
+
+const START_PRODUCT_BULK_BACKFILL_MUTATION = `#graphql
+  mutation StartProductBulkBackfill($query: String!) {
+    bulkOperationRunQuery(query: $query) {
+      bulkOperation {
+        id
+      }
+      userErrors {
+        message
+      }
+    }
+  }
+`;
+
+function getUserErrorMessage(userErrors: GraphqlUserError[] | undefined) {
+  return userErrors?.map((userError) => userError.message).join("; ");
+}
+
+async function ensureBulkOperationFinishWebhook(admin: AdminGraphqlClient) {
+  const existingWebhooksResponse = await admin.graphql(
+    EXISTING_BULK_OPERATION_FINISH_WEBHOOKS_QUERY,
+  );
+  const existingWebhooksBody =
+    (await existingWebhooksResponse.json()) as WebhookSubscriptionsQueryResult;
+  const callbackUrls =
+    existingWebhooksBody.data?.webhookSubscriptions?.edges
+      ?.map((edge) => edge.node?.callbackUrl)
+      .filter((callbackUrl): callbackUrl is string => Boolean(callbackUrl)) ??
+    [];
+
+  if (callbackUrls.includes(BULK_OPERATION_FINISH_WEBHOOK_URL)) {
+    return;
+  }
+
+  const createWebhookResponse = await admin.graphql(
+    CREATE_BULK_OPERATION_FINISH_WEBHOOK_MUTATION,
+    {
+      variables: {
+        callbackUrl: BULK_OPERATION_FINISH_WEBHOOK_URL,
+      },
+    },
+  );
+  const createWebhookBody =
+    (await createWebhookResponse.json()) as WebhookSubscriptionCreateResult;
+  const userErrorMessage = getUserErrorMessage(
+    createWebhookBody.data?.webhookSubscriptionCreate?.userErrors,
+  );
+
+  if (userErrorMessage) {
+    throw new Error(
+      `Failed to create bulk_operations/finish webhook: ${userErrorMessage}`,
+    );
+  }
+}
+
+export async function startInstallationProductBackfill(
+  admin: AdminGraphqlClient,
+  shop: string,
+) {
+  try {
+    await ensureBulkOperationFinishWebhook(admin);
+
+    const backfillResponse = await admin.graphql(
+      START_PRODUCT_BULK_BACKFILL_MUTATION,
+      {
+        variables: {
+          query: PRODUCT_BULK_BACKFILL_QUERY,
+        },
+      },
+    );
+    const backfillBody =
+      (await backfillResponse.json()) as BulkOperationRunQueryResult;
+    const userErrorMessage = getUserErrorMessage(
+      backfillBody.data?.bulkOperationRunQuery?.userErrors,
+    );
+
+    if (userErrorMessage) {
+      throw new Error(`Failed to start product backfill: ${userErrorMessage}`);
+    }
+
+    console.info("Started installation product backfill", {
+      bulkOperationId:
+        backfillBody.data?.bulkOperationRunQuery?.bulkOperation?.id ?? null,
+      shop,
+      webhookTarget: BULK_OPERATION_FINISH_WEBHOOK_URL,
+    });
+  } catch (error) {
+    console.error("Failed to initialize installation product backfill", {
+      error,
+      shop,
+      webhookTarget: BULK_OPERATION_FINISH_WEBHOOK_URL,
+    });
+  }
+}
 
 function getEnv(context: AppLoadContext): CloudflareShopifyEnv {
   return context.cloudflare.env;
@@ -78,6 +259,11 @@ export function getShopify(context: AppLoadContext) {
     distribution: AppDistribution.AppStore,
     future: {
       expiringOfflineAccessTokens: true,
+    },
+    hooks: {
+      afterAuth: async ({ admin, session }) => {
+        await startInstallationProductBackfill(admin, session.shop);
+      },
     },
     ...(config.customShopDomain
       ? { customShopDomains: [config.customShopDomain] }

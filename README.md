@@ -6,6 +6,7 @@ A minimal public Shopify app that forwards merchant product lifecycle events to 
 
 - Authenticates merchants and installs as an embedded Shopify app.
 - Subscribes to `products/create`, `products/update`, and `products/delete`.
+- Starts a Shopify bulk product backfill after install.
 - Subscribes to the mandatory Shopify App Store compliance topics:
   - `customers/data_request`
   - `customers/redact`
@@ -27,6 +28,7 @@ Manual shop-domain entry still exists, but only as a fallback for opening the ap
 | Topic(s) | Delivery target |
 | --- | --- |
 | `products/create`, `products/update`, `products/delete` | Aura Historia AWS EventBridge partner source |
+| `bulk_operations/finish` | hardcoded placeholder HTTPS target in `app/shopify.server.ts` for install-time product backfill completion |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia AWS EventBridge partner source |
 | `app/uninstalled` | `https://shopify.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
 
