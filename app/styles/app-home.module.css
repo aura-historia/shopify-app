@@ -75,6 +75,11 @@
   line-height: 1.7;
 }
 
+.inlineCode {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.92em;
+}
+
 .tagList {
   display: flex;
   flex-wrap: wrap;
@@ -143,6 +148,63 @@
 .contact:hover {
   text-decoration: underline;
   text-underline-offset: 0.2rem;
+}
+
+.form {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+  color: #42120f;
+  font-weight: 700;
+}
+
+.input {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(66, 18, 15, 0.14);
+  background: #ffffff;
+  color: #1c1c16;
+  font: inherit;
+}
+
+.fieldHint,
+.errorText,
+.successText {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.fieldHint {
+  color: rgba(28, 28, 22, 0.72);
+}
+
+.errorText {
+  color: #8f2d1d;
+  font-weight: 700;
+}
+
+.successText {
+  color: #23533d;
+  font-weight: 700;
+}
+
+.primaryButton {
+  justify-self: start;
+  padding: 0.8rem 1.15rem;
+  border: 0;
+  background: #42120f;
+  color: #f7f4e9;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.primaryButton:hover {
+  background: #5b1f1a;
 }
 
 @media (min-width: 64rem) {
