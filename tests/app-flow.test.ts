@@ -18,11 +18,14 @@ const successRoute = readFileSync(
 
 describe("public install flow", () => {
   it("prefers Shopify-provided query context when available ", () => {
-    assert.ok(marketingRoute.includes("/auth?${url.searchParams.toString()}"));
+    assert.match(
+      marketingRoute,
+      /\/auth\?\$\{url\.searchParams\.toString\(\)\}/,
+    );
   });
 
   it("redirects the auth callback to the success page", () => {
-    assert.ok(authRoute.includes("/success?${successParams.toString()}"));
+    assert.match(authRoute, /\/success\?\$\{successParams\.toString\(\)\}/);
     assert.ok(authRoute.includes('target: "_parent"'));
   });
 
