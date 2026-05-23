@@ -26,10 +26,9 @@ describe("installation product backfill", () => {
       shopifyServer,
       /webhookSubscriptionCreate\(\s+topic: BULK_OPERATIONS_FINISH/,
     );
-    assert.ok(
-      shopifyServer.includes(
-        "https://example.com/shopify/bulk-operations/finish",
-      ),
+    assert.match(
+      shopifyServer,
+      /https:\/\/example\.com\/shopify\/bulk-operations\/finish/,
     );
   });
 

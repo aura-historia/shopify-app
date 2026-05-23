@@ -136,7 +136,11 @@ async function ensureBulkOperationFinishWebhook(admin: AdminGraphqlClient) {
       .filter((callbackUrl): callbackUrl is string => Boolean(callbackUrl)) ??
     [];
 
-  if (callbackUrls.includes(BULK_OPERATION_FINISH_WEBHOOK_URL)) {
+  if (
+    callbackUrls.some(
+      (callbackUrl) => callbackUrl === BULK_OPERATION_FINISH_WEBHOOK_URL,
+    )
+  ) {
     return;
   }
 
