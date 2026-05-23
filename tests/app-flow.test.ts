@@ -17,10 +17,10 @@ const successRoute = readFileSync(
 );
 
 describe("public install flow", () => {
-  it("prefers Shopify-provided query context when available ", () => {
+  it("routes Shopify-provided shop context to the embedded admin", () => {
     assert.match(
       marketingRoute,
-      /\/auth\?\$\{url\.searchParams\.toString\(\)\}/,
+      /\/app\?\$\{url\.searchParams\.toString\(\)\}/,
     );
   });
 
