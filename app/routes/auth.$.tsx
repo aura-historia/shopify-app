@@ -21,7 +21,10 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     });
   }
 
-  return null;
+  // Auth succeeded but we're not at the callback path.
+  // Redirect to the embedded admin with the original query params so
+  // app.tsx can finish the AppBridge session setup.
+  return redirect(`/app?${url.searchParams.toString()}`);
 };
 
 export const headers: HeadersFunction = (headersArgs) => {
