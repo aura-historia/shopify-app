@@ -25,5 +25,7 @@ export function ErrorBoundary() {
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
-  return boundary.headers(headersArgs);
+  const headers = boundary.headers(headersArgs);
+  headers.set("Cache-Control", "private, no-store");
+  return headers;
 };
