@@ -18,9 +18,7 @@ const successRoute = readFileSync(
 
 describe("public install flow", () => {
   it("prefers Shopify-provided query context when available ", () => {
-    assert.ok(
-      marketingRoute.includes("/auth/login?${url.searchParams.toString()}"),
-    );
+    assert.ok(marketingRoute.includes("/auth?${url.searchParams.toString()}"));
   });
 
   it("redirects the auth callback to the success page", () => {

@@ -15,11 +15,11 @@ describe("iframe protection", () => {
 
     assert.equal(
       headers.get("Content-Security-Policy"),
-      "frame-ancestors https://example-store.myshopify.com https://admin.shopify.com;",
+      "frame-ancestors https://example-store.myshopify.com https://admin.shopify.com https://*.spin.dev https://admin.myshopify.io https://admin.shop.dev;",
     );
   });
 
-  it("falls back to denying framing when the shop parameter is missing", () => {
+  it("denies framing on public fallback pages", () => {
     const headers = new Headers();
 
     addDocumentResponseHeaders(
@@ -33,7 +33,18 @@ describe("iframe protection", () => {
     );
   });
 
-  it("ignores invalid shop values before building the CSP header", () => {
+  it("does not add embedded framing headers when the shop parameter is missing", () => {
+    const headers = new Headers();
+
+    addDocumentResponseHeaders(
+      new Request("https://shopify.aura-historia.com/auth"),
+      headers,
+    );
+
+    assert.equal(headers.get("Content-Security-Policy"), null);
+  });
+
+  it("ignores invalid shop values before building the embedded CSP header", () => {
     const headers = new Headers();
 
     addDocumentResponseHeaders(
@@ -43,9 +54,6 @@ describe("iframe protection", () => {
       headers,
     );
 
-    assert.equal(
-      headers.get("Content-Security-Policy"),
-      "frame-ancestors 'none';",
-    );
+    assert.equal(headers.get("Content-Security-Policy"), null);
   });
 });
