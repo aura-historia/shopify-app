@@ -15,6 +15,10 @@ const successRoute = readFileSync(
   resolve(process.cwd(), "app/routes/success.tsx"),
   "utf8",
 );
+const appIndexRoute = readFileSync(
+  resolve(process.cwd(), "app/routes/app._index.tsx"),
+  "utf8",
+);
 
 describe("public install flow", () => {
   it("routes a shop-only App Store link directly to the login handler", () => {
@@ -54,5 +58,23 @@ describe("public install flow", () => {
       successRoute.includes("https://aura-historia.com/terms-and-conditions"),
     );
     assert.ok(successRoute.includes("contact@aura-historia.com"));
+  });
+
+  it("keeps the public and embedded home routes focused on support and access details", () => {
+    assert.ok(
+      marketingRoute.includes("https://aura-historia.com/partners/shopify"),
+    );
+    assert.ok(marketingRoute.includes("products/create"));
+    assert.ok(marketingRoute.includes("customers/data_request"));
+    assert.ok(marketingRoute.includes("read_locales"));
+    assert.ok(marketingRoute.includes("Continue with store domain"));
+    assert.ok(appIndexRoute.includes("https://aura-historia.com"));
+    assert.ok(
+      appIndexRoute.includes("https://aura-historia.com/partners/shopify"),
+    );
+    assert.ok(appIndexRoute.includes("contact@aura-historia.com"));
+    assert.ok(appIndexRoute.includes("products/update"));
+    assert.ok(appIndexRoute.includes("app/uninstalled"));
+    assert.ok(appIndexRoute.includes("read_locales"));
   });
 });

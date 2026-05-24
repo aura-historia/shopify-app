@@ -11,33 +11,67 @@ const legalLinks = [
   },
 ];
 
-const productTopics = [
+const accessSections = [
   {
-    name: "products/create",
-    description: "New catalog entries are forwarded to Aura Historia.",
+    title: "Products",
+    description: "Product lifecycle events are forwarded to Aura Historia.",
+    items: [
+      {
+        name: "products/create",
+        description: "New catalog entries are delivered without manual export.",
+      },
+      {
+        name: "products/update",
+        description: "Edits stay in sync as merchants refine their listings.",
+      },
+      {
+        name: "products/delete",
+        description: "Removals are passed on so downstream records can close.",
+      },
+    ],
   },
   {
-    name: "products/update",
-    description: "Product edits reach Aura Historia without polling.",
+    title: "Compliance & uninstall",
+    description:
+      "Mandatory public-app webhooks stay visible for review and cleanup.",
+    items: [
+      {
+        name: "customers/data_request",
+        description: "Required for Shopify privacy and compliance handling.",
+      },
+      {
+        name: "customers/redact",
+        description: "Required when customer data must be erased.",
+      },
+      {
+        name: "shop/redact",
+        description: "Required when shop-level data must be erased.",
+      },
+      {
+        name: "app/uninstalled",
+        description:
+          "Handled by this app so stored Shopify sessions are removed.",
+      },
+    ],
   },
   {
-    name: "products/delete",
-    description: "Catalog removals are broadcast to the downstream pipeline.",
-  },
-];
-
-const complianceTopics = [
-  {
-    name: "customers/data_request",
-    description: "Mandatory public-app compliance webhook subscription.",
-  },
-  {
-    name: "customers/redact",
-    description: "Mandatory public-app compliance webhook subscription.",
-  },
-  {
-    name: "shop/redact",
-    description: "Mandatory public-app compliance webhook subscription.",
+    title: "Locale & shop context",
+    description: "Read-only shop data keeps product sync mapped correctly.",
+    items: [
+      {
+        name: "read_locales",
+        description: "Used to map product content to the shop language.",
+      },
+      {
+        name: "shop domain",
+        description:
+          "Used to associate the Shopify install with the right shop.",
+      },
+      {
+        name: "currency",
+        description: "Used so partner-side pricing stays aligned with Shopify.",
+      },
+    ],
   },
 ];
 
@@ -98,21 +132,20 @@ export default function MarketingIndex() {
           <section className={styles.introPanel}>
             <span className={styles.tag}>Public app · EventBridge</span>
             <h1 className={styles.title}>
-              Connect Shopify product changes to Aura Historia.
+              Shopify product updates for Aura Historia.
             </h1>
             <p className={styles.lead}>
-              When merchants install the app from Shopify, Shopify provides the
-              store context for us. Product create, update, and delete events
-              then flow to Aura Historia through Amazon EventBridge with the
-              minimum required Shopify access.
+              Most merchants never need this page. Shopify usually opens the app
+              with the store context already attached, and this app quietly
+              forwards the relevant Shopify data to Aura Historia.
             </p>
 
             <div className={styles.buttonRow}>
               <a
                 className={styles.primaryAction}
-                href="https://aura-historia.com"
+                href="https://aura-historia.com/partners/shopify"
               >
-                Visit aura-historia.com
+                Further information
               </a>
               <a className={styles.secondaryAction} href="#manual-install">
                 Continue with store domain
@@ -121,56 +154,49 @@ export default function MarketingIndex() {
 
             <div className={styles.grid}>
               <article className={styles.surfaceCard}>
-                <h2 className={styles.cardTitle}>Best-practice install flow</h2>
+                <h2 className={styles.cardTitle}>Install flow</h2>
                 <p className={styles.cardBody}>
-                  Merchants usually should not type a{" "}
-                  <strong>myshopify.com</strong> domain. Shopify App Store and
-                  Shopify admin launches provide the <strong>shop</strong> and{" "}
-                  <strong>host</strong> query parameters, and this app uses that
-                  context automatically.
+                  Shopify App Store and Shopify admin launches normally provide
+                  the <strong>shop</strong> and <strong>host</strong> query
+                  parameters automatically. Manual domain entry remains here
+                  only as a fallback.
                 </p>
               </article>
               <article className={styles.surfaceCardStrong}>
-                <h2 className={styles.cardTitle}>Product lifecycle events</h2>
-                <ul className={styles.topicList}>
-                  {productTopics.map((topic) => (
-                    <li key={topic.name} className={styles.topicItem}>
-                      <span className={styles.topicName}>{topic.name}</span>
-                      <span className={styles.topicDescription}>
-                        {topic.description}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <h2 className={styles.cardTitle}>What merchants configure</h2>
+                <p className={styles.cardBody}>
+                  After install, the embedded app focuses on the Aura Historia
+                  shop ID and API key for the current Shopify shop.
+                </p>
               </article>
             </div>
           </section>
 
           <aside className={styles.supportPanel}>
             <section className={styles.surfaceCardStrong}>
-              <h2 className={styles.cardTitle}>
-                Mandatory public-app subscriptions
-              </h2>
-              <ul className={styles.topicList}>
-                {complianceTopics.map((topic) => (
-                  <li key={topic.name} className={styles.topicItem}>
-                    <span className={styles.topicName}>{topic.name}</span>
-                    <span className={styles.topicDescription}>
-                      {topic.description}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <h2 className={styles.cardTitle}>Why this page exists</h2>
+              <p className={styles.cardBody}>
+                It keeps the fallback install path, review links, and a concise
+                summary of the Shopify data access visible in one place.
+              </p>
             </section>
 
             <section className={styles.surfaceCard}>
-              <h2 className={styles.cardTitle}>Review and support</h2>
+              <h2 className={styles.cardTitle}>
+                Review, policies, and support
+              </h2>
               <p className={styles.cardBody}>
-                Aura Historia keeps its public policies and direct contact
-                details visible here so Shopify App Store review is simple for
-                merchants and reviewers.
+                Aura Historia keeps its website, policy links, further
+                information, and direct contact details visible here for
+                merchants and Shopify reviewers.
               </p>
               <div className={styles.footerLinks}>
+                <a
+                  className={styles.link}
+                  href="https://aura-historia.com/partners/shopify"
+                >
+                  Further information
+                </a>
                 {legalLinks.map((link) => (
                   <a key={link.href} className={styles.link} href={link.href}>
                     {link.label}
@@ -192,16 +218,40 @@ export default function MarketingIndex() {
           </aside>
         </main>
 
+        <section className={styles.grid}>
+          {accessSections.map((section, index) => (
+            <article
+              key={section.title}
+              className={
+                index === 1 ? styles.surfaceCardStrong : styles.surfaceCard
+              }
+            >
+              <h2 className={styles.cardTitle}>{section.title}</h2>
+              <p className={styles.cardBody}>{section.description}</p>
+              <ul className={styles.topicList}>
+                {section.items.map((topic) => (
+                  <li key={topic.name} className={styles.topicItem}>
+                    <span className={styles.topicName}>{topic.name}</span>
+                    <span className={styles.topicDescription}>
+                      {topic.description}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </section>
+
         <section id="manual-install" className={styles.manualPanel}>
           <p className={styles.cardTitle}>Manual fallback</p>
           <h2 className={styles.manualTitle}>
             Opened this URL outside Shopify?
           </h2>
           <p className={styles.manualText}>
-            If Shopify did not send your store context, enter your permanent
+            If Shopify did not send the store context, enter the permanent
             <strong> myshopify.com </strong>
-            domain to continue with approval. This is a fallback, not the
-            primary install path for a public App Store app.
+            domain to continue with approval. This remains a fallback, not the
+            normal install path.
           </p>
           <Form className={styles.form} method="post" action="/auth/login">
             <label className={styles.label} htmlFor="shop">
@@ -217,8 +267,8 @@ export default function MarketingIndex() {
             </label>
             <p className={styles.fieldHint}>
               Use the permanent shop domain. Installs launched from Shopify
-              normally skip this field because Shopify provides the shop and
-              host query parameters automatically.
+              normally skip this field because Shopify provides the context
+              automatically.
             </p>
             <button className={styles.primaryAction} type="submit">
               Continue to approval
