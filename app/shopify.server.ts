@@ -15,6 +15,7 @@ export interface CloudflareShopifyEnv {
   SHOPIFY_API_SECRET?: string;
   SHOPIFY_APP_URL?: string;
   SHOP_CUSTOM_DOMAIN?: string;
+  AURA_HISTORIA_API_BASE_URL?: string;
 }
 
 const apiVersion = ApiVersion.April26;
