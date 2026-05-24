@@ -5,6 +5,8 @@ import {
   useLoaderData,
   useNavigation,
 } from "react-router";
+import type { GraphqlRequestFn } from "../backfill.server";
+import { triggerBackfill } from "../backfill.server";
 import {
   loadShopCredentials,
   saveShopCredentials,
@@ -41,7 +43,8 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
-  const { session } = await getShopify(context).authenticate.admin(request);
+  const shopify = getShopify(context);
+  const { session, admin } = await shopify.authenticate.admin(request);
   const validation = validateShopCredentialsFormData(await request.formData());
 
   if (!validation.isValid) {
@@ -56,6 +59,28 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     session.shop,
     validation.values,
   );
+
+  const apiBaseUrl =
+    context.cloudflare.env.AURA_HISTORIA_API_BASE_URL ??
+    process.env.AURA_HISTORIA_API_BASE_URL;
+
+  if (apiBaseUrl) {
+    const graphqlRequest: GraphqlRequestFn = async (query, variables) => {
+      const response = await admin.graphql(query, { variables });
+      return response.json();
+    };
+
+    context.cloudflare.ctx.waitUntil(
+      triggerBackfill(
+        graphqlRequest,
+        context.cloudflare.env.KV,
+        session.shop,
+        validation.values.shopId,
+        validation.values.apiKey,
+        apiBaseUrl,
+      ),
+    );
+  }
 
   return {
     ...validation,
