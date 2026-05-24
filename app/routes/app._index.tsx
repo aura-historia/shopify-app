@@ -36,8 +36,7 @@ const accessSections = [
   },
   {
     title: "Compliance & uninstall",
-    description:
-      "Mandatory public-app webhooks stay in place for review and cleanup.",
+    description: "Mandatory public-app webhooks are in place.",
     items: [
       {
         name: "customers/data_request",
@@ -156,11 +155,12 @@ export default function AppIndex() {
         <div>
           <p className={styles.eyebrow}>Shopify partner connect</p>
           <h1 className={styles.heading}>
-            Save this shop&apos;s Aura Historia credentials.
+            Connect your Shop to Aura Historia.
           </h1>
           <p className={styles.lead}>
-            Use the shop ID and API key below to map this Shopify installation
-            to the correct Aura Historia account.
+            Use the Shop-ID and API-Key provided by Aura Historia and enter them
+            below to map this Shopify installation to the correct Aura Historia
+            account.
           </p>
         </div>
 
@@ -194,17 +194,9 @@ export default function AppIndex() {
 
       <section className={styles.panel}>
         <h2 className={styles.cardTitle}>Aura Historia credentials</h2>
-        <p className={styles.cardBody}>
-          Both values are required. The shop ID must be a UUID, and the API key
-          must follow the format{" "}
-          <code className={styles.inlineCode}>
-            aurahistoria_[short key]_[long key]
-          </code>
-          .
-        </p>
         <Form className={styles.form} method="post">
           <label className={styles.field} htmlFor="shopId">
-            Aura Historia shop ID
+            Aura Historia Shop-ID
             <input
               className={styles.input}
               id="shopId"
@@ -221,7 +213,7 @@ export default function AppIndex() {
             <p className={styles.errorText}>{actionData.errors.shopId}</p>
           ) : null}
           <label className={styles.field} htmlFor="apiKey">
-            Aura Historia API key
+            Aura Historia API-Key
             <input
               className={styles.input}
               id="apiKey"
@@ -237,9 +229,6 @@ export default function AppIndex() {
           {actionData?.errors.apiKey ? (
             <p className={styles.errorText}>{actionData.errors.apiKey}</p>
           ) : null}
-          <p className={styles.fieldHint}>
-            The saved values are stored per shop in Cloudflare KV.
-          </p>
           {actionData?.saved ? (
             <p className={styles.successText}>
               Configuration saved for {shop}.
