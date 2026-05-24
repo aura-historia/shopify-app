@@ -1,6 +1,11 @@
 import TurndownService from "turndown";
 import { createClient } from "./generated/api/client";
-import type { LanguageData, PutProductData } from "./generated/api/types.gen";
+import type {
+  CurrencyData,
+  LanguageData,
+  PatchShopData,
+  PutProductData,
+} from "./generated/api/types.gen";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -83,7 +88,7 @@ query BulkOperationStatus($id: ID!) {
 }
 `;
 
-const SUPPORTED_CURRENCIES = new Set([
+const SUPPORTED_CURRENCIES = new Set<CurrencyData>([
   "EUR",
   "GBP",
   "USD",
@@ -145,8 +150,8 @@ export interface BackfillContext {
 }
 
 export interface ShopMetadata {
-  primaryLocale: string;
-  currencyCode: string;
+  primaryLocale?: string;
+  currencyCode?: string;
 }
 
 interface GraphqlResponse {
@@ -196,9 +201,70 @@ export function mapShopifyStatus(
   }
 }
 
-export function resolveLanguage(shopifyLocale: string): LanguageData {
+export function mapShopifyLocaleToLanguage(
+  shopifyLocale?: string | null,
+): LanguageData | undefined {
+  if (!shopifyLocale) {
+    return undefined;
+  }
+
   const base = shopifyLocale.split("-")[0].toLowerCase();
-  return SHOPIFY_LOCALE_TO_LANGUAGE[base] ?? "en";
+  return SHOPIFY_LOCALE_TO_LANGUAGE[base];
+}
+
+export function resolveLanguage(shopifyLocale: string): LanguageData {
+  return mapShopifyLocaleToLanguage(shopifyLocale) ?? "en";
+}
+
+export function mapShopifyCurrencyCode(
+  currencyCode?: string | null,
+): CurrencyData | undefined {
+  const normalizedCurrencyCode = currencyCode as CurrencyData | undefined;
+
+  if (
+    !normalizedCurrencyCode ||
+    !SUPPORTED_CURRENCIES.has(normalizedCurrencyCode)
+  ) {
+    return undefined;
+  }
+
+  return normalizedCurrencyCode;
+}
+
+export function normalizeShopifyDomain(
+  shopDomain?: string | null,
+): string | undefined {
+  const normalizedShopDomain = shopDomain?.trim().toLowerCase();
+
+  if (!normalizedShopDomain) {
+    return undefined;
+  }
+
+  return normalizedShopDomain;
+}
+
+export function buildShopMetadataPatch(
+  metadata: ShopMetadata,
+  shopDomain?: string | null,
+): PatchShopData | null {
+  const patch: PatchShopData = {};
+  const shopifyLanguage = mapShopifyLocaleToLanguage(metadata.primaryLocale);
+  const shopifyCurrency = mapShopifyCurrencyCode(metadata.currencyCode);
+  const shopifyDomain = normalizeShopifyDomain(shopDomain);
+
+  if (shopifyDomain) {
+    patch.shopifyDomain = shopifyDomain;
+  }
+
+  if (shopifyLanguage) {
+    patch.shopifyLanguage = shopifyLanguage;
+  }
+
+  if (shopifyCurrency) {
+    patch.shopifyCurrency = shopifyCurrency;
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
 }
 
 export function htmlToMarkdown(html: string): string {
@@ -248,7 +314,7 @@ export function transformProduct(
     if (
       !Number.isNaN(amount) &&
       amount >= 0 &&
-      SUPPORTED_CURRENCIES.has(currencyCode)
+      SUPPORTED_CURRENCIES.has(currencyCode as CurrencyData)
     ) {
       result.price = {
         amount,
@@ -375,8 +441,8 @@ export async function fetchShopMetadata(
 
   const locales = response.data?.shopLocales ?? [];
   const primary = locales.find((l) => l.primary);
-  const primaryLocale = primary?.locale ?? "en";
-  const currencyCode = response.data?.shop?.currencyCode ?? "EUR";
+  const primaryLocale = primary?.locale;
+  const currencyCode = response.data?.shop?.currencyCode;
 
   return { primaryLocale, currencyCode };
 }
@@ -507,6 +573,38 @@ async function sendProductBatch(
   return (result.data as string[]) ?? [];
 }
 
+export async function patchShopMetadata(
+  apiBaseUrl: string,
+  shopId: string,
+  apiKey: string,
+  metadata: ShopMetadata,
+  shopDomain?: string,
+): Promise<boolean> {
+  const body = buildShopMetadataPatch(metadata, shopDomain);
+
+  if (!body) {
+    return false;
+  }
+
+  const client = createClient({ baseUrl: apiBaseUrl });
+  const { patchShopById } = await import("./generated/api/sdk.gen");
+  const result = await patchShopById({
+    client,
+    body,
+    path: { shopId },
+    headers: {
+      "x-api-key": apiKey,
+    },
+  });
+
+  if (result.error) {
+    const status = result.response?.status ?? "unknown";
+    throw new Error(`API error ${status}: ${JSON.stringify(result.error)}`);
+  }
+
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Process bulk operation results (called from webhook handler)
 // ---------------------------------------------------------------------------
@@ -581,16 +679,37 @@ export async function triggerBackfill(
   apiKey: string,
   apiBaseUrl: string,
 ): Promise<void> {
+  let patchMetadataPromise: Promise<void> | undefined;
+
   try {
     const metadata = await fetchShopMetadata(graphqlRequest);
+    patchMetadataPromise = patchShopMetadata(
+      apiBaseUrl,
+      shopId,
+      apiKey,
+      metadata,
+      shopDomain,
+    )
+      .then((patched) => {
+        if (patched) {
+          console.log(`Shop metadata patched for ${shopDomain}`);
+        }
+      })
+      .catch((error) => {
+        console.error(
+          `Failed to patch shop metadata for ${shopDomain}:`,
+          error,
+        );
+      });
+
     const bulkOperationId = await submitBulkOperation(graphqlRequest);
 
     await storeBackfillContext(kv, shopDomain, {
       shopId,
       apiKey,
       apiBaseUrl,
-      primaryLocale: metadata.primaryLocale,
-      currencyCode: metadata.currencyCode,
+      primaryLocale: metadata.primaryLocale ?? "en",
+      currencyCode: metadata.currencyCode ?? "EUR",
       shopDomain,
       bulkOperationId,
       createdAt: new Date().toISOString(),
@@ -601,5 +720,7 @@ export async function triggerBackfill(
     );
   } catch (error) {
     console.error(`Failed to submit backfill for ${shopDomain}:`, error);
+  } finally {
+    await patchMetadataPromise;
   }
 }

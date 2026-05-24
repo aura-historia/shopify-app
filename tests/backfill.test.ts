@@ -5,14 +5,19 @@ import { describe, it, mock } from "node:test";
 import {
   type BackfillContext,
   type BulkJsonlProduct,
+  buildShopMetadataPatch,
   clearBackfillContext,
   extractShopifyNumericId,
   fetchShopMetadata,
   type GraphqlRequestFn,
   htmlToMarkdown,
   loadBackfillContext,
+  mapShopifyCurrencyCode,
+  mapShopifyLocaleToLanguage,
   mapShopifyStatus,
+  normalizeShopifyDomain,
   parseProductsFromJsonl,
+  patchShopMetadata,
   resolveLanguage,
   storeBackfillContext,
   submitBulkOperation,
@@ -92,6 +97,25 @@ describe("mapShopifyStatus", () => {
 });
 
 describe("resolveLanguage", () => {
+  it("maps supported Shopify locales without defaulting", () => {
+    assert.equal(mapShopifyLocaleToLanguage("de"), "de");
+    assert.equal(mapShopifyLocaleToLanguage("en"), "en");
+    assert.equal(mapShopifyLocaleToLanguage("fr"), "fr");
+    assert.equal(mapShopifyLocaleToLanguage("ja"), "ja");
+  });
+
+  it("extracts base locale from regional codes without defaulting", () => {
+    assert.equal(mapShopifyLocaleToLanguage("en-US"), "en");
+    assert.equal(mapShopifyLocaleToLanguage("de-AT"), "de");
+    assert.equal(mapShopifyLocaleToLanguage("pt-BR"), "pt");
+  });
+
+  it("returns undefined for unsupported locales when omission is required", () => {
+    assert.equal(mapShopifyLocaleToLanguage("ko"), undefined);
+    assert.equal(mapShopifyLocaleToLanguage("sv"), undefined);
+    assert.equal(mapShopifyLocaleToLanguage(undefined), undefined);
+  });
+
   it("maps supported Shopify locales to LanguageData", () => {
     assert.equal(resolveLanguage("de"), "de");
     assert.equal(resolveLanguage("en"), "en");
@@ -108,6 +132,74 @@ describe("resolveLanguage", () => {
   it("falls back to English for unsupported locales", () => {
     assert.equal(resolveLanguage("ko"), "en");
     assert.equal(resolveLanguage("sv"), "en");
+  });
+});
+
+describe("mapShopifyCurrencyCode", () => {
+  it("keeps supported Shopify currencies", () => {
+    assert.equal(mapShopifyCurrencyCode("EUR"), "EUR");
+    assert.equal(mapShopifyCurrencyCode("USD"), "USD");
+  });
+
+  it("returns undefined for unknown or unsupported currencies", () => {
+    assert.equal(mapShopifyCurrencyCode("SEK"), undefined);
+    assert.equal(mapShopifyCurrencyCode(undefined), undefined);
+  });
+});
+
+describe("buildShopMetadataPatch", () => {
+  it("includes shopify domain, supported currency, and language", () => {
+    assert.deepEqual(
+      buildShopMetadataPatch(
+        {
+          primaryLocale: "de-AT",
+          currencyCode: "EUR",
+        },
+        "My-Shop.MyShopify.com ",
+      ),
+      {
+        shopifyDomain: "my-shop.myshopify.com",
+        shopifyLanguage: "de",
+        shopifyCurrency: "EUR",
+      },
+    );
+  });
+
+  it("omits unknown metadata fields while keeping known domain", () => {
+    assert.deepEqual(
+      buildShopMetadataPatch(
+        {
+          primaryLocale: "sv-SE",
+          currencyCode: "EUR",
+        },
+        "my-shop.myshopify.com",
+      ),
+      {
+        shopifyDomain: "my-shop.myshopify.com",
+        shopifyCurrency: "EUR",
+      },
+    );
+    assert.equal(
+      buildShopMetadataPatch({
+        primaryLocale: undefined,
+        currencyCode: "SEK",
+      }),
+      null,
+    );
+  });
+});
+
+describe("normalizeShopifyDomain", () => {
+  it("trims and lowercases the known shopify domain", () => {
+    assert.equal(
+      normalizeShopifyDomain(" My-Shop.MyShopify.com "),
+      "my-shop.myshopify.com",
+    );
+  });
+
+  it("returns undefined when shopify domain is missing", () => {
+    assert.equal(normalizeShopifyDomain(undefined), undefined);
+    assert.equal(normalizeShopifyDomain("   "), undefined);
   });
 });
 
@@ -427,14 +519,14 @@ describe("fetchShopMetadata", () => {
     assert.equal(metadata.currencyCode, "EUR");
   });
 
-  it("falls back to English and EUR when no data", async () => {
+  it("keeps metadata undefined when Shopify does not provide it", async () => {
     const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
       data: { shopLocales: [], shop: {} },
     }));
 
     const metadata = await fetchShopMetadata(graphqlRequest);
-    assert.equal(metadata.primaryLocale, "en");
-    assert.equal(metadata.currencyCode, "EUR");
+    assert.equal(metadata.primaryLocale, undefined);
+    assert.equal(metadata.currencyCode, undefined);
   });
 
   it("throws on GraphQL errors", async () => {
@@ -507,6 +599,113 @@ describe("submitBulkOperation", () => {
   });
 });
 
+describe("patchShopMetadata", () => {
+  it("patches only known shop metadata fields", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
+      const received =
+        request instanceof Request ? request : new Request(request);
+      assert.equal(received.method, "PATCH");
+      assert.equal(
+        received.url,
+        "https://api.test.com/api/v1/shops/shop-id-123",
+      );
+      assert.equal(received.headers.get("x-api-key"), "api-key-456");
+      assert.deepEqual(await received.json(), {
+        shopifyDomain: "my-shop.myshopify.com",
+        shopifyCurrency: "EUR",
+      });
+
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const patched = await patchShopMetadata(
+        "https://api.test.com",
+        "shop-id-123",
+        "api-key-456",
+        {
+          primaryLocale: "sv-SE",
+          currencyCode: "EUR",
+        },
+        "my-shop.myshopify.com",
+      );
+
+      assert.equal(patched, true);
+      assert.equal(fetchMock.mock.calls.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("patches the known shopify domain even when currency and language are unknown", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
+      const received =
+        request instanceof Request ? request : new Request(request);
+      assert.deepEqual(await received.json(), {
+        shopifyDomain: "my-shop.myshopify.com",
+      });
+
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const patched = await patchShopMetadata(
+        "https://api.test.com",
+        "shop-id-123",
+        "api-key-456",
+        {
+          primaryLocale: undefined,
+          currencyCode: "SEK",
+        },
+        "my-shop.myshopify.com",
+      );
+
+      assert.equal(patched, true);
+      assert.equal(fetchMock.mock.calls.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("skips the patch request entirely when no shop metadata or domain is known", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = mock.fn(async () => {
+      throw new Error("fetch should not be called");
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const patched = await patchShopMetadata(
+        "https://api.test.com",
+        "shop-id-123",
+        "api-key-456",
+        {
+          primaryLocale: undefined,
+          currencyCode: "SEK",
+        },
+      );
+
+      assert.equal(patched, false);
+      assert.equal(fetchMock.mock.calls.length, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe("triggerBackfill", () => {
   it("does not throw on errors (fire-and-forget)", async () => {
     const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
@@ -549,25 +748,105 @@ describe("triggerBackfill", () => {
       };
     });
     const kv = makeKv();
+    const originalFetch = globalThis.fetch;
+    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
+      const received =
+        request instanceof Request ? request : new Request(request);
+      assert.deepEqual(await received.json(), {
+        shopifyDomain: "my-shop.myshopify.com",
+        shopifyLanguage: "de",
+        shopifyCurrency: "EUR",
+      });
 
-    await triggerBackfill(
-      graphqlRequest,
-      kv as never,
-      "my-shop.myshopify.com",
-      "shop-id-123",
-      "api-key-456",
-      "https://api.test.com",
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      await triggerBackfill(
+        graphqlRequest,
+        kv as never,
+        "my-shop.myshopify.com",
+        "shop-id-123",
+        "api-key-456",
+        "https://api.test.com",
+      );
+
+      const stored = await loadBackfillContext(
+        kv as never,
+        "my-shop.myshopify.com",
+      );
+      assert.ok(stored);
+      assert.equal(stored.shopId, "shop-id-123");
+      assert.equal(stored.primaryLocale, "de");
+      assert.equal(stored.currencyCode, "EUR");
+      assert.equal(stored.bulkOperationId, "gid://shopify/BulkOperation/789");
+      assert.equal(fetchMock.mock.calls.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("continues the backfill when shop metadata patching fails", async () => {
+    let callCount = 0;
+    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          data: {
+            shopLocales: [{ locale: "de", primary: true }],
+            shop: { currencyCode: "EUR" },
+          },
+        };
+      }
+      return {
+        data: {
+          bulkOperationRunQuery: {
+            bulkOperation: {
+              id: "gid://shopify/BulkOperation/790",
+              status: "CREATED",
+            },
+            userErrors: [],
+          },
+        },
+      };
+    });
+    const kv = makeKv();
+    const originalFetch = globalThis.fetch;
+    const fetchMock = mock.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "boom" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
 
-    const stored = await loadBackfillContext(
-      kv as never,
-      "my-shop.myshopify.com",
-    );
-    assert.ok(stored);
-    assert.equal(stored.shopId, "shop-id-123");
-    assert.equal(stored.primaryLocale, "de");
-    assert.equal(stored.currencyCode, "EUR");
-    assert.equal(stored.bulkOperationId, "gid://shopify/BulkOperation/789");
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      await triggerBackfill(
+        graphqlRequest,
+        kv as never,
+        "my-shop.myshopify.com",
+        "shop-id-123",
+        "api-key-456",
+        "https://api.test.com",
+      );
+
+      const stored = await loadBackfillContext(
+        kv as never,
+        "my-shop.myshopify.com",
+      );
+      assert.ok(stored);
+      assert.equal(stored.bulkOperationId, "gid://shopify/BulkOperation/790");
+      assert.equal(fetchMock.mock.calls.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
