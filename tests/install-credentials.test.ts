@@ -43,7 +43,7 @@ describe("install credentials handling", () => {
     assert.equal(strippedSearchParams.has("shopId"), false);
   });
 
-  it("round-trips install credentials through the short-lived cookie", async () => {
+  it("round-trips install credentials through the short-lived cookie for the embedded app", async () => {
     const setCookieHeader = await serializeInstallCredentialsCookie({
       apiKey: "aurahistoria_partner_abcdef123456",
       shopId: "123e4567-e89b-12d3-a456-426614174000",
@@ -58,7 +58,7 @@ describe("install credentials handling", () => {
     });
     assert.match(setCookieHeader, /HttpOnly/);
     assert.match(setCookieHeader, /Max-Age=600/);
-    assert.match(setCookieHeader, /SameSite=Lax/);
+    assert.match(setCookieHeader, /SameSite=None/);
     assert.match(setCookieHeader, /Secure/);
   });
 

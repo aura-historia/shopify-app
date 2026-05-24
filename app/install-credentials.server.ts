@@ -9,7 +9,7 @@ const installCredentialsCookie = createCookie(
     httpOnly: true,
     maxAge: 60 * 10,
     path: "/",
-    sameSite: "lax",
+    sameSite: "none",
     secure: true,
   },
 );
