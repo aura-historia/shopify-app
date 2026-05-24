@@ -1,3 +1,4 @@
+import TurndownService from "turndown";
 import { createClient } from "./generated/api/client";
 import type { LanguageData, PutProductData } from "./generated/api/types.gen";
 
@@ -120,6 +121,14 @@ const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
   ar: "ar",
 };
 
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  bulletListMarker: "-",
+  emDelimiter: "*",
+  strongDelimiter: "**",
+  linkStyle: "inlined",
+});
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -193,101 +202,16 @@ export function resolveLanguage(shopifyLocale: string): LanguageData {
 }
 
 export function htmlToMarkdown(html: string): string {
-  if (!html) return "";
+  if (!html) {
+    return "";
+  }
 
-  let md = html;
-
-  md = md.replace(
-    /<h([1-6])[^>]*>([\s\S]*?)<\/h[1-6]>/gi,
-    (_m, level, content) => {
-      const hashes = "#".repeat(Number(level));
-      return `\n\n${hashes} ${cleanInline(content).trim()}\n\n`;
-    },
-  );
-
-  md = md.replace(
-    /<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi,
-    (_m, content) => {
-      const lines = cleanInline(content).trim().split("\n");
-      return `\n\n${lines.map((l: string) => `> ${l}`).join("\n")}\n\n`;
-    },
-  );
-
-  md = md.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_m, content) => {
-    let index = 0;
-    const items = content.replace(
-      /<li[^>]*>([\s\S]*?)<\/li>/gi,
-      (_m2: string, item: string) => {
-        index++;
-        return `${index}. ${cleanInline(item).trim()}\n`;
-      },
-    );
-    return `\n\n${stripAllTags(items).trim()}\n\n`;
-  });
-
-  md = md.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_m, content) => {
-    const items = content.replace(
-      /<li[^>]*>([\s\S]*?)<\/li>/gi,
-      (_m2: string, item: string) => `- ${cleanInline(item).trim()}\n`,
-    );
-    return `\n\n${stripAllTags(items).trim()}\n\n`;
-  });
-
-  md = md.replace(
-    /<p[^>]*>([\s\S]*?)<\/p>/gi,
-    (_m, content) => `\n\n${content}\n\n`,
-  );
-  md = md.replace(/<br\s*\/?>/gi, "\n");
-  md = md.replace(/<hr\s*\/?>/gi, "\n\n---\n\n");
-
-  md = cleanInline(md);
-  md = stripAllTags(md);
-  md = decodeEntities(md);
-  md = md.replace(/\n{3,}/g, "\n\n");
-  md = md.trim();
-
-  return md;
-}
-
-function cleanInline(text: string): string {
-  let result = text;
-  result = result.replace(
-    /<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi,
-    "**$2**",
-  );
-  result = result.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, "*$2*");
-  result = result.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
-  result = result.replace(
-    /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi,
-    "[$2]($1)",
-  );
-  result = result.replace(
-    /<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*\/?>/gi,
-    "![$2]($1)",
-  );
-  result = result.replace(/<img[^>]*src="([^"]*)"[^>]*\/?>/gi, "![]($1)");
-  return result;
-}
-
-function stripAllTags(text: string): string {
-  const TAG_RE = /<[^>]*>/g;
-  let result = text;
-  let prev: string;
-  do {
-    prev = result;
-    result = result.replace(TAG_RE, "");
-  } while (result !== prev);
-  return result;
-}
-
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&");
+  return turndown
+    .turndown(html)
+    .replace(/\u00a0/g, " ")
+    .replace(/^([*-])\s+/gm, "$1 ")
+    .replace(/^(\d+)\.\s+/gm, "$1. ")
+    .trim();
 }
 
 // ---------------------------------------------------------------------------

@@ -146,7 +146,7 @@ describe("htmlToMarkdown", () => {
   });
 
   it("converts line breaks", () => {
-    assert.equal(htmlToMarkdown("Line 1<br>Line 2"), "Line 1\nLine 2");
+    assert.equal(htmlToMarkdown("Line 1<br>Line 2"), "Line 1  \nLine 2");
   });
 
   it("strips unsupported tags", () => {
