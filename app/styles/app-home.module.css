@@ -2,13 +2,21 @@
   display: grid;
   gap: 1.5rem;
   padding: 1.5rem;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(255, 222, 165, 0.18),
+      transparent 24rem
+    ),
+    linear-gradient(180deg, #f7f4e9 0%, #efe8de 100%);
   color: #1c1c16;
 }
 
 .hero {
   display: grid;
   gap: 1.5rem;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px);
   padding: 1.75rem;
 }
 
@@ -164,11 +172,18 @@
 }
 
 .input {
-  padding: 0.75rem 0.9rem;
-  border: 1px solid rgba(66, 18, 15, 0.14);
-  background: #ffffff;
+  padding: 0.8rem 0.25rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid rgba(216, 193, 191, 0.32);
+  background: rgba(255, 255, 255, 0.62);
   color: #1c1c16;
   font: inherit;
+}
+
+.input:focus {
+  border-bottom-color: #42120f;
+  box-shadow: 0 1px 0 #42120f;
+  outline: none;
 }
 
 .fieldHint,
@@ -196,15 +211,19 @@
   justify-self: start;
   padding: 0.8rem 1.15rem;
   border: 0;
-  background: #42120f;
+  border-radius: 0.25rem;
+  background: linear-gradient(135deg, #42120f 0%, #5d2722 100%);
   color: #f7f4e9;
   font: inherit;
   font-weight: 700;
+  transition:
+    transform 300ms ease-out,
+    background-color 300ms ease-out;
   cursor: pointer;
 }
 
 .primaryButton:hover {
-  background: #5b1f1a;
+  transform: translateY(-1px);
 }
 
 @media (min-width: 64rem) {

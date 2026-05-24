@@ -117,7 +117,7 @@
 .title {
   position: relative;
   z-index: 1;
-  max-width: 12ch;
+  max-width: 24ch;
   margin: 1rem 0 0;
   color: #42120f;
   font-family: "Newsreader", Georgia, serif;
@@ -256,7 +256,6 @@
 }
 
 .manualTitle {
-  max-width: 18ch;
   margin: 0.65rem 0 0;
   color: #42120f;
   font-family: "Newsreader", Georgia, serif;
@@ -346,21 +345,18 @@
   font-weight: 800;
 }
 
-@media (min-width: 64rem) {
-  .hero {
-    grid-template-columns: minmax(0, 1.45fr) minmax(19rem, 0.85fr);
-    gap: 1.5rem 2rem;
+@media (min-width: 40rem) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
+@media (min-width: 64rem) {
   .supportPanel {
     margin-top: 4.25rem;
   }
 
-  .introPanel {
-    padding-right: 4.5rem;
-  }
-
   .grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
