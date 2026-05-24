@@ -11,6 +11,10 @@ const authRoute = readFileSync(
   resolve(process.cwd(), "app/routes/auth.$.tsx"),
   "utf8",
 );
+const authLoginRoute = readFileSync(
+  resolve(process.cwd(), "app/routes/auth.login/route.tsx"),
+  "utf8",
+);
 const successRoute = readFileSync(
   resolve(process.cwd(), "app/routes/success.tsx"),
   "utf8",
@@ -25,7 +29,7 @@ describe("public install flow", () => {
     // requires both shop AND host and falls back to a blank login page.
     assert.match(
       marketingRoute,
-      /\/auth\/login\?\$\{url\.searchParams\.toString\(\)\}/,
+      /getPathWithSearchParams\("\/auth\/login", cleanedSearchParams\)/,
     );
   });
 
@@ -37,8 +41,15 @@ describe("public install flow", () => {
     assert.match(marketingRoute, /url\.searchParams\.get\(["']host["']\)/);
     assert.match(
       marketingRoute,
-      /\/app\?\$\{url\.searchParams\.toString\(\)\}/,
+      /getPathWithSearchParams\("\/app", cleanedSearchParams\)/,
     );
+  });
+
+  it("stores install-link credentials in a short-lived server cookie before redirects", () => {
+    assert.match(marketingRoute, /serializeInstallCredentialsCookie/);
+    assert.match(marketingRoute, /stripInstallCredentialsSearchParams/);
+    assert.match(authLoginRoute, /serializeInstallCredentialsCookie/);
+    assert.match(authLoginRoute, /stripInstallCredentialsSearchParams/);
   });
 
   it("redirects the auth callback to the success page", () => {

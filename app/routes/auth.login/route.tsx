@@ -1,5 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import { Form, redirect, useActionData, useLoaderData } from "react-router";
+import {
+  getInstallCredentialsFromSearchParams,
+  getPathWithSearchParams,
+  hasInstallCredentialsSearchParams,
+  serializeInstallCredentialsCookie,
+  stripInstallCredentialsSearchParams,
+} from "../../install-credentials.server";
 import { getShopify } from "../../shopify.server";
 import styles from "../../styles/public-page.module.css";
 import { loginErrorMessage } from "./error.server";
@@ -14,6 +21,29 @@ const legalLinks = [
 ];
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
+  const url = new URL(request.url);
+  const installCredentials = getInstallCredentialsFromSearchParams(
+    url.searchParams,
+  );
+
+  if (hasInstallCredentialsSearchParams(url.searchParams)) {
+    const headers = new Headers();
+    if (installCredentials) {
+      headers.append(
+        "Set-Cookie",
+        await serializeInstallCredentialsCookie(installCredentials),
+      );
+    }
+
+    throw redirect(
+      getPathWithSearchParams(
+        url.pathname,
+        stripInstallCredentialsSearchParams(url.searchParams),
+      ),
+      { headers },
+    );
+  }
+
   return {
     errors: loginErrorMessage(await getShopify(context).login(request)),
   };

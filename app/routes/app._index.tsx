@@ -1,11 +1,24 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
+  data,
   Form,
+  redirect,
   useActionData,
   useLoaderData,
   useNavigation,
 } from "react-router";
 import {
+  clearInstallCredentialsCookie,
+  getInstallCredentialsFromSearchParams,
+  getPathWithSearchParams,
+  hasInstallCredentialsSearchParams,
+  readInstallCredentialsCookie,
+  serializeInstallCredentialsCookie,
+  stripInstallCredentialsSearchParams,
+} from "../install-credentials.server";
+import {
+  isValidAuraHistoriaApiKey,
+  isValidShopId,
   loadShopCredentials,
   saveShopCredentials,
   validateShopCredentialsFormData,
@@ -13,31 +26,97 @@ import {
 import { getShopify } from "../shopify.server";
 import styles from "../styles/app-home.module.css";
 
-const productTopics = ["products/create", "products/update", "products/delete"];
-
-const complianceTopics = [
-  "customers/data_request",
-  "customers/redact",
-  "shop/redact",
-  "app/uninstalled",
+const supportLinks = [
+  {
+    href: "https://aura-historia.com",
+    label: "Main website",
+  },
+  {
+    href: "https://aura-historia.com/privacy",
+    label: "Privacy",
+  },
+  {
+    href: "https://aura-historia.com/terms-and-conditions",
+    label: "Terms & conditions",
+  },
 ];
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
+  const url = new URL(request.url);
   const { session } = await getShopify(context).authenticate.admin(request);
-  const credentials = await loadShopCredentials(
+  const urlInstallCredentials = getInstallCredentialsFromSearchParams(
+    url.searchParams,
+  );
+
+  if (hasInstallCredentialsSearchParams(url.searchParams)) {
+    const headers = new Headers();
+    if (urlInstallCredentials) {
+      headers.append(
+        "Set-Cookie",
+        await serializeInstallCredentialsCookie(urlInstallCredentials),
+      );
+    }
+    throw redirect(
+      getPathWithSearchParams(
+        url.pathname,
+        stripInstallCredentialsSearchParams(url.searchParams),
+      ),
+      { headers },
+    );
+  }
+
+  const cookieInstallCredentials = await readInstallCredentialsCookie(
+    request.headers.get("Cookie"),
+  );
+  let credentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     session.shop,
   );
+  let autoSavedFromInstallLink = false;
+  let installCredentialsNeedReview = false;
 
-  return {
-    credentials,
-    shop: session.shop,
-    scopes:
-      session.scope
-        ?.split(",")
-        .map((scope: string) => scope.trim())
-        .filter(Boolean) ?? [],
-  };
+  if (cookieInstallCredentials) {
+    const validInstallCredentials =
+      isValidShopId(cookieInstallCredentials.shopId) &&
+      isValidAuraHistoriaApiKey(cookieInstallCredentials.apiKey);
+
+    if (validInstallCredentials) {
+      const credentialsChanged =
+        credentials?.shopId !== cookieInstallCredentials.shopId ||
+        credentials?.apiKey !== cookieInstallCredentials.apiKey;
+
+      if (credentialsChanged) {
+        credentials = await saveShopCredentials(
+          context.cloudflare.env.KV,
+          session.shop,
+          cookieInstallCredentials,
+        );
+      }
+
+      autoSavedFromInstallLink = true;
+    } else {
+      installCredentialsNeedReview = true;
+    }
+  }
+
+  const initialValues = cookieInstallCredentials ??
+    credentials ?? { apiKey: "", shopId: "" };
+  const headers = new Headers();
+
+  if (cookieInstallCredentials) {
+    headers.append("Set-Cookie", await clearInstallCredentialsCookie());
+  }
+
+  return data(
+    {
+      autoSavedFromInstallLink,
+      credentials,
+      initialValues,
+      installCredentialsNeedReview,
+      shop: session.shop,
+    },
+    { headers },
+  );
 };
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
@@ -64,11 +143,16 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
 };
 
 export default function AppIndex() {
-  const { credentials, shop, scopes } = useLoaderData<typeof loader>();
+  const {
+    autoSavedFromInstallLink,
+    credentials,
+    initialValues,
+    installCredentialsNeedReview,
+    shop,
+  } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
-  const values = actionData?.values ??
-    credentials ?? { apiKey: "", shopId: "" };
+  const values = actionData?.values ?? initialValues;
   const isSubmitting = navigation.state === "submitting";
   const hasSavedCredentials = Boolean(credentials);
 
@@ -76,38 +160,25 @@ export default function AppIndex() {
     <div className={styles.page}>
       <section className={styles.hero}>
         <div>
-          <p className={styles.eyebrow}>Connected catalog</p>
+          <p className={styles.eyebrow}>Embedded configuration</p>
           <h1 className={styles.heading}>
-            Connect <span className={styles.shopName}>{shop}</span> to your Aura
-            Historia backend.
+            Manage the Aura Historia credentials for{" "}
+            <span className={styles.shopName}>{shop}</span>.
           </h1>
           <p className={styles.lead}>
-            Save the merchant-specific Aura Historia shop ID and API key inside
-            the authenticated Shopify admin so this installation can be mapped
-            to the correct external backend account.
+            Save or update the Aura Historia shop ID and API key for this
+            Shopify installation. You can review and edit the values here at any
+            time.
           </p>
         </div>
 
         <aside className={styles.sidePanel}>
-          <section className={styles.panelMuted}>
-            <h2 className={styles.cardTitle}>Granted scope</h2>
-            <div className={styles.tagList}>
-              {(scopes.length > 0 ? scopes : ["read_products"]).map(
-                (scope: string) => (
-                  <span key={scope} className={styles.tag}>
-                    {scope}
-                  </span>
-                ),
-              )}
-            </div>
-          </section>
-
           <section className={styles.panel}>
             <h2 className={styles.cardTitle}>Configuration status</h2>
             <p className={styles.cardBody}>
               {hasSavedCredentials
-                ? "The latest Aura Historia credentials are loaded from Cloudflare KV for this shop."
-                : "This installation still needs its Aura Historia shop ID and API key before backend mapping is complete."}
+                ? "Credentials are already stored for this shop. Saving again replaces the existing values."
+                : "This shop still needs its Aura Historia shop ID and API key before the backend mapping is complete."}
             </p>
           </section>
         </aside>
@@ -165,6 +236,18 @@ export default function AppIndex() {
               The saved values stay inside this authenticated embedded app and
               are stored per shop in Cloudflare KV.
             </p>
+            {autoSavedFromInstallLink ? (
+              <p className={styles.successText}>
+                Credentials from the install link were loaded and saved for{" "}
+                {shop}. Review or edit them below if needed.
+              </p>
+            ) : null}
+            {installCredentialsNeedReview ? (
+              <p className={styles.fieldHint}>
+                Credentials from the install link were loaded into the form but
+                were not saved because one or both values need review.
+              </p>
+            ) : null}
             {actionData?.saved ? (
               <p className={styles.successText}>
                 Configuration saved for {shop}.
@@ -177,53 +260,13 @@ export default function AppIndex() {
         </article>
 
         <article className={styles.panel}>
-          <h2 className={styles.cardTitle}>Product event flow</h2>
-          <ul className={styles.topicList}>
-            {productTopics.map((topic) => (
-              <li key={topic} className={styles.topicItem}>
-                <span className={styles.topicName}>{topic}</span>
-                <span className={styles.topicDescription}>
-                  Delivered to the configured Aura Historia EventBridge partner
-                  source.
-                </span>
-              </li>
-            ))}
-          </ul>
-        </article>
-
-        <article className={styles.panelMuted}>
-          <h2 className={styles.cardTitle}>Public-app compliance</h2>
-          <ul className={styles.topicList}>
-            {complianceTopics.map((topic) => (
-              <li key={topic} className={styles.topicItem}>
-                <span className={styles.topicName}>{topic}</span>
-                <span className={styles.topicDescription}>
-                  Preserved so App Store review and uninstall cleanup remain in
-                  place.
-                </span>
-              </li>
-            ))}
-          </ul>
-        </article>
-
-        <article className={styles.panel}>
           <h2 className={styles.cardTitle}>Support and policies</h2>
           <div className={styles.linkRow}>
-            <a className={styles.link} href="https://aura-historia.com">
-              Main website
-            </a>
-            <a className={styles.link} href="https://aura-historia.com/privacy">
-              Privacy
-            </a>
-            <a className={styles.link} href="https://aura-historia.com/imprint">
-              Imprint
-            </a>
-            <a
-              className={styles.link}
-              href="https://aura-historia.com/terms-and-conditions"
-            >
-              Terms & conditions
-            </a>
+            {supportLinks.map((link) => (
+              <a key={link.href} className={styles.link} href={link.href}>
+                {link.label}
+              </a>
+            ))}
           </div>
           <p className={styles.cardBody}>
             Direct contact:{" "}

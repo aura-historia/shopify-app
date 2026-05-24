@@ -214,6 +214,6 @@
   }
 
   .grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.85fr);
   }
 }
