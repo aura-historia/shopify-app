@@ -117,7 +117,7 @@
 .title {
   position: relative;
   z-index: 1;
-  max-width: 124h;
+  max-width: 24ch;
   margin: 1rem 0 0;
   color: #42120f;
   font-family: "Newsreader", Georgia, serif;
