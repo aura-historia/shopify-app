@@ -20,6 +20,6 @@
     "SHOPIFY_API_VERSION": "2026-04",
     "SHOPIFY_APP_URL": "https://shopify.aura-historia.com",
     "SCOPE": "read_products",
-    "AURA_HISTORIA_API_BASE_URL": "https://api.dev.aura-historia.com"
+    "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com"
   }
 }
