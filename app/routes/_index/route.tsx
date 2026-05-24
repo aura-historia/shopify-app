@@ -32,8 +32,7 @@ const accessSections = [
   },
   {
     title: "Compliance & uninstall",
-    description:
-      "Mandatory public-app webhooks stay visible for review and cleanup.",
+    description: "We're fully compliant and respect the mandatory webhooks.",
     items: [
       {
         name: "customers/data_request",
@@ -108,9 +107,7 @@ export default function MarketingIndex() {
               Aura Historia
             </a>
             <p className={styles.brandMeta}>
-              Aura Historia gives antique merchants and collectors a quieter,
-              more authoritative way to track catalog changes and market
-              movement.
+              Aura Historia unites the World of Antiques and Art. Are you in?
             </p>
           </div>
           <nav className={styles.headerLinks} aria-label="Aura Historia links">
@@ -130,92 +127,29 @@ export default function MarketingIndex() {
 
         <main className={styles.hero}>
           <section className={styles.introPanel}>
-            <span className={styles.tag}>Public app · EventBridge</span>
+            <span className={styles.tag}>Aura Historia x Shopify</span>
             <h1 className={styles.title}>
-              Shopify product updates for Aura Historia.
+              Shopify App-Integration for Aura Historia.
             </h1>
             <p className={styles.lead}>
-              Most merchants never need this page. Shopify usually opens the app
-              with the store context already attached, and this app quietly
-              forwards the relevant Shopify data to Aura Historia.
+              You aren't really supposed to see this page. How have you got
+              here? Usually Shopify installs from the Shopify App-Store
+              automatically pre-configures your shop. You're not lost though -
+              you can proceed by entering your Shopify App-Domain below.
             </p>
 
             <div className={styles.buttonRow}>
+              <a className={styles.primaryAction} href="#manual-install">
+                Continue with store domain
+              </a>
               <a
-                className={styles.primaryAction}
+                className={styles.secondaryAction}
                 href="https://aura-historia.com/partners/shopify"
               >
                 Further information
               </a>
-              <a className={styles.secondaryAction} href="#manual-install">
-                Continue with store domain
-              </a>
-            </div>
-
-            <div className={styles.grid}>
-              <article className={styles.surfaceCard}>
-                <h2 className={styles.cardTitle}>Install flow</h2>
-                <p className={styles.cardBody}>
-                  Shopify App Store and Shopify admin launches normally provide
-                  the <strong>shop</strong> and <strong>host</strong> query
-                  parameters automatically. Manual domain entry remains here
-                  only as a fallback.
-                </p>
-              </article>
-              <article className={styles.surfaceCardStrong}>
-                <h2 className={styles.cardTitle}>What merchants configure</h2>
-                <p className={styles.cardBody}>
-                  After install, the embedded app focuses on the Aura Historia
-                  shop ID and API key for the current Shopify shop.
-                </p>
-              </article>
             </div>
           </section>
-
-          <aside className={styles.supportPanel}>
-            <section className={styles.surfaceCardStrong}>
-              <h2 className={styles.cardTitle}>Why this page exists</h2>
-              <p className={styles.cardBody}>
-                It keeps the fallback install path, review links, and a concise
-                summary of the Shopify data access visible in one place.
-              </p>
-            </section>
-
-            <section className={styles.surfaceCard}>
-              <h2 className={styles.cardTitle}>
-                Review, policies, and support
-              </h2>
-              <p className={styles.cardBody}>
-                Aura Historia keeps its website, policy links, further
-                information, and direct contact details visible here for
-                merchants and Shopify reviewers.
-              </p>
-              <div className={styles.footerLinks}>
-                <a
-                  className={styles.link}
-                  href="https://aura-historia.com/partners/shopify"
-                >
-                  Further information
-                </a>
-                {legalLinks.map((link) => (
-                  <a key={link.href} className={styles.link} href={link.href}>
-                    {link.label}
-                  </a>
-                ))}
-              </div>
-              <p className={styles.footerMeta}>
-                For review questions, merchant support, or legal requests,
-                contact{" "}
-                <a
-                  className={styles.contact}
-                  href="mailto:contact@aura-historia.com"
-                >
-                  contact@aura-historia.com
-                </a>
-                .
-              </p>
-            </section>
-          </aside>
         </main>
 
         <section className={styles.grid}>
