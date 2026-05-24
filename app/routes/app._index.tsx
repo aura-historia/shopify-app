@@ -5,7 +5,7 @@ import {
   useLoaderData,
   useNavigation,
 } from "react-router";
-import type { BackfillDependencies } from "../backfill.server";
+import type { GraphqlRequestFn } from "../backfill.server";
 import { triggerBackfill } from "../backfill.server";
 import {
   loadShopCredentials,
@@ -65,18 +65,21 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     process.env.AURA_HISTORIA_API_BASE_URL;
 
   if (apiBaseUrl) {
-    const deps: BackfillDependencies = {
-      graphqlRequest: async (query, variables) => {
-        const response = await admin.graphql(query, { variables });
-        return response.json();
-      },
-      apiBaseUrl,
-      shopId: validation.values.shopId,
-      apiKey: validation.values.apiKey,
-      shopDomain: session.shop,
+    const graphqlRequest: GraphqlRequestFn = async (query, variables) => {
+      const response = await admin.graphql(query, { variables });
+      return response.json();
     };
 
-    context.cloudflare.ctx.waitUntil(triggerBackfill(deps));
+    context.cloudflare.ctx.waitUntil(
+      triggerBackfill(
+        graphqlRequest,
+        context.cloudflare.env.KV,
+        session.shop,
+        validation.values.shopId,
+        validation.values.apiKey,
+        apiBaseUrl,
+      ),
+    );
   }
 
   return {

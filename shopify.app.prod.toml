@@ -7,7 +7,7 @@ application_url = "https://shopify.aura-historia.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_products"
+scopes = "read_products,read_locales"
 optional_scopes = []
 use_legacy_install_flow = false
 
@@ -21,6 +21,10 @@ api_version = "2026-04"
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled"]
   uri = "https://shopify.aura-historia.com/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = ["bulk_operations/finish"]
+  uri = "https://shopify.aura-historia.com/webhooks/bulk-operations/finish"
 
   [[webhooks.subscriptions]]
   compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
