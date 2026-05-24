@@ -17,7 +17,24 @@ const successRoute = readFileSync(
 );
 
 describe("public install flow", () => {
-  it("routes Shopify-provided shop context to the embedded admin", () => {
+  it("routes a shop-only App Store link directly to the login handler", () => {
+    // App Store install links carry only ?shop= (no host param).
+    // We must hand off to shopify.login(), which drives the OAuth install
+    // redirect without requiring a host param.
+    // Routing through /app or /auth first breaks because authenticate.admin()
+    // requires both shop AND host and falls back to a blank login page.
+    assert.match(
+      marketingRoute,
+      /\/auth\/login\?\$\{url\.searchParams\.toString\(\)\}/,
+    );
+  });
+
+  it("routes an embedded admin launch (has host) to the app shell", () => {
+    // Shopify admin always includes `host` when opening the app in the
+    // embedded iframe. Those requests must reach /app so authenticate.admin()
+    // can do the token exchange instead of triggering a login() OAuth
+    // redirect inside the iframe (which breaks framing).
+    assert.match(marketingRoute, /url\.searchParams\.get\(["']host["']\)/);
     assert.match(
       marketingRoute,
       /\/app\?\$\{url\.searchParams\.toString\(\)\}/,

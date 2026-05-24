@@ -44,8 +44,20 @@ const complianceTopics = [
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
-  if (url.searchParams.get("shop")) {
-    throw redirect(`/app?${url.searchParams.toString()}`);
+  const shop = url.searchParams.get("shop");
+
+  if (shop) {
+    // Shopify admin always includes `host` (plus `embedded=1` and `id_token`)
+    // when opening the app in the embedded iframe.  Route those directly to
+    // /app so authenticate.admin() can run the token-exchange flow without
+    // hitting the login page inside the iframe.
+    //
+    // App Store install links only carry `shop` (no `host`). Route those to
+    // /auth/login so shopify.login() can initiate the OAuth install redirect.
+    if (url.searchParams.get("host")) {
+      throw redirect(`/app?${url.searchParams.toString()}`);
+    }
+    throw redirect(`/auth/login?${url.searchParams.toString()}`);
   }
 
   return null;
