@@ -231,12 +231,30 @@ export function mapShopifyCurrencyCode(
   return normalizedCurrencyCode;
 }
 
+export function normalizeShopifyDomain(
+  shopDomain?: string | null,
+): string | undefined {
+  const normalizedShopDomain = shopDomain?.trim().toLowerCase();
+
+  if (!normalizedShopDomain) {
+    return undefined;
+  }
+
+  return normalizedShopDomain;
+}
+
 export function buildShopMetadataPatch(
   metadata: ShopMetadata,
+  shopDomain?: string | null,
 ): PatchShopData | null {
   const patch: PatchShopData = {};
   const shopifyLanguage = mapShopifyLocaleToLanguage(metadata.primaryLocale);
   const shopifyCurrency = mapShopifyCurrencyCode(metadata.currencyCode);
+  const shopifyDomain = normalizeShopifyDomain(shopDomain);
+
+  if (shopifyDomain) {
+    patch.shopifyDomain = shopifyDomain;
+  }
 
   if (shopifyLanguage) {
     patch.shopifyLanguage = shopifyLanguage;
@@ -560,8 +578,9 @@ export async function patchShopMetadata(
   shopId: string,
   apiKey: string,
   metadata: ShopMetadata,
+  shopDomain?: string,
 ): Promise<boolean> {
-  const body = buildShopMetadataPatch(metadata);
+  const body = buildShopMetadataPatch(metadata, shopDomain);
 
   if (!body) {
     return false;
@@ -669,6 +688,7 @@ export async function triggerBackfill(
       shopId,
       apiKey,
       metadata,
+      shopDomain,
     )
       .then((patched) => {
         if (patched) {

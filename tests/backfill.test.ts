@@ -15,6 +15,7 @@ import {
   mapShopifyCurrencyCode,
   mapShopifyLocaleToLanguage,
   mapShopifyStatus,
+  normalizeShopifyDomain,
   parseProductsFromJsonl,
   patchShopMetadata,
   resolveLanguage,
@@ -147,26 +148,34 @@ describe("mapShopifyCurrencyCode", () => {
 });
 
 describe("buildShopMetadataPatch", () => {
-  it("includes supported currency and language", () => {
+  it("includes shopify domain, supported currency, and language", () => {
     assert.deepEqual(
-      buildShopMetadataPatch({
-        primaryLocale: "de-AT",
-        currencyCode: "EUR",
-      }),
+      buildShopMetadataPatch(
+        {
+          primaryLocale: "de-AT",
+          currencyCode: "EUR",
+        },
+        "My-Shop.MyShopify.com ",
+      ),
       {
+        shopifyDomain: "my-shop.myshopify.com",
         shopifyLanguage: "de",
         shopifyCurrency: "EUR",
       },
     );
   });
 
-  it("omits unknown metadata fields", () => {
+  it("omits unknown metadata fields while keeping known domain", () => {
     assert.deepEqual(
-      buildShopMetadataPatch({
-        primaryLocale: "sv-SE",
-        currencyCode: "EUR",
-      }),
+      buildShopMetadataPatch(
+        {
+          primaryLocale: "sv-SE",
+          currencyCode: "EUR",
+        },
+        "my-shop.myshopify.com",
+      ),
       {
+        shopifyDomain: "my-shop.myshopify.com",
         shopifyCurrency: "EUR",
       },
     );
@@ -177,6 +186,20 @@ describe("buildShopMetadataPatch", () => {
       }),
       null,
     );
+  });
+});
+
+describe("normalizeShopifyDomain", () => {
+  it("trims and lowercases the known shopify domain", () => {
+    assert.equal(
+      normalizeShopifyDomain(" My-Shop.MyShopify.com "),
+      "my-shop.myshopify.com",
+    );
+  });
+
+  it("returns undefined when shopify domain is missing", () => {
+    assert.equal(normalizeShopifyDomain(undefined), undefined);
+    assert.equal(normalizeShopifyDomain("   "), undefined);
   });
 });
 
@@ -589,6 +612,7 @@ describe("patchShopMetadata", () => {
       );
       assert.equal(received.headers.get("x-api-key"), "api-key-456");
       assert.deepEqual(await received.json(), {
+        shopifyDomain: "my-shop.myshopify.com",
         shopifyCurrency: "EUR",
       });
 
@@ -609,6 +633,7 @@ describe("patchShopMetadata", () => {
           primaryLocale: "sv-SE",
           currencyCode: "EUR",
         },
+        "my-shop.myshopify.com",
       );
 
       assert.equal(patched, true);
@@ -618,7 +643,43 @@ describe("patchShopMetadata", () => {
     }
   });
 
-  it("skips the patch request entirely when metadata is unknown", async () => {
+  it("patches the known shopify domain even when currency and language are unknown", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
+      const received =
+        request instanceof Request ? request : new Request(request);
+      assert.deepEqual(await received.json(), {
+        shopifyDomain: "my-shop.myshopify.com",
+      });
+
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const patched = await patchShopMetadata(
+        "https://api.test.com",
+        "shop-id-123",
+        "api-key-456",
+        {
+          primaryLocale: undefined,
+          currencyCode: "SEK",
+        },
+        "my-shop.myshopify.com",
+      );
+
+      assert.equal(patched, true);
+      assert.equal(fetchMock.mock.calls.length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("skips the patch request entirely when no shop metadata or domain is known", async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = mock.fn(async () => {
       throw new Error("fetch should not be called");
@@ -688,13 +749,20 @@ describe("triggerBackfill", () => {
     });
     const kv = makeKv();
     const originalFetch = globalThis.fetch;
-    const fetchMock = mock.fn(
-      async () =>
-        new Response("{}", {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    );
+    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
+      const received =
+        request instanceof Request ? request : new Request(request);
+      assert.deepEqual(await received.json(), {
+        shopifyDomain: "my-shop.myshopify.com",
+        shopifyLanguage: "de",
+        shopifyCurrency: "EUR",
+      });
+
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
 
     globalThis.fetch = fetchMock as typeof fetch;
 
