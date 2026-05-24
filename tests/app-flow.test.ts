@@ -34,10 +34,7 @@ describe("public install flow", () => {
     // embedded iframe. Those requests must reach /app so authenticate.admin()
     // can do the token exchange instead of triggering a login() OAuth
     // redirect inside the iframe (which breaks framing).
-    assert.match(
-      marketingRoute,
-      /url\.searchParams\.get\(["']host["']\)/,
-    );
+    assert.match(marketingRoute, /url\.searchParams\.get\(["']host["']\)/);
     assert.match(
       marketingRoute,
       /\/app\?\$\{url\.searchParams\.toString\(\)\}/,
