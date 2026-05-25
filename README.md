@@ -73,6 +73,18 @@ If you stay on the default config, use:
 npm run deploy
 ```
 
+Tagged releases such as `1.2.3` trigger `.github/workflows/deploy.yml`, which:
+
+- runs `npm ci`, `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`
+- deploys the web app to Cloudflare Workers
+- deploys and then releases the Shopify app with the `prod` config using the tag as the app version
+
+Configure these GitHub Actions secrets before using the workflow:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `SHOPIFY_APP_AUTOMATION_TOKEN`
+
 ## Local development
 
 1. Install dependencies:
