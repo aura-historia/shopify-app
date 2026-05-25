@@ -133,9 +133,10 @@ export default function MarketingIndex() {
             </h1>
             <p className={styles.lead}>
               You aren't really supposed to see this page. How have you got
-              here? Usually Shopify installs from the Shopify App-Store
-              automatically pre-configures your shop. You're not lost though -
-              you can proceed by entering your Shopify App-Domain below.
+              here? Usually Shopify installs our app from the Shopify App-Store
+              and automatically pre-configures it for your shop. You're not lost
+              though - you can proceed by entering your Shopify App-Domain
+              below.
             </p>
 
             <div className={styles.buttonRow}>
