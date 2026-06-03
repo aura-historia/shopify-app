@@ -51,7 +51,7 @@
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.14",
-    "wrangler": "^4.95.0"
+    "wrangler": "^4.97.0"
   },
   "overrides": {
     "p-map": "^4.0.0"
