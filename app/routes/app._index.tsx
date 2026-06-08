@@ -235,7 +235,7 @@ export default function AppIndex() {
       ? "OAuth environment incomplete"
       : "OAuth connection failed";
   const statusDescription = isConnected
-    ? "This Shopify installation is mapped to Aura Historia. The access token is stored securely and is never shown in the embedded app."
+    ? "This Shopify installation is mapped to Aura Historia."
     : integration.status === "config_missing"
       ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
       : "The automatic OAuth flow did not finish. Reopen the app to retry once the issue below is resolved.";
@@ -249,10 +249,11 @@ export default function AppIndex() {
             Aura Historia connects automatically.
           </h1>
           <p className={styles.lead}>
-            No manual Shop-ID or API-Key entry is required. Shopify approval
-            starts an Aura Historia OAuth authorization-code flow, stores the
-            resulting access token securely, maps the partner shop ID, and
-            queues the existing product backfill.
+            Aura Historia usually is automatically connected. You can check the
+            status below. If it didn't connect, you can manually connect it by
+            clicking
+            <em> "Connect Aura Historia manually"</em>. You can disconnect or
+            uninstall this Shopify App at any time.
           </p>
         </div>
 
@@ -358,13 +359,6 @@ export default function AppIndex() {
             </button>
           </Form>
         </div>
-        <p className={styles.fieldHint}>
-          {isConnected
-            ? "The current OAuth connection is valid, so the manual connect CTA stays disabled. Use the secondary CTA to revoke the stored Aura Historia token and disconnect this shop."
-            : canManualConnect
-              ? "Use this CTA if you want to explicitly restart the Aura Historia OAuth connection flow."
-              : "Manual connect becomes available once the app can safely retry OAuth from this shop context."}
-        </p>
         {actionData?.disconnected ? (
           <p className={styles.successText}>
             Aura Historia was disconnected for this shop.
