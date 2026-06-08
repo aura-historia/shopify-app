@@ -31,7 +31,7 @@ interface LegacyShopCredentialsRecord {
 const SHOP_CREDENTIALS_KEY_PREFIX = "aura-historia:shop-credentials:";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ACCESS_TOKEN_PATTERN = /^aurahistoria_[A-Za-z0-9-]+_[A-Za-z0-9-]+$/;
+const ACCESS_TOKEN_PATTERN = /^aurahistoria(?:_[A-Za-z0-9-]+){2,}$/;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object");
@@ -99,8 +99,9 @@ export function getAuraHistoriaAccessTokenPreview(accessToken: string) {
     return undefined;
   }
 
-  const [prefix, shortKey] = accessToken.split("_");
-  return `${prefix}_${shortKey}_…`;
+  const parts = accessToken.split("_");
+  parts.pop(); // Remove longkey
+  return `${parts.join("_")}_****`;
 }
 
 export function toPublicShopCredentialsRecord(

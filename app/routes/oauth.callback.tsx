@@ -28,15 +28,6 @@ const legalLinks = [
 
 type BackfillStatus = "queued" | "missing_shopify_session" | "not_queued";
 
-function waitUntil(ctx: unknown, promise: Promise<unknown>) {
-  const waitUntilContext = ctx as {
-    waitUntil?: (promise: Promise<unknown>) => void;
-  };
-  if (typeof waitUntilContext.waitUntil === "function") {
-    waitUntilContext.waitUntil(promise);
-  }
-}
-
 async function queueInitialBackfill({
   context,
   shopDomain,
@@ -55,19 +46,16 @@ async function queueInitialBackfill({
     const { admin } = await shopify.unauthenticated.admin(shopDomain);
     const graphqlRequest = createAdminGraphqlRequest(admin);
 
-    waitUntil(
-      context.cloudflare.ctx,
-      triggerBackfill(
-        graphqlRequest,
-        context.cloudflare.env.KV,
-        shopDomain,
-        shopId,
-        accessToken,
-        apiBaseUrl,
-      ),
+    const submitted = await triggerBackfill(
+      graphqlRequest,
+      context.cloudflare.env.KV,
+      shopDomain,
+      shopId,
+      accessToken,
+      apiBaseUrl,
     );
 
-    return "queued";
+    return submitted ? "queued" : "not_queued";
   } catch (error) {
     if (error instanceof Error && error.name === "SessionNotFoundError") {
       console.error(

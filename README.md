@@ -140,6 +140,9 @@ Configure these GitHub Actions secrets before using the workflow:
    npm run dev:tunnel
    ```
 
+   This uses `shopify.app.tunnel.toml`, where the `bulk_operations/finish`
+   webhook is relative so Shopify CLI can point it at the active tunnel URL.
+
 ### Localhost mode caveat
 
 Shopify localhost mode does not support features that directly call your machine, including webhooks. To keep `shopify app dev --use-localhost` working, the `app/uninstalled` webhook stays pinned to the deployed app URL instead of a relative local path.
@@ -149,8 +152,12 @@ That means:
 - Product webhooks still go to AWS EventBridge.
 - Compliance webhooks still go to AWS EventBridge.
 - `app/uninstalled` cleanup remains implemented in this repo, but it is not locally exercised through localhost mode.
-- Local SQLite session rows can remain stale after uninstall or reinstall testing in localhost mode because the uninstall webhook does not hit your machine.
-- Use `npm run dev:tunnel` when you need to test direct webhook delivery into the app itself.
+- Initial backfill submission can start in localhost mode, but the
+  `bulk_operations/finish` callback is not locally delivered there.
+- Local SQLite session rows can remain stale after uninstall or reinstall testing
+  in localhost mode because the uninstall webhook does not hit your machine.
+- Use `npm run dev:tunnel` when you need to test direct webhook delivery into the
+  app itself, including initial backfill completion.
 
 ## Runtime requirements
 

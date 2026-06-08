@@ -804,7 +804,7 @@ describe("triggerBackfill", () => {
     }));
     const kv = makeKv();
 
-    await triggerBackfill(
+    const submitted = await triggerBackfill(
       graphqlRequest,
       kv as never,
       "shop.com",
@@ -812,6 +812,8 @@ describe("triggerBackfill", () => {
       "access-token",
       "https://api.test.com",
     );
+
+    assert.equal(submitted, false);
   });
 
   it("stores backfill context in KV on success", async () => {
@@ -862,7 +864,7 @@ describe("triggerBackfill", () => {
     globalThis.fetch = fetchMock as typeof fetch;
 
     try {
-      await triggerBackfill(
+      const submitted = await triggerBackfill(
         graphqlRequest,
         kv as never,
         "my-shop.myshopify.com",
@@ -870,6 +872,8 @@ describe("triggerBackfill", () => {
         "access-token-456",
         "https://api.test.com",
       );
+
+      assert.equal(submitted, true);
 
       const stored = await loadBackfillContext(
         kv as never,
@@ -925,7 +929,7 @@ describe("triggerBackfill", () => {
     globalThis.fetch = fetchMock as typeof fetch;
 
     try {
-      await triggerBackfill(
+      const submitted = await triggerBackfill(
         graphqlRequest,
         kv as never,
         "my-shop.myshopify.com",
@@ -933,6 +937,8 @@ describe("triggerBackfill", () => {
         "access-token-456",
         "https://api.test.com",
       );
+
+      assert.equal(submitted, true);
 
       const stored = await loadBackfillContext(
         kv as never,
@@ -984,13 +990,25 @@ describe("backfill configuration", () => {
     assert.match(content, /webhooks\/bulk-operations\/finish/);
   });
 
+  it("declares a tunnel-local bulk_operations/finish webhook in shopify.app.tunnel.toml", () => {
+    const content = readFileSync(
+      resolve(process.cwd(), "shopify.app.tunnel.toml"),
+      "utf8",
+    );
+    assert.match(content, /bulk_operations\/finish/);
+    assert.match(content, /uri = "\/webhooks\/bulk-operations\/finish"/);
+  });
+
   it("declares bulk_operations/finish webhook in shopify.app.prod.toml", () => {
     const content = readFileSync(
       resolve(process.cwd(), "shopify.app.prod.toml"),
       "utf8",
     );
     assert.match(content, /bulk_operations\/finish/);
-    assert.match(content, /webhooks\/bulk-operations\/finish/);
+    assert.match(
+      content,
+      /https:\/\/shopify\.aura-historia\.com\/webhooks\/bulk-operations\/finish/,
+    );
   });
 
   it("includes read_locales scope in shopify.app.toml", () => {

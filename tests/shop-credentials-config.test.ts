@@ -23,10 +23,16 @@ describe("shop OAuth credentials configuration", () => {
   it("validates the expected shop ID and access token formats", () => {
     const validShopId = randomUUID();
     const validAccessToken = "aurahistoria_partner_1234567890abcdef";
+    const validMultiSegmentAccessToken =
+      "aurahistoria_partner_access_1234567890abcdef";
 
     assert.equal(isValidShopId(validShopId), true);
     assert.equal(isValidShopId("not-a-uuid"), false);
     assert.equal(isValidAuraHistoriaAccessToken(validAccessToken), true);
+    assert.equal(
+      isValidAuraHistoriaAccessToken(validMultiSegmentAccessToken),
+      true,
+    );
     assert.equal(
       isValidAuraHistoriaAccessToken("aurahistoria_missingtail"),
       false,
@@ -88,6 +94,16 @@ describe("shop OAuth credentials configuration", () => {
     assert.equal(
       getAuraHistoriaAccessTokenPreview("aurahistoria_partner_abcdef123456"),
       "aurahistoria_partner_…",
+    );
+    assert.equal(
+      getAuraHistoriaAccessTokenPreview(
+        "aurahistoria_partner_access_abcdef123456",
+      ),
+      "aurahistoria_partner_…",
+    );
+    assert.equal(
+      getAuraHistoriaAccessTokenPreview("aurahistoria_abcdef123456_secret"),
+      "aurahistoria_abcdef123456_…",
     );
     assert.equal(getAuraHistoriaAccessTokenPreview("invalid-token"), undefined);
   });

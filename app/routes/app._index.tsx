@@ -286,7 +286,7 @@ export default function AppIndex() {
         <h2 className={styles.cardTitle}>Aura Historia integration status</h2>
         <ul className={styles.topicList}>
           <li className={styles.topicItem}>
-            <span className={styles.topicName}>OAuth access token</span>
+            <span className={styles.topicName}>OAuth Access-Token</span>
             <span className={styles.topicDescription}>
               {credentials?.hasAccessToken
                 ? `${credentials.accessTokenPreview ?? "aurahistoria_…"}.`
@@ -295,14 +295,14 @@ export default function AppIndex() {
           </li>
           <li className={styles.topicItem}>
             <span className={styles.topicName}>
-              Aura Historia partner shop ID
+              Aura Historia Partner-Shop ID
             </span>
             <span className={styles.topicDescription}>
               {credentials?.shopId ?? "Not mapped yet."}
             </span>
           </li>
           <li className={styles.topicItem}>
-            <span className={styles.topicName}>Initial backfill</span>
+            <span className={styles.topicName}>Initial Product-Backfill</span>
             <span className={styles.topicDescription}>
               {getBackfillMessage(integration.backfill)}
             </span>

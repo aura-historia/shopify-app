@@ -746,7 +746,7 @@ export async function triggerBackfill(
   shopId: string,
   accessToken: string,
   apiBaseUrl: string,
-): Promise<void> {
+): Promise<boolean> {
   let patchMetadataPromise: Promise<void> | undefined;
 
   try {
@@ -786,8 +786,10 @@ export async function triggerBackfill(
     console.log(
       `Backfill bulk operation submitted for ${shopDomain}: ${bulkOperationId}`,
     );
+    return true;
   } catch (error) {
     console.error(`Failed to submit backfill for ${shopDomain}:`, error);
+    return false;
   } finally {
     await patchMetadataPromise;
   }

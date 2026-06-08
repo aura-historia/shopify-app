@@ -15,7 +15,10 @@ describe("tooling configuration", () => {
   });
 
   it("keeps a tunnel-based dev command for direct webhook testing", () => {
-    assert.equal(packageJson.scripts["dev:tunnel"], "shopify app dev");
+    assert.equal(
+      packageJson.scripts["dev:tunnel"],
+      "shopify app dev --config=tunnel",
+    );
   });
 
   it("uses biome for linting", () => {
