@@ -4,7 +4,7 @@
   "scripts": {
     "build": "react-router build",
     "dev": "shopify app dev --use-localhost",
-    "dev:tunnel": "shopify app dev",
+    "dev:tunnel": "shopify app dev --config=tunnel",
     "config:use:prod": "shopify app config use prod",
     "cf-deploy": "npm run build && wrangler deploy",
     "deploy": "shopify app deploy",

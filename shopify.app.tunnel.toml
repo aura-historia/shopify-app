@@ -1,0 +1,44 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+# Tunnel development configuration for direct app webhook delivery.
+# Default localhost/stage uses `shopify.app.toml`; production uses `shopify.app.prod.toml`.
+
+client_id = "c16ab3575bcbffd285d378b5caaeb0f8"
+name = "aura-historia-partner-connect"
+application_url = "https://shopify.aura-historia.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,read_locales"
+optional_scopes = []
+use_legacy_install_flow = false
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/create", "products/update", "products/delete"]
+  uri = "arn:aws:events:eu-central-1::event-source/aws.partner/shopify.com/359227195393/aura-historia-backend-dev"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "https://shopify.aura-historia.com/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = ["bulk_operations/finish"]
+  uri = "/webhooks/bulk-operations/finish"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "arn:aws:events:eu-central-1::event-source/aws.partner/shopify.com/359227195393/aura-historia-backend-dev"
+
+[auth]
+redirect_urls = [
+  "https://shopify.aura-historia.com/auth/callback",
+]
+
+[app_preferences]
+url = "https://shopify.aura-historia.com/app"
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true

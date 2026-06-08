@@ -140,11 +140,15 @@ const turndown = new TurndownService({
 
 export interface BackfillContext {
   shopId: string;
-  apiKey: string;
+  accessToken?: string;
+  /** Legacy field kept so in-flight pre-OAuth backfill contexts can still finish. */
+  apiKey?: string;
   apiBaseUrl: string;
   primaryLocale: string;
   currencyCode: string;
   shopDomain: string;
+  /** Legacy field from early OAuth backfill contexts; new jobs load the offline session. */
+  shopifyAccessToken?: string;
   bulkOperationId: string;
   createdAt: string;
 }
@@ -156,13 +160,20 @@ export interface ShopMetadata {
 
 interface GraphqlResponse {
   data?: Record<string, unknown>;
-  errors?: Array<{ message: string }>;
+  errors?: unknown;
 }
 
 export type GraphqlRequestFn = (
   query: string,
   variables: Record<string, unknown>,
 ) => Promise<GraphqlResponse>;
+
+export interface ShopifyAdminGraphqlClient {
+  graphql: (
+    query: string,
+    options?: { variables?: Record<string, unknown> },
+  ) => Promise<Response>;
+}
 
 export interface BulkJsonlProduct {
   id: string;
@@ -176,6 +187,63 @@ export interface BulkJsonlProduct {
 // ---------------------------------------------------------------------------
 // Utility functions
 // ---------------------------------------------------------------------------
+
+function stringifyGraphqlError(error: unknown): string {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
+  return String(error);
+}
+
+function collectGraphqlErrorMessages(errors: unknown): string[] {
+  if (!errors) {
+    return [];
+  }
+
+  if (Array.isArray(errors)) {
+    return errors
+      .flatMap((error) => collectGraphqlErrorMessages(error))
+      .filter(Boolean);
+  }
+
+  if (typeof errors === "string") {
+    return errors ? [errors] : [];
+  }
+
+  if (errors && typeof errors === "object") {
+    const nestedErrors =
+      (errors as { graphQLErrors?: unknown; errors?: unknown }).graphQLErrors ??
+      (errors as { errors?: unknown }).errors;
+
+    if (nestedErrors && nestedErrors !== errors) {
+      const nestedMessages = collectGraphqlErrorMessages(nestedErrors);
+      if (nestedMessages.length > 0) {
+        return nestedMessages;
+      }
+    }
+  }
+
+  return [stringifyGraphqlError(errors)];
+}
+
+function formatGraphqlErrors(errors: unknown): string | null {
+  const messages = collectGraphqlErrorMessages(errors);
+  return messages.length > 0 ? messages.join(", ") : null;
+}
 
 export function extractShopifyNumericId(gid: string): string {
   const parts = gid.split("/");
@@ -422,7 +490,7 @@ interface ShopMetadataResponse {
     shopLocales?: ShopLocale[];
     shop?: { currencyCode: string };
   };
-  errors?: Array<{ message: string }>;
+  errors?: unknown;
 }
 
 export async function fetchShopMetadata(
@@ -433,10 +501,9 @@ export async function fetchShopMetadata(
     {},
   )) as ShopMetadataResponse;
 
-  if (response.errors?.length) {
-    throw new Error(
-      `Failed to fetch shop metadata: ${response.errors.map((e) => e.message).join(", ")}`,
-    );
+  const errorMessage = formatGraphqlErrors(response.errors);
+  if (errorMessage) {
+    throw new Error(`Failed to fetch shop metadata: ${errorMessage}`);
   }
 
   const locales = response.data?.shopLocales ?? [];
@@ -458,7 +525,7 @@ interface BulkOperationSubmitResponse {
       userErrors?: Array<{ field: string[]; message: string }>;
     };
   };
-  errors?: Array<{ message: string }>;
+  errors?: unknown;
 }
 
 export async function submitBulkOperation(
@@ -468,10 +535,9 @@ export async function submitBulkOperation(
     query: BULK_PRODUCTS_QUERY,
   })) as BulkOperationSubmitResponse;
 
-  if (response.errors?.length) {
-    throw new Error(
-      `Bulk operation submission failed: ${response.errors.map((e) => e.message).join(", ")}`,
-    );
+  const errorMessage = formatGraphqlErrors(response.errors);
+  if (errorMessage) {
+    throw new Error(`Bulk operation submission failed: ${errorMessage}`);
   }
 
   const result = response.data?.bulkOperationRunQuery;
@@ -491,6 +557,19 @@ export async function submitBulkOperation(
 }
 
 // ---------------------------------------------------------------------------
+// Shopify Admin GraphQL helpers
+// ---------------------------------------------------------------------------
+
+export function createAdminGraphqlRequest(
+  admin: ShopifyAdminGraphqlClient,
+): GraphqlRequestFn {
+  return async (query, variables) => {
+    const response = await admin.graphql(query, { variables });
+    return response.json() as Promise<GraphqlResponse>;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Bulk operation result fetching (used in webhook handler)
 // ---------------------------------------------------------------------------
 
@@ -503,40 +582,24 @@ interface BulkOperationNodeResponse {
       url: string | null;
     } | null;
   };
-  errors?: Array<{ message: string }>;
+  errors?: unknown;
 }
 
 export async function fetchBulkOperationResultUrl(
-  shop: string,
-  accessToken: string,
-  apiVersion: string,
+  graphqlRequest: GraphqlRequestFn,
   bulkOperationId: string,
 ): Promise<string | null> {
-  const response = await fetch(
-    `https://${shop}/admin/api/${apiVersion}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify({
-        query: BULK_OPERATION_STATUS_QUERY,
-        variables: { id: bulkOperationId },
-      }),
-    },
-  );
+  const json = (await graphqlRequest(BULK_OPERATION_STATUS_QUERY, {
+    id: bulkOperationId,
+  })) as BulkOperationNodeResponse;
 
-  const json = (await response.json()) as BulkOperationNodeResponse;
-
-  if (json.errors?.length) {
-    throw new Error(
-      `Failed to query bulk operation: ${json.errors.map((e) => e.message).join(", ")}`,
-    );
+  const errorMessage = formatGraphqlErrors(json.errors);
+  if (errorMessage) {
+    throw new Error(`Failed to query bulk operation: ${errorMessage}`);
   }
 
   const node = json.data?.node;
-  if (!node || node.status !== "COMPLETED") {
+  if (node?.status !== "COMPLETED") {
     return null;
   }
 
@@ -551,7 +614,7 @@ async function sendProductBatch(
   products: PutProductData[],
   apiBaseUrl: string,
   shopId: string,
-  apiKey: string,
+  accessToken: string,
 ): Promise<string[]> {
   const client = createClient({ baseUrl: apiBaseUrl });
   const { putPartnerProducts } = await import("./generated/api/sdk.gen");
@@ -561,7 +624,7 @@ async function sendProductBatch(
     body: products,
     path: { shopId },
     headers: {
-      "x-api-key": apiKey,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 
@@ -576,7 +639,7 @@ async function sendProductBatch(
 export async function patchShopMetadata(
   apiBaseUrl: string,
   shopId: string,
-  apiKey: string,
+  accessToken: string,
   metadata: ShopMetadata,
   shopDomain?: string,
 ): Promise<boolean> {
@@ -593,7 +656,7 @@ export async function patchShopMetadata(
     body,
     path: { shopId },
     headers: {
-      "x-api-key": apiKey,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 
@@ -637,6 +700,11 @@ export async function processBackfillResults(
   );
 
   const allFailures: string[] = [];
+  const accessToken = context.accessToken ?? context.apiKey;
+
+  if (!accessToken) {
+    throw new Error("Missing Aura Historia access token for backfill context");
+  }
 
   for (let i = 0; i < transformed.length; i += BATCH_SIZE) {
     const batch = transformed.slice(i, i + BATCH_SIZE);
@@ -645,7 +713,7 @@ export async function processBackfillResults(
         batch,
         context.apiBaseUrl,
         context.shopId,
-        context.apiKey,
+        accessToken,
       );
       allFailures.push(...failures);
     } catch (error) {
@@ -662,7 +730,7 @@ export async function processBackfillResults(
 }
 
 // ---------------------------------------------------------------------------
-// Trigger backfill (called from credentials save action)
+// Trigger backfill (called after OAuth configuration)
 // ---------------------------------------------------------------------------
 
 export async function triggerBackfill(
@@ -676,9 +744,9 @@ export async function triggerBackfill(
   },
   shopDomain: string,
   shopId: string,
-  apiKey: string,
+  accessToken: string,
   apiBaseUrl: string,
-): Promise<void> {
+): Promise<boolean> {
   let patchMetadataPromise: Promise<void> | undefined;
 
   try {
@@ -686,7 +754,7 @@ export async function triggerBackfill(
     patchMetadataPromise = patchShopMetadata(
       apiBaseUrl,
       shopId,
-      apiKey,
+      accessToken,
       metadata,
       shopDomain,
     )
@@ -706,7 +774,7 @@ export async function triggerBackfill(
 
     await storeBackfillContext(kv, shopDomain, {
       shopId,
-      apiKey,
+      accessToken,
       apiBaseUrl,
       primaryLocale: metadata.primaryLocale ?? "en",
       currencyCode: metadata.currencyCode ?? "EUR",
@@ -718,8 +786,10 @@ export async function triggerBackfill(
     console.log(
       `Backfill bulk operation submitted for ${shopDomain}: ${bulkOperationId}`,
     );
+    return true;
   } catch (error) {
     console.error(`Failed to submit backfill for ${shopDomain}:`, error);
+    return false;
   } finally {
     await patchMetadataPromise;
   }

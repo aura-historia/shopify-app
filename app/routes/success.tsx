@@ -15,6 +15,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop");
   const host = url.searchParams.get("host");
+  const integration = url.searchParams.get("integration");
+  const missingConfig = url.searchParams.get("missing");
 
   const appSearchParams = new URLSearchParams();
   if (shop) {
@@ -27,11 +29,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     shop,
     appUrl: shop ? `/app?${appSearchParams.toString()}` : null,
+    integration,
+    missingConfig,
   };
 };
 
 export default function SuccessPage() {
-  const { appUrl, shop } = useLoaderData<typeof loader>();
+  const { appUrl, integration, missingConfig, shop } =
+    useLoaderData<typeof loader>();
+  const oauthConfigMissing = integration === "oauth-config-missing";
 
   return (
     <div className={styles.page}>
@@ -43,8 +49,9 @@ export default function SuccessPage() {
               Aura Historia
             </a>
             <p className={styles.brandMeta}>
-              The Shopify connection is now active and Aura Historia can begin
-              receiving product lifecycle changes over Amazon EventBridge.
+              {oauthConfigMissing
+                ? "Shopify approval is complete, but Aura Historia OAuth still needs runtime configuration."
+                : "The Shopify connection is now active and Aura Historia can begin receiving product lifecycle changes over Amazon EventBridge."}
             </p>
           </div>
           <nav className={styles.headerLinks} aria-label="Aura Historia links">
@@ -64,9 +71,17 @@ export default function SuccessPage() {
 
         <main className={styles.hero}>
           <section className={styles.introPanel}>
-            <span className={styles.tag}>Success</span>
+            <span className={styles.tag}>
+              {oauthConfigMissing ? "Action required" : "Success"}
+            </span>
             <h1 className={`${styles.title} ${styles.wideTitle}`}>
-              {shop ? (
+              {oauthConfigMissing ? (
+                <>
+                  Shopify approved{" "}
+                  <span className={styles.shopName}>{shop}</span>, but OAuth is
+                  not configured yet.
+                </>
+              ) : shop ? (
                 <>
                   Aura Historia is now connected to{" "}
                   <span className={styles.shopName}>{shop}</span>.
@@ -76,9 +91,11 @@ export default function SuccessPage() {
               )}
             </h1>
             <p className={styles.lead}>
-              Shopify approval is complete. Product create, update, and delete
-              events can now flow through the configured EventBridge pipeline to
-              Aura Historia.
+              {oauthConfigMissing
+                ? `Set the missing OAuth environment variables${
+                    missingConfig ? ` (${missingConfig})` : ""
+                  } and reopen the embedded app to complete Aura Historia authorization automatically.`
+                : "Shopify approval is complete. Product create, update, and delete events can now flow through the configured EventBridge pipeline to Aura Historia."}
             </p>
 
             <div className={styles.buttonRow}>
@@ -99,9 +116,9 @@ export default function SuccessPage() {
               <article className={styles.surfaceCard}>
                 <h2 className={styles.cardTitle}>What happens next</h2>
                 <p className={styles.cardBody}>
-                  Aura Historia now listens for Shopify product lifecycle events
-                  and keeps the public-app compliance subscriptions in place for
-                  ongoing App Store eligibility.
+                  {oauthConfigMissing
+                    ? "The Shopify installation is approved, but the Aura Historia access token and partner shop ID were not stored because OAuth client settings are missing."
+                    : "Aura Historia now listens for Shopify product lifecycle events and keeps the public-app compliance subscriptions in place for ongoing App Store eligibility."}
                 </p>
               </article>
               <article className={styles.surfaceCardStrong}>
