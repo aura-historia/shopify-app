@@ -96,7 +96,7 @@ function waitUntil(ctx: unknown, promise: Promise<unknown>) {
 function getBackfillMessage(backfillStatus: string | null) {
   switch (backfillStatus) {
     case "queued":
-      return "Initial product backfill was queued. Shopify will notify this app through bulk_operations/finish when the export is ready.";
+      return "Initial product backfill was queued.";
     case "missing_shopify_session":
       return "OAuth credentials were saved, but no offline Shopify session was available to queue the initial backfill.";
     case "not_queued":
@@ -289,7 +289,7 @@ export default function AppIndex() {
             <span className={styles.topicName}>OAuth access token</span>
             <span className={styles.topicDescription}>
               {credentials?.hasAccessToken
-                ? `Stored securely as ${credentials.accessTokenPreview ?? "aurahistoria_…"} (${credentials.tokenType ?? "BEARER"}; long token segment hidden).`
+                ? `${credentials.accessTokenPreview ?? "aurahistoria_…"}.`
                 : "Not stored yet."}
             </span>
           </li>
@@ -299,15 +299,6 @@ export default function AppIndex() {
             </span>
             <span className={styles.topicDescription}>
               {credentials?.shopId ?? "Not mapped yet."}
-            </span>
-          </li>
-          <li className={styles.topicItem}>
-            <span className={styles.topicName}>
-              Shopify store name from state
-            </span>
-            <span className={styles.topicDescription}>
-              {credentials?.shopifyStoreName ??
-                "Waiting for the OAuth callback state."}
             </span>
           </li>
           <li className={styles.topicItem}>
