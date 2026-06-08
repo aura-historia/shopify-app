@@ -52,7 +52,6 @@ jobs:
           npx --yes @shopify/cli@latest
           app deploy
           --config=prod
-          --allow-updates
           --no-release
           --version="${GITHUB_REF_NAME}"
           --message="GitHub Actions deploy for ${GITHUB_REF_NAME}"
