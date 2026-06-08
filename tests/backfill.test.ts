@@ -7,7 +7,9 @@ import {
   type BulkJsonlProduct,
   buildShopMetadataPatch,
   clearBackfillContext,
+  createAdminGraphqlRequest,
   extractShopifyNumericId,
+  fetchBulkOperationResultUrl,
   fetchShopMetadata,
   type GraphqlRequestFn,
   htmlToMarkdown,
@@ -440,7 +442,7 @@ describe("backfill context KV helpers", () => {
     const kv = makeKv();
     const ctx: BackfillContext = {
       shopId: "550e8400-e29b-41d4-a716-446655440000",
-      apiKey: "aurahistoria_partner_test",
+      accessToken: "aurahistoria_partner_test",
       apiBaseUrl: "https://api.test.com",
       primaryLocale: "de",
       currencyCode: "EUR",
@@ -468,7 +470,7 @@ describe("backfill context KV helpers", () => {
     const kv = makeKv();
     const ctx: BackfillContext = {
       shopId: "test",
-      apiKey: "test",
+      accessToken: "test",
       apiBaseUrl: "test",
       primaryLocale: "en",
       currencyCode: "EUR",
@@ -487,7 +489,7 @@ describe("backfill context KV helpers", () => {
     const kv = makeKv();
     await storeBackfillContext(kv as never, "shop.com", {
       shopId: "test",
-      apiKey: "test",
+      accessToken: "test",
       apiBaseUrl: "test",
       primaryLocale: "en",
       currencyCode: "EUR",
@@ -537,6 +539,46 @@ describe("fetchShopMetadata", () => {
     await assert.rejects(() => fetchShopMetadata(graphqlRequest), {
       message: /Unauthorized/,
     });
+  });
+
+  it("throws useful messages for Shopify string error payloads", async () => {
+    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
+      errors: "Not Found",
+    }));
+
+    await assert.rejects(() => fetchShopMetadata(graphqlRequest), {
+      message: "Failed to fetch shop metadata: Not Found",
+    });
+  });
+});
+
+describe("createAdminGraphqlRequest", () => {
+  it("adapts the Shopify Admin GraphQL client to the backfill request shape", async () => {
+    const admin = {
+      graphql: mock.fn(
+        async (
+          query: string,
+          options?: { variables?: Record<string, unknown> },
+        ) => {
+          assert.equal(query, "query Test($id: ID!) { node(id: $id) { id } }");
+          assert.deepEqual(options?.variables, {
+            id: "gid://shopify/Product/1",
+          });
+          return new Response(JSON.stringify({ data: { ok: true } }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      ),
+    };
+
+    const graphqlRequest = createAdminGraphqlRequest(admin);
+    const response = await graphqlRequest(
+      "query Test($id: ID!) { node(id: $id) { id } }",
+      { id: "gid://shopify/Product/1" },
+    );
+
+    assert.deepEqual(response, { data: { ok: true } });
+    assert.equal(admin.graphql.mock.calls.length, 1);
   });
 });
 
@@ -599,6 +641,52 @@ describe("submitBulkOperation", () => {
   });
 });
 
+describe("fetchBulkOperationResultUrl", () => {
+  it("returns the completed bulk operation download URL", async () => {
+    const graphqlRequest: GraphqlRequestFn = mock.fn(
+      async (_query, variables) => {
+        assert.deepEqual(variables, { id: "gid://shopify/BulkOperation/123" });
+        return {
+          data: {
+            node: {
+              id: "gid://shopify/BulkOperation/123",
+              status: "COMPLETED",
+              errorCode: null,
+              url: "https://cdn.shopify.com/bulk/result.jsonl",
+            },
+          },
+        };
+      },
+    );
+
+    assert.equal(
+      await fetchBulkOperationResultUrl(
+        graphqlRequest,
+        "gid://shopify/BulkOperation/123",
+      ),
+      "https://cdn.shopify.com/bulk/result.jsonl",
+    );
+  });
+
+  it("throws useful messages for Shopify string error payloads", async () => {
+    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
+      errors: "Invalid API key or access token",
+    }));
+
+    await assert.rejects(
+      () =>
+        fetchBulkOperationResultUrl(
+          graphqlRequest,
+          "gid://shopify/BulkOperation/123",
+        ),
+      {
+        message:
+          "Failed to query bulk operation: Invalid API key or access token",
+      },
+    );
+  });
+});
+
 describe("patchShopMetadata", () => {
   it("patches only known shop metadata fields", async () => {
     const originalFetch = globalThis.fetch;
@@ -610,7 +698,10 @@ describe("patchShopMetadata", () => {
         received.url,
         "https://api.test.com/api/v1/shops/shop-id-123",
       );
-      assert.equal(received.headers.get("x-api-key"), "api-key-456");
+      assert.equal(
+        received.headers.get("Authorization"),
+        "Bearer access-token-456",
+      );
       assert.deepEqual(await received.json(), {
         shopifyDomain: "my-shop.myshopify.com",
         shopifyCurrency: "EUR",
@@ -628,7 +719,7 @@ describe("patchShopMetadata", () => {
       const patched = await patchShopMetadata(
         "https://api.test.com",
         "shop-id-123",
-        "api-key-456",
+        "access-token-456",
         {
           primaryLocale: "sv-SE",
           currencyCode: "EUR",
@@ -664,7 +755,7 @@ describe("patchShopMetadata", () => {
       const patched = await patchShopMetadata(
         "https://api.test.com",
         "shop-id-123",
-        "api-key-456",
+        "access-token-456",
         {
           primaryLocale: undefined,
           currencyCode: "SEK",
@@ -691,7 +782,7 @@ describe("patchShopMetadata", () => {
       const patched = await patchShopMetadata(
         "https://api.test.com",
         "shop-id-123",
-        "api-key-456",
+        "access-token-456",
         {
           primaryLocale: undefined,
           currencyCode: "SEK",
@@ -718,7 +809,7 @@ describe("triggerBackfill", () => {
       kv as never,
       "shop.com",
       "shop-id",
-      "api-key",
+      "access-token",
       "https://api.test.com",
     );
   });
@@ -752,6 +843,10 @@ describe("triggerBackfill", () => {
     const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
       const received =
         request instanceof Request ? request : new Request(request);
+      assert.equal(
+        received.headers.get("Authorization"),
+        "Bearer access-token-456",
+      );
       assert.deepEqual(await received.json(), {
         shopifyDomain: "my-shop.myshopify.com",
         shopifyLanguage: "de",
@@ -772,7 +867,7 @@ describe("triggerBackfill", () => {
         kv as never,
         "my-shop.myshopify.com",
         "shop-id-123",
-        "api-key-456",
+        "access-token-456",
         "https://api.test.com",
       );
 
@@ -782,6 +877,8 @@ describe("triggerBackfill", () => {
       );
       assert.ok(stored);
       assert.equal(stored.shopId, "shop-id-123");
+      assert.equal(stored.accessToken, "access-token-456");
+      assert.equal(stored.shopifyAccessToken, undefined);
       assert.equal(stored.primaryLocale, "de");
       assert.equal(stored.currencyCode, "EUR");
       assert.equal(stored.bulkOperationId, "gid://shopify/BulkOperation/789");
@@ -833,7 +930,7 @@ describe("triggerBackfill", () => {
         kv as never,
         "my-shop.myshopify.com",
         "shop-id-123",
-        "api-key-456",
+        "access-token-456",
         "https://api.test.com",
       );
 
@@ -851,12 +948,15 @@ describe("triggerBackfill", () => {
 });
 
 describe("backfill configuration", () => {
-  it("includes AURA_HISTORIA_API_BASE_URL in wrangler vars", () => {
+  it("includes Aura Historia API and OAuth vars in wrangler vars", () => {
     const content = readFileSync(
       resolve(process.cwd(), "wrangler.jsonc"),
       "utf8",
     );
     assert.match(content, /AURA_HISTORIA_API_BASE_URL/);
+    assert.match(content, /AURA_HISTORIA_OAUTH_ENV/);
+    assert.match(content, /AURA_HISTORIA_OAUTH_SCOPE/);
+    assert.match(content, /SCOPES/);
   });
 
   it("has a pinned commit in openapi-ts config", () => {

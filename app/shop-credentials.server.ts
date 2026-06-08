@@ -2,46 +2,84 @@ import type { KVNamespace } from "@cloudflare/workers-types";
 
 export interface ShopCredentialsValues {
   shopId: string;
-  apiKey: string;
-}
-
-export interface ShopCredentialsErrors {
-  shopId?: string;
-  apiKey?: string;
-}
-
-export interface ShopCredentialsValidationResult {
-  errors: ShopCredentialsErrors;
-  isValid: boolean;
-  values: ShopCredentialsValues;
+  accessToken: string;
+  shopifyStoreName?: string;
+  tokenType?: string;
+  scope?: string;
 }
 
 export interface ShopCredentialsRecord extends ShopCredentialsValues {
   updatedAt: string;
 }
 
+export interface PublicShopCredentialsRecord {
+  shopId: string;
+  hasAccessToken: boolean;
+  accessTokenPreview?: string;
+  shopifyStoreName?: string;
+  tokenType?: string;
+  scope?: string;
+  updatedAt: string;
+}
+
+interface LegacyShopCredentialsRecord {
+  shopId: string;
+  apiKey: string;
+  updatedAt: string;
+}
+
 const SHOP_CREDENTIALS_KEY_PREFIX = "aura-historia:shop-credentials:";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const API_KEY_PATTERN = /^aurahistoria_[A-Za-z0-9-]+_[A-Za-z0-9-]+$/;
+const ACCESS_TOKEN_PATTERN = /^aurahistoria_[A-Za-z0-9-]+_[A-Za-z0-9-]+$/;
 
-function getFormValue(value: FormDataEntryValue | null) {
-  return typeof value === "string" ? value.trim() : "";
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object");
+}
+
+function isLegacyShopCredentialsRecord(
+  value: unknown,
+): value is LegacyShopCredentialsRecord {
+  return Boolean(
+    isObject(value) &&
+      typeof value.shopId === "string" &&
+      typeof value.apiKey === "string" &&
+      typeof value.updatedAt === "string",
+  );
 }
 
 function isShopCredentialsRecord(
   value: unknown,
 ): value is ShopCredentialsRecord {
   return Boolean(
-    value &&
-      typeof value === "object" &&
-      "shopId" in value &&
+    isObject(value) &&
       typeof value.shopId === "string" &&
-      "apiKey" in value &&
-      typeof value.apiKey === "string" &&
-      "updatedAt" in value &&
-      typeof value.updatedAt === "string",
+      typeof value.accessToken === "string" &&
+      typeof value.updatedAt === "string" &&
+      (value.shopifyStoreName === undefined ||
+        typeof value.shopifyStoreName === "string") &&
+      (value.tokenType === undefined || typeof value.tokenType === "string") &&
+      (value.scope === undefined || typeof value.scope === "string"),
   );
+}
+
+function normalizeShopCredentialsRecord(
+  value: unknown,
+): ShopCredentialsRecord | null {
+  if (isShopCredentialsRecord(value)) {
+    return value;
+  }
+
+  if (isLegacyShopCredentialsRecord(value)) {
+    return {
+      shopId: value.shopId,
+      accessToken: value.apiKey,
+      tokenType: "BEARER",
+      updatedAt: value.updatedAt,
+    };
+  }
+
+  return null;
 }
 
 export function getShopCredentialsStorageKey(shop: string) {
@@ -52,35 +90,30 @@ export function isValidShopId(value: string) {
   return UUID_PATTERN.test(value);
 }
 
-export function isValidAuraHistoriaApiKey(value: string) {
-  return API_KEY_PATTERN.test(value);
+export function isValidAuraHistoriaAccessToken(value: string) {
+  return ACCESS_TOKEN_PATTERN.test(value);
 }
 
-export function validateShopCredentialsFormData(
-  formData: FormData,
-): ShopCredentialsValidationResult {
-  const values = {
-    shopId: getFormValue(formData.get("shopId")),
-    apiKey: getFormValue(formData.get("apiKey")),
-  };
-  const errors: ShopCredentialsErrors = {};
-
-  if (!values.shopId) {
-    errors.shopId = "Please enter your Aura Historia shop ID";
-  } else if (!isValidShopId(values.shopId)) {
-    errors.shopId = "Please enter a valid UUID shop ID";
+export function getAuraHistoriaAccessTokenPreview(accessToken: string) {
+  if (!isValidAuraHistoriaAccessToken(accessToken)) {
+    return undefined;
   }
 
-  if (!values.apiKey) {
-    errors.apiKey = "Please enter your Aura Historia API key";
-  } else if (!isValidAuraHistoriaApiKey(values.apiKey)) {
-    errors.apiKey = "Use the format aurahistoria_[short key]_[long key]";
-  }
+  const [prefix, shortKey] = accessToken.split("_");
+  return `${prefix}_${shortKey}_…`;
+}
 
+export function toPublicShopCredentialsRecord(
+  record: ShopCredentialsRecord,
+): PublicShopCredentialsRecord {
   return {
-    errors,
-    isValid: Object.keys(errors).length === 0,
-    values,
+    shopId: record.shopId,
+    hasAccessToken: true,
+    accessTokenPreview: getAuraHistoriaAccessTokenPreview(record.accessToken),
+    shopifyStoreName: record.shopifyStoreName,
+    tokenType: record.tokenType,
+    scope: record.scope,
+    updatedAt: record.updatedAt,
   };
 }
 
@@ -96,7 +129,7 @@ export async function loadShopCredentials(
 
   try {
     const parsedValue: unknown = JSON.parse(rawValue);
-    return isShopCredentialsRecord(parsedValue) ? parsedValue : null;
+    return normalizeShopCredentialsRecord(parsedValue);
   } catch {
     return null;
   }
@@ -109,10 +142,15 @@ export async function saveShopCredentials(
 ): Promise<ShopCredentialsRecord> {
   const record = {
     ...values,
+    tokenType: values.tokenType ?? "BEARER",
     updatedAt: new Date().toISOString(),
   };
 
   await kv.put(getShopCredentialsStorageKey(shop), JSON.stringify(record));
 
   return record;
+}
+
+export async function clearShopCredentials(kv: KVNamespace, shop: string) {
+  await kv.delete(getShopCredentialsStorageKey(shop));
 }

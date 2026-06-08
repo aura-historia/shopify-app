@@ -17,6 +17,14 @@ export interface CloudflareShopifyEnv {
   SHOPIFY_API_VERSION?: string;
   SHOP_CUSTOM_DOMAIN?: string;
   AURA_HISTORIA_API_BASE_URL?: string;
+  AURA_HISTORIA_ENV?: string;
+  AURA_HISTORIA_OAUTH_ENV?: string;
+  AURA_HISTORIA_OAUTH_AUTHORIZE_URL?: string;
+  AURA_HISTORIA_OAUTH_TOKEN_URL?: string;
+  AURA_HISTORIA_OAUTH_REDIRECT_URI?: string;
+  AURA_HISTORIA_OAUTH_CLIENT_ID?: string;
+  AURA_HISTORIA_OAUTH_CLIENT_SECRET?: string;
+  AURA_HISTORIA_OAUTH_SCOPE?: string;
 }
 
 const apiVersion = ApiVersion.April26;

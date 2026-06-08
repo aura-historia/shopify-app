@@ -1,5 +1,6 @@
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { buildAuraHistoriaOAuthAuthorizeUrl } from "../oauth.server";
 import { getShopify } from "../shopify.server";
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
@@ -8,8 +9,22 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     await getShopify(context).authenticate.admin(request);
 
   if (url.pathname.endsWith("/callback")) {
+    const authorization = await buildAuraHistoriaOAuthAuthorizeUrl(
+      context.cloudflare.env.KV,
+      context.cloudflare.env,
+      session.shop,
+    );
+
+    if (authorization.isReady) {
+      return redirect(authorization.url.toString(), {
+        target: "_parent",
+      });
+    }
+
     const successParams = new URLSearchParams();
     successParams.set("shop", session.shop);
+    successParams.set("integration", "oauth-config-missing");
+    successParams.set("missing", authorization.missing.join(","));
 
     const host = url.searchParams.get("host");
     if (host) {

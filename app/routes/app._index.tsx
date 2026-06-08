@@ -1,18 +1,24 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { Form, useActionData, useLoaderData } from "react-router";
+import { createAdminGraphqlRequest, triggerBackfill } from "../backfill.server";
 import {
-  Form,
-  useActionData,
-  useLoaderData,
-  useNavigation,
-} from "react-router";
-import type { GraphqlRequestFn } from "../backfill.server";
-import { triggerBackfill } from "../backfill.server";
+  buildAuraHistoriaOAuthAuthorizeUrl,
+  getAuraHistoriaApiBaseUrl,
+  getAuraHistoriaOAuthConfig,
+  getMissingAuraHistoriaOAuthConfig,
+  revokeAuraHistoriaAccessToken,
+  summarizeOAuthError,
+} from "../oauth.server";
 import {
+  clearShopCredentials,
   loadShopCredentials,
-  saveShopCredentials,
-  validateShopCredentialsFormData,
+  toPublicShopCredentialsRecord,
 } from "../shop-credentials.server";
 import { getShopify } from "../shopify.server";
+import {
+  createShopifyAdminAppUrl,
+  getShopifyStoreName,
+} from "../shopify-admin-url";
 import styles from "../styles/app-home.module.css";
 
 const accessSections = [
@@ -76,78 +82,163 @@ const accessSections = [
   },
 ];
 
+type IntegrationStatus = "connected" | "failed" | "config_missing";
+
+function waitUntil(ctx: unknown, promise: Promise<unknown>) {
+  const waitUntilContext = ctx as {
+    waitUntil?: (promise: Promise<unknown>) => void;
+  };
+  if (typeof waitUntilContext.waitUntil === "function") {
+    waitUntilContext.waitUntil(promise);
+  }
+}
+
+function getBackfillMessage(backfillStatus: string | null) {
+  switch (backfillStatus) {
+    case "queued":
+      return "Initial product backfill was queued. Shopify will notify this app through bulk_operations/finish when the export is ready.";
+    case "missing_shopify_session":
+      return "OAuth credentials were saved, but no offline Shopify session was available to queue the initial backfill.";
+    case "not_queued":
+      return "OAuth credentials were saved, but the initial backfill could not be queued. Product webhooks remain configured.";
+    default:
+      return "Backfill status is not part of this launch. Product webhooks remain configured for ongoing changes.";
+  }
+}
+
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
-  const { session } = await getShopify(context).authenticate.admin(request);
+  const url = new URL(request.url);
+  const shopify = getShopify(context);
+  const { session, redirect, admin } =
+    await shopify.authenticate.admin(request);
   const credentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     session.shop,
   );
+  const oauthResult = url.searchParams.get("oauth");
+  const manualConnect = url.searchParams.get("manual_connect") === "1";
+
+  if (!credentials && (manualConnect || oauthResult !== "failed")) {
+    const authorization = await buildAuraHistoriaOAuthAuthorizeUrl(
+      context.cloudflare.env.KV,
+      context.cloudflare.env,
+      session.shop,
+    );
+
+    if (authorization.isReady) {
+      return redirect(authorization.url.toString(), {
+        target: "_parent",
+      });
+    }
+  }
+
+  const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
+  const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
+  const status: IntegrationStatus = credentials
+    ? "connected"
+    : missingConfig.length > 0
+      ? "config_missing"
+      : "failed";
+  let backfill = url.searchParams.get("backfill");
+
+  if (
+    credentials &&
+    (backfill === "missing_shopify_session" || backfill === "not_queued")
+  ) {
+    const apiBaseUrl =
+      getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
+      new URL(config.tokenUrl).origin;
+    const graphqlRequest = createAdminGraphqlRequest(admin);
+
+    waitUntil(
+      context.cloudflare.ctx,
+      triggerBackfill(
+        graphqlRequest,
+        context.cloudflare.env.KV,
+        session.shop,
+        credentials.shopId,
+        credentials.accessToken,
+        apiBaseUrl,
+      ),
+    );
+    backfill = "queued";
+  }
 
   return {
-    credentials,
+    credentials: credentials
+      ? toPublicShopCredentialsRecord(credentials)
+      : null,
     shop: session.shop,
     scopes:
       session.scope
         ?.split(",")
         .map((scope: string) => scope.trim())
         .filter(Boolean) ?? [],
+    integration: {
+      status,
+      error: url.searchParams.get("oauth_error"),
+      backfill,
+      missingConfig,
+    },
   };
 };
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
-  const shopify = getShopify(context);
-  const { session, admin } = await shopify.authenticate.admin(request);
-  const validation = validateShopCredentialsFormData(await request.formData());
+  const { session } = await getShopify(context).authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
 
-  if (!validation.isValid) {
-    return {
-      ...validation,
-      saved: false,
-    };
+  if (intent !== "disconnect") {
+    return { disconnected: false, error: "Unknown action." };
   }
 
-  await saveShopCredentials(
+  const credentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     session.shop,
-    validation.values,
   );
-
-  const apiBaseUrl =
-    context.cloudflare.env.AURA_HISTORIA_API_BASE_URL ??
-    process.env.AURA_HISTORIA_API_BASE_URL;
-
-  if (apiBaseUrl) {
-    const graphqlRequest: GraphqlRequestFn = async (query, variables) => {
-      const response = await admin.graphql(query, { variables });
-      return response.json();
-    };
-
-    context.cloudflare.ctx.waitUntil(
-      triggerBackfill(
-        graphqlRequest,
-        context.cloudflare.env.KV,
-        session.shop,
-        validation.values.shopId,
-        validation.values.apiKey,
-        apiBaseUrl,
-      ),
-    );
+  if (!credentials) {
+    return { disconnected: false, error: "Aura Historia is not connected." };
   }
 
-  return {
-    ...validation,
-    saved: true,
-  };
+  const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
+  const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
+
+  try {
+    if (missingConfig.length === 0) {
+      await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
+    }
+  } catch (error) {
+    return {
+      disconnected: false,
+      error: `Disconnect failed: ${summarizeOAuthError(error)}`,
+    };
+  }
+
+  await clearShopCredentials(context.cloudflare.env.KV, session.shop);
+
+  return { disconnected: true, error: null };
 };
 
 export default function AppIndex() {
-  const { credentials, shop, scopes } = useLoaderData<typeof loader>();
+  const { credentials, integration, shop, scopes } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
-  const navigation = useNavigation();
-  const values = actionData?.values ??
-    credentials ?? { apiKey: "", shopId: "" };
-  const isSubmitting = navigation.state === "submitting";
-  const hasSavedCredentials = Boolean(credentials);
+  const isConnected = integration.status === "connected";
+  const canManualConnect = integration.status === "failed";
+  const canDisconnect = isConnected;
+  const manualConnectUrl = createShopifyAdminAppUrl(getShopifyStoreName(shop), {
+    manual_connect: "1",
+  }).toString();
+  const statusLabel = isConnected
+    ? "Connected via OAuth"
+    : integration.status === "config_missing"
+      ? "OAuth environment incomplete"
+      : "OAuth connection failed";
+  const statusDescription = isConnected
+    ? "This Shopify installation is mapped to Aura Historia. The access token is stored securely and is never shown in the embedded app."
+    : integration.status === "config_missing"
+      ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
+      : "The automatic OAuth flow did not finish. Reopen the app to retry once the issue below is resolved.";
 
   return (
     <div className={styles.page}>
@@ -155,12 +246,13 @@ export default function AppIndex() {
         <div>
           <p className={styles.eyebrow}>Shopify partner connect</p>
           <h1 className={styles.heading}>
-            Connect your Shop to Aura Historia.
+            Aura Historia connects automatically.
           </h1>
           <p className={styles.lead}>
-            Use the Shop-ID and API-Key provided by Aura Historia and enter them
-            below to map this Shopify installation to the correct Aura Historia
-            account.
+            No manual Shop-ID or API-Key entry is required. Shopify approval
+            starts an Aura Historia OAuth authorization-code flow, stores the
+            resulting access token securely, maps the partner shop ID, and
+            queues the existing product backfill.
           </p>
         </div>
 
@@ -184,60 +276,112 @@ export default function AppIndex() {
           <section className={styles.panel}>
             <h2 className={styles.cardTitle}>Configuration status</h2>
             <p className={styles.cardBody}>
-              {hasSavedCredentials
-                ? "The latest Aura Historia credentials are already loaded for this shop."
-                : "This installation still needs its Aura Historia shop ID and API key."}
+              <strong>{statusLabel}.</strong> {statusDescription}
             </p>
           </section>
         </aside>
       </section>
 
-      <section className={styles.panel}>
-        <h2 className={styles.cardTitle}>Aura Historia credentials</h2>
-        <Form className={styles.form} method="post">
-          <label className={styles.field} htmlFor="shopId">
-            Aura Historia Shop-ID
-            <input
-              className={styles.input}
-              id="shopId"
-              name="shopId"
-              type="text"
-              autoComplete="off"
-              defaultValue={values.shopId}
-              placeholder="123e4567-e89b-12d3-a456-426614174000"
-              required
-              spellCheck={false}
-            />
-          </label>
-          {actionData?.errors.shopId ? (
-            <p className={styles.errorText}>{actionData.errors.shopId}</p>
-          ) : null}
-          <label className={styles.field} htmlFor="apiKey">
-            Aura Historia API-Key
-            <input
-              className={styles.input}
-              id="apiKey"
-              name="apiKey"
-              type="text"
-              autoComplete="off"
-              defaultValue={values.apiKey}
-              placeholder="aurahistoria_partner_verylongsecretkey"
-              required
-              spellCheck={false}
-            />
-          </label>
-          {actionData?.errors.apiKey ? (
-            <p className={styles.errorText}>{actionData.errors.apiKey}</p>
-          ) : null}
-          {actionData?.saved ? (
-            <p className={styles.successText}>
-              Configuration saved for {shop}.
-            </p>
-          ) : null}
-          <button className={styles.primaryButton} type="submit">
-            {isSubmitting ? "Saving…" : "Save configuration"}
-          </button>
-        </Form>
+      <section className={isConnected ? styles.panel : styles.panelMuted}>
+        <h2 className={styles.cardTitle}>Aura Historia integration status</h2>
+        <ul className={styles.topicList}>
+          <li className={styles.topicItem}>
+            <span className={styles.topicName}>OAuth access token</span>
+            <span className={styles.topicDescription}>
+              {credentials?.hasAccessToken
+                ? `Stored securely as ${credentials.accessTokenPreview ?? "aurahistoria_…"} (${credentials.tokenType ?? "BEARER"}; long token segment hidden).`
+                : "Not stored yet."}
+            </span>
+          </li>
+          <li className={styles.topicItem}>
+            <span className={styles.topicName}>
+              Aura Historia partner shop ID
+            </span>
+            <span className={styles.topicDescription}>
+              {credentials?.shopId ?? "Not mapped yet."}
+            </span>
+          </li>
+          <li className={styles.topicItem}>
+            <span className={styles.topicName}>
+              Shopify store name from state
+            </span>
+            <span className={styles.topicDescription}>
+              {credentials?.shopifyStoreName ??
+                "Waiting for the OAuth callback state."}
+            </span>
+          </li>
+          <li className={styles.topicItem}>
+            <span className={styles.topicName}>Initial backfill</span>
+            <span className={styles.topicDescription}>
+              {getBackfillMessage(integration.backfill)}
+            </span>
+          </li>
+          <li className={styles.topicItem}>
+            <span className={styles.topicName}>Last configured</span>
+            <span className={styles.topicDescription}>
+              {credentials?.updatedAt ?? "Not configured yet."}
+            </span>
+          </li>
+        </ul>
+
+        {integration.status === "failed" && integration.error ? (
+          <p className={styles.errorText}>OAuth error: {integration.error}</p>
+        ) : null}
+
+        {integration.status === "config_missing" ? (
+          <p className={styles.errorText}>
+            Missing environment variables:{" "}
+            {integration.missingConfig.join(", ")}
+          </p>
+        ) : null}
+
+        <div className={styles.linkRow}>
+          {canManualConnect ? (
+            <a
+              className={styles.primaryButton}
+              href={manualConnectUrl}
+              target="_top"
+            >
+              Connect Aura Historia manually
+            </a>
+          ) : (
+            <button
+              className={`${styles.primaryButton} ${styles.disabledButton}`}
+              type="button"
+              disabled
+            >
+              {isConnected
+                ? "Aura Historia already connected"
+                : "Manual connect unavailable"}
+            </button>
+          )}
+
+          <Form method="post">
+            <input type="hidden" name="intent" value="disconnect" />
+            <button
+              className={`${styles.secondaryButton} ${!canDisconnect ? styles.disabledButton : ""}`}
+              type="submit"
+              disabled={!canDisconnect}
+            >
+              Disconnect Aura Historia
+            </button>
+          </Form>
+        </div>
+        <p className={styles.fieldHint}>
+          {isConnected
+            ? "The current OAuth connection is valid, so the manual connect CTA stays disabled. Use the secondary CTA to revoke the stored Aura Historia token and disconnect this shop."
+            : canManualConnect
+              ? "Use this CTA if you want to explicitly restart the Aura Historia OAuth connection flow."
+              : "Manual connect becomes available once the app can safely retry OAuth from this shop context."}
+        </p>
+        {actionData?.disconnected ? (
+          <p className={styles.successText}>
+            Aura Historia was disconnected for this shop.
+          </p>
+        ) : null}
+        {actionData?.error ? (
+          <p className={styles.errorText}>{actionData.error}</p>
+        ) : null}
       </section>
 
       <section className={styles.grid}>

@@ -207,23 +207,49 @@
   font-weight: 700;
 }
 
-.primaryButton {
+.primaryButton,
+.secondaryButton {
   justify-self: start;
   padding: 0.8rem 1.15rem;
-  border: 0;
   border-radius: 0.25rem;
-  background: linear-gradient(135deg, #42120f 0%, #5d2722 100%);
-  color: #f7f4e9;
   font: inherit;
   font-weight: 700;
   transition:
     transform 300ms ease-out,
-    background-color 300ms ease-out;
+    background-color 300ms ease-out,
+    border-color 300ms ease-out,
+    color 300ms ease-out;
   cursor: pointer;
 }
 
-.primaryButton:hover {
+.primaryButton {
+  border: 0;
+  background: linear-gradient(135deg, #42120f 0%, #5d2722 100%);
+  color: #f7f4e9;
+}
+
+.secondaryButton {
+  border: 1px solid rgba(66, 18, 15, 0.24);
+  background: rgba(255, 255, 255, 0.58);
+  color: #42120f;
+}
+
+.primaryButton:hover,
+.secondaryButton:hover {
   transform: translateY(-1px);
+}
+
+.secondaryButton:hover {
+  background: rgba(239, 223, 216, 0.72);
+}
+
+.disabledButton,
+.disabledButton:hover {
+  border-color: transparent;
+  background: #c5beb6;
+  color: rgba(28, 28, 22, 0.72);
+  cursor: not-allowed;
+  transform: none;
 }
 
 @media (min-width: 64rem) {

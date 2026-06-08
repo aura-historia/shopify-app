@@ -108,9 +108,9 @@ export default function AuthLogin() {
             <section className={styles.surfaceCardStrong}>
               <h2 className={styles.cardTitle}>After approval</h2>
               <p className={styles.cardBody}>
-                Once Shopify completes approval, the app redirects to a success
-                page with the next step back into Aura Historia and links to the
-                main Aura Historia website.
+                Once Shopify completes approval, the app continues directly into
+                the Aura Historia OAuth flow and then returns the merchant to
+                the embedded Shopify admin app with a clear status.
               </p>
             </section>
 

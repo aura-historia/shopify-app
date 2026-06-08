@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import {
   clearBackfillContext,
+  createAdminGraphqlRequest,
   fetchBulkOperationResultUrl,
   loadBackfillContext,
   processBackfillResults,
@@ -39,25 +40,10 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   context.cloudflare.ctx.waitUntil(
     (async () => {
       try {
-        const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
-        const offlineSession = sessions.find(
-          (s: { isOnline?: boolean }) => !s.isOnline,
-        );
-
-        if (!offlineSession?.accessToken) {
-          console.error(
-            `No offline session found for ${shop}, cannot process backfill`,
-          );
-          return;
-        }
-
-        const apiVersion =
-          context.cloudflare.env.SHOPIFY_API_VERSION ?? "2026-04";
-
+        const { admin } = await shopify.unauthenticated.admin(shop);
+        const graphqlRequest = createAdminGraphqlRequest(admin);
         const jsonlUrl = await fetchBulkOperationResultUrl(
-          shop,
-          offlineSession.accessToken,
-          apiVersion,
+          graphqlRequest,
           bulkOpId,
         );
 

@@ -45,9 +45,11 @@ describe("public install flow", () => {
     );
   });
 
-  it("redirects the auth callback to the success page", () => {
-    assert.match(authRoute, /\/success\?\$\{successParams\.toString\(\)\}/);
+  it("starts Aura Historia OAuth after the Shopify auth callback", () => {
+    assert.ok(authRoute.includes("buildAuraHistoriaOAuthAuthorizeUrl"));
+    assert.match(authRoute, /authorization\.url\.toString\(\)/);
     assert.ok(authRoute.includes('target: "_parent"'));
+    assert.ok(authRoute.includes('integration", "oauth-config-missing"'));
   });
 
   it("keeps review links and contact details on the success page", () => {
@@ -76,5 +78,13 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("products/update"));
     assert.ok(appIndexRoute.includes("app/uninstalled"));
     assert.ok(appIndexRoute.includes("read_locales"));
+    assert.ok(appIndexRoute.includes("No manual Shop-ID or API-Key"));
+    assert.ok(appIndexRoute.includes("Connected via OAuth"));
+    assert.ok(appIndexRoute.includes("Connect Aura Historia manually"));
+    assert.ok(appIndexRoute.includes("Disconnect Aura Historia"));
+    assert.ok(appIndexRoute.includes('name="intent" value="disconnect"'));
+    assert.ok(appIndexRoute.includes("manual_connect"));
+    assert.ok(appIndexRoute.includes("accessTokenPreview"));
+    assert.ok(appIndexRoute.includes("secondaryButton"));
   });
 });
