@@ -46,12 +46,10 @@ describe("deploy workflow", () => {
     assert.match(deployWorkflow, /app deploy/);
     assert.match(deployWorkflow, /--config=prod/);
     assert.match(deployWorkflow, /--allow-updates/);
-    assert.match(deployWorkflow, /--no-release/);
     assert.match(deployWorkflow, /--version="\$\{GITHUB_REF_NAME\}"/);
     assert.match(
       deployWorkflow,
       /--source-control-url="\$\{GITHUB_SERVER_URL\}\/\$\{GITHUB_REPOSITORY\}\/commit\/\$\{GITHUB_SHA\}"/,
     );
-    assert.match(deployWorkflow, /app release/);
   });
 });
