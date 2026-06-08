@@ -45,24 +45,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
 
-      - name: Deploy Shopify app version
+      - name: Deploy & release Shopify app version
         env:
           SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
         run: >
           npx --yes @shopify/cli@latest
           app deploy
           --config=prod
-          --no-release
+          --allow-updates
           --version="${GITHUB_REF_NAME}"
           --message="GitHub Actions deploy for ${GITHUB_REF_NAME}"
           --source-control-url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
-
-      - name: Release Shopify app version
-        env:
-          SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
-        run: >
-          npx --yes @shopify/cli@latest
-          app release
-          --config=prod
-          --allow-updates
-          --version="${GITHUB_REF_NAME}"
