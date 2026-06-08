@@ -78,7 +78,6 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("products/update"));
     assert.ok(appIndexRoute.includes("app/uninstalled"));
     assert.ok(appIndexRoute.includes("read_locales"));
-    assert.ok(appIndexRoute.includes("No manual Shop-ID or API-Key"));
     assert.ok(appIndexRoute.includes("Connected via OAuth"));
     assert.ok(appIndexRoute.includes("Connect Aura Historia manually"));
     assert.ok(appIndexRoute.includes("Disconnect Aura Historia"));

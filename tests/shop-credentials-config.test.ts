@@ -22,9 +22,9 @@ const appRoute = readFileSync(
 describe("shop OAuth credentials configuration", () => {
   it("validates the expected shop ID and access token formats", () => {
     const validShopId = randomUUID();
-    const validAccessToken = "aurahistoria_partner_1234567890abcdef";
+    const validAccessToken = "aurahistoria_accesstoken_1234567890abcdef";
     const validMultiSegmentAccessToken =
-      "aurahistoria_partner_access_1234567890abcdef";
+      "aurahistoria_accesstoken_access_1234567890abcdef";
 
     assert.equal(isValidShopId(validShopId), true);
     assert.equal(isValidShopId("not-a-uuid"), false);
@@ -57,7 +57,7 @@ describe("shop OAuth credentials configuration", () => {
 
     await saveShopCredentials(kv as never, "example-shop.myshopify.com", {
       shopId: randomUUID(),
-      accessToken: "aurahistoria_partner_abcdef123456",
+      accessToken: "aurahistoria_accesstoken_abcdef123456",
       scope: "products:write",
       shopifyStoreName: "example-shop",
     });
@@ -69,7 +69,7 @@ describe("shop OAuth credentials configuration", () => {
 
     assert.ok(savedRecord);
     assert.match(savedRecord.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
-    assert.equal(savedRecord.accessToken, "aurahistoria_partner_abcdef123456");
+    assert.equal(savedRecord.accessToken, "aurahistoria_accesstoken_abcdef123456");
     assert.equal(savedRecord.tokenType, "BEARER");
     assert.equal(savedRecord.scope, "products:write");
     assert.equal(savedRecord.shopifyStoreName, "example-shop");
@@ -78,7 +78,7 @@ describe("shop OAuth credentials configuration", () => {
   it("keeps the stored access token out of public loader data", async () => {
     const publicRecord = toPublicShopCredentialsRecord({
       shopId: randomUUID(),
-      accessToken: "aurahistoria_partner_abcdef123456",
+      accessToken: "aurahistoria_accesstoken_abcdef123456",
       tokenType: "BEARER",
       scope: "products:write",
       shopifyStoreName: "example-shop",
@@ -86,24 +86,18 @@ describe("shop OAuth credentials configuration", () => {
     });
 
     assert.equal(publicRecord.hasAccessToken, true);
-    assert.equal(publicRecord.accessTokenPreview, "aurahistoria_partner_…");
+    assert.equal(publicRecord.accessTokenPreview, "aurahistoria_accesstoken_****");
     assert.equal("accessToken" in publicRecord, false);
   });
 
   it("returns a safe access token preview with prefix and short key only", () => {
     assert.equal(
-      getAuraHistoriaAccessTokenPreview("aurahistoria_partner_abcdef123456"),
-      "aurahistoria_partner_…",
-    );
-    assert.equal(
-      getAuraHistoriaAccessTokenPreview(
-        "aurahistoria_partner_access_abcdef123456",
-      ),
-      "aurahistoria_partner_…",
+      getAuraHistoriaAccessTokenPreview("aurahistoria_accesstoken_foo_abcdef123456"),
+      "aurahistoria_accesstoken_foo_****",
     );
     assert.equal(
       getAuraHistoriaAccessTokenPreview("aurahistoria_abcdef123456_secret"),
-      "aurahistoria_abcdef123456_…",
+      "aurahistoria_abcdef123456_****",
     );
     assert.equal(getAuraHistoriaAccessTokenPreview("invalid-token"), undefined);
   });
@@ -122,7 +116,7 @@ describe("shop OAuth credentials configuration", () => {
 
     await saveShopCredentials(kv as never, "example-shop.myshopify.com", {
       shopId: randomUUID(),
-      accessToken: "aurahistoria_partner_abcdef123456",
+      accessToken: "aurahistoria_accesstoken_abcdef123456",
     });
 
     await clearShopCredentials(kv as never, "example-shop.myshopify.com");
@@ -146,7 +140,7 @@ describe("shop OAuth credentials configuration", () => {
       getShopCredentialsStorageKey("example-shop.myshopify.com"),
       JSON.stringify({
         shopId: randomUUID(),
-        apiKey: "aurahistoria_partner_legacy",
+        apiKey: "aurahistoria_accesstoken_legacy",
         updatedAt: "2026-06-06T00:00:00.000Z",
       }),
     );
@@ -157,7 +151,7 @@ describe("shop OAuth credentials configuration", () => {
     );
 
     assert.ok(savedRecord);
-    assert.equal(savedRecord.accessToken, "aurahistoria_partner_legacy");
+    assert.equal(savedRecord.accessToken, "aurahistoria_accesstoken_legacy");
     assert.equal(savedRecord.tokenType, "BEARER");
   });
 
