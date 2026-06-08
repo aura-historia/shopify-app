@@ -69,7 +69,10 @@ describe("shop OAuth credentials configuration", () => {
 
     assert.ok(savedRecord);
     assert.match(savedRecord.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
-    assert.equal(savedRecord.accessToken, "aurahistoria_accesstoken_abcdef123456");
+    assert.equal(
+      savedRecord.accessToken,
+      "aurahistoria_accesstoken_abcdef123456",
+    );
     assert.equal(savedRecord.tokenType, "BEARER");
     assert.equal(savedRecord.scope, "products:write");
     assert.equal(savedRecord.shopifyStoreName, "example-shop");
@@ -86,13 +89,18 @@ describe("shop OAuth credentials configuration", () => {
     });
 
     assert.equal(publicRecord.hasAccessToken, true);
-    assert.equal(publicRecord.accessTokenPreview, "aurahistoria_accesstoken_****");
+    assert.equal(
+      publicRecord.accessTokenPreview,
+      "aurahistoria_accesstoken_****",
+    );
     assert.equal("accessToken" in publicRecord, false);
   });
 
   it("returns a safe access token preview with prefix and short key only", () => {
     assert.equal(
-      getAuraHistoriaAccessTokenPreview("aurahistoria_accesstoken_foo_abcdef123456"),
+      getAuraHistoriaAccessTokenPreview(
+        "aurahistoria_accesstoken_foo_abcdef123456",
+      ),
       "aurahistoria_accesstoken_foo_****",
     );
     assert.equal(
