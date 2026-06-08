@@ -2,7 +2,7 @@
 # Default local and stage configuration. Production uses `shopify.app.prod.toml`.
 
 client_id = "c16ab3575bcbffd285d378b5caaeb0f8"
-name = "aura-historia-partner-connect"
+name = "Aura Historia Partner Connect"
 application_url = "https://shopify.aura-historia.com"
 embedded = true
 

@@ -16,6 +16,11 @@ describe("CI workflow", () => {
     assert.match(ciWorkflow, /- build/);
   });
 
+  it("runs supported Node versions from the package engine", () => {
+    assert.match(ciWorkflow, /- 20\.19\.0/);
+    assert.match(ciWorkflow, /- 22\.12\.0/);
+  });
+
   it("installs dependencies with npm ci", () => {
     assert.match(ciWorkflow, /run: npm ci/);
   });

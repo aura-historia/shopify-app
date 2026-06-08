@@ -10,8 +10,8 @@
     "deploy": "shopify app deploy",
     "deploy:prod": "shopify app deploy --config=prod --allow-updates",
     "start": "react-router-serve ./build/server/index.js",
-    "docker-start": "npm run setup && npm run start",
-    "setup": "prisma generate && prisma migrate deploy",
+    "docker-start": "npm run start",
+    "setup": "node -e \"console.log('No setup required: Shopify sessions use Cloudflare KV.')\"",
     "lint": "biome check --files-ignore-unknown=true .",
     "lint:fix": "biome check --write --unsafe --files-ignore-unknown=true .",
     "typecheck": "react-router typegen && tsc --noEmit",
@@ -22,7 +22,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=24.15.0"
+    "node": ">=20.19 <22 || >=22.12"
   },
   "dependencies": {
     "@react-router/dev": "^7.17.0",

@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import { Form, redirect, useLoaderData } from "react-router";
 import { createAdminGraphqlRequest, triggerBackfill } from "../backfill.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
@@ -11,7 +11,10 @@ import {
 } from "../oauth.server";
 import {
   clearShopCredentials,
+  clearShopCredentialsDisconnected,
+  isShopCredentialsDisconnected,
   loadShopCredentials,
+  markShopCredentialsDisconnected,
   toPublicShopCredentialsRecord,
 } from "../shop-credentials.server";
 import { getShopify } from "../shopify.server";
@@ -58,7 +61,8 @@ const accessSections = [
       },
       {
         name: "app/uninstalled",
-        description: "Used so uninstall cleanup can remove stored sessions.",
+        description:
+          "Used so uninstall cleanup can remove stored sessions and connection data.",
       },
     ],
   },
@@ -82,7 +86,11 @@ const accessSections = [
   },
 ];
 
-type IntegrationStatus = "connected" | "failed" | "config_missing";
+type IntegrationStatus =
+  | "connected"
+  | "disconnected"
+  | "failed"
+  | "config_missing";
 
 function waitUntil(ctx: unknown, promise: Promise<unknown>) {
   const waitUntilContext = ctx as {
@@ -111,14 +119,35 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const shopify = getShopify(context);
   const { session, redirect, admin } =
     await shopify.authenticate.admin(request);
-  const credentials = await loadShopCredentials(
+  const storedCredentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     session.shop,
   );
+  const disconnectedByAction = url.searchParams.get("disconnect") === "success";
+  const credentials = disconnectedByAction ? null : storedCredentials;
   const oauthResult = url.searchParams.get("oauth");
   const manualConnect = url.searchParams.get("manual_connect") === "1";
+  const manuallyDisconnected = credentials
+    ? false
+    : disconnectedByAction ||
+      (await isShopCredentialsDisconnected(
+        context.cloudflare.env.KV,
+        session.shop,
+      ));
+  const connectionPaused = manuallyDisconnected && !manualConnect;
 
-  if (!credentials && (manualConnect || oauthResult !== "failed")) {
+  if (manualConnect) {
+    await clearShopCredentialsDisconnected(
+      context.cloudflare.env.KV,
+      session.shop,
+    );
+  }
+
+  if (
+    !credentials &&
+    !connectionPaused &&
+    (manualConnect || oauthResult !== "failed")
+  ) {
     const authorization = await buildAuraHistoriaOAuthAuthorizeUrl(
       context.cloudflare.env.KV,
       context.cloudflare.env,
@@ -136,9 +165,11 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
   const status: IntegrationStatus = credentials
     ? "connected"
-    : missingConfig.length > 0
-      ? "config_missing"
-      : "failed";
+    : connectionPaused
+      ? "disconnected"
+      : missingConfig.length > 0
+        ? "config_missing"
+        : "failed";
   let backfill = url.searchParams.get("backfill");
 
   if (
@@ -177,6 +208,8 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     integration: {
       status,
       error: url.searchParams.get("oauth_error"),
+      disconnectError: url.searchParams.get("disconnect_error"),
+      disconnected: disconnectedByAction,
       backfill,
       missingConfig,
     },
@@ -184,61 +217,79 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
+  const url = new URL(request.url);
   const { session } = await getShopify(context).authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+  const redirectParams = new URLSearchParams(url.searchParams);
+
+  redirectParams.delete("manual_connect");
+  redirectParams.delete("oauth");
+  redirectParams.delete("oauth_error");
+  redirectParams.delete("backfill");
 
   if (intent !== "disconnect") {
-    return { disconnected: false, error: "Unknown action." };
+    redirectParams.set("disconnect_error", "Unknown action.");
+    return redirect(`/app?${redirectParams.toString()}`);
   }
 
   const credentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     session.shop,
   );
-  if (!credentials) {
-    return { disconnected: false, error: "Aura Historia is not connected." };
-  }
 
-  const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
-  const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
+  if (credentials) {
+    const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
+    const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
 
-  try {
     if (missingConfig.length === 0) {
-      await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
+      try {
+        await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
+      } catch (error) {
+        console.warn("Failed to revoke Aura Historia access on disconnect", {
+          shop: session.shop,
+          error: summarizeOAuthError(error),
+        });
+      }
     }
-  } catch (error) {
-    return {
-      disconnected: false,
-      error: `Disconnect failed: ${summarizeOAuthError(error)}`,
-    };
   }
 
   await clearShopCredentials(context.cloudflare.env.KV, session.shop);
+  await markShopCredentialsDisconnected(
+    context.cloudflare.env.KV,
+    session.shop,
+  );
 
-  return { disconnected: true, error: null };
+  redirectParams.set("disconnect", "success");
+  redirectParams.delete("disconnect_error");
+
+  return redirect(`/app?${redirectParams.toString()}`);
 };
 
 export default function AppIndex() {
   const { credentials, integration, shop, scopes } =
     useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
   const isConnected = integration.status === "connected";
-  const canManualConnect = integration.status === "failed";
+  const isDisconnected = integration.status === "disconnected";
+  const canManualConnect = isDisconnected || integration.status === "failed";
   const canDisconnect = isConnected;
   const manualConnectUrl = createShopifyAdminAppUrl(getShopifyStoreName(shop), {
     manual_connect: "1",
   }).toString();
   const statusLabel = isConnected
     ? "Connected via OAuth"
-    : integration.status === "config_missing"
-      ? "OAuth environment incomplete"
-      : "OAuth connection failed";
+    : isDisconnected
+      ? "Disconnected"
+      : integration.status === "config_missing"
+        ? "OAuth environment incomplete"
+        : "OAuth connection failed";
   const statusDescription = isConnected
     ? "This Shopify installation is mapped to Aura Historia."
-    : integration.status === "config_missing"
-      ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
-      : "The automatic OAuth flow did not finish. Reopen the app to retry once the issue below is resolved.";
+    : isDisconnected
+      ? "Aura Historia is disconnected for this shop until you reconnect it."
+      : integration.status === "config_missing"
+        ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
+        : "The automatic OAuth flow did not finish. Reopen the app to retry once the issue below is resolved.";
 
   return (
     <div className={styles.page}>
@@ -249,11 +300,10 @@ export default function AppIndex() {
             Aura Historia connects automatically.
           </h1>
           <p className={styles.lead}>
-            Aura Historia usually is automatically connected. You can check the
-            status below. If it didn't connect, you can manually connect it by
-            clicking
-            <em> "Connect Aura Historia manually"</em>. You can disconnect or
-            uninstall this Shopify App at any time.
+            Check the connection status below. If automatic authorization did
+            not finish, retry the Aura Historia connection from this embedded
+            app. You can disconnect the integration or uninstall the Shopify app
+            at any time.
           </p>
         </div>
 
@@ -287,10 +337,10 @@ export default function AppIndex() {
         <h2 className={styles.cardTitle}>Aura Historia integration status</h2>
         <ul className={styles.topicList}>
           <li className={styles.topicItem}>
-            <span className={styles.topicName}>OAuth Access-Token</span>
+            <span className={styles.topicName}>Aura Historia access</span>
             <span className={styles.topicDescription}>
               {credentials?.hasAccessToken
-                ? `${credentials.accessTokenPreview ?? "aurahistoria_…"}.`
+                ? "Secure token stored."
                 : "Not stored yet."}
             </span>
           </li>
@@ -334,7 +384,9 @@ export default function AppIndex() {
               href={manualConnectUrl}
               target="_top"
             >
-              Connect Aura Historia manually
+              {isDisconnected
+                ? "Reconnect Aura Historia"
+                : "Retry Aura Historia connection"}
             </a>
           ) : (
             <button
@@ -344,7 +396,7 @@ export default function AppIndex() {
             >
               {isConnected
                 ? "Aura Historia already connected"
-                : "Manual connect unavailable"}
+                : "Connection retry unavailable"}
             </button>
           )}
 
@@ -359,13 +411,13 @@ export default function AppIndex() {
             </button>
           </Form>
         </div>
-        {actionData?.disconnected ? (
+        {integration.disconnected ? (
           <p className={styles.successText}>
             Aura Historia was disconnected for this shop.
           </p>
         ) : null}
-        {actionData?.error ? (
-          <p className={styles.errorText}>{actionData.error}</p>
+        {integration.disconnectError ? (
+          <p className={styles.errorText}>{integration.disconnectError}</p>
         ) : null}
       </section>
 

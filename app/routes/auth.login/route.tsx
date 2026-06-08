@@ -1,5 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import type { LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import { getShopify } from "../../shopify.server";
 import styles from "../../styles/public-page.module.css";
 import { loginErrorMessage } from "./error.server";
@@ -19,16 +19,8 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   };
 };
 
-export const action = async ({ request, context }: ActionFunctionArgs) => {
-  return {
-    errors: loginErrorMessage(await getShopify(context).login(request)),
-  };
-};
-
 export default function AuthLogin() {
-  const loaderData = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const { errors } = actionData || loaderData;
+  const { errors } = useLoaderData<typeof loader>();
 
   return (
     <div className={styles.page}>
@@ -40,8 +32,8 @@ export default function AuthLogin() {
               Aura Historia
             </a>
             <p className={styles.brandMeta}>
-              This page is only a fallback for merchants who opened the app URL
-              directly without Shopify sending the store context.
+              Shopify provides the store context for App Store installs and
+              embedded Admin launches.
             </p>
           </div>
           <nav className={styles.headerLinks} aria-label="Aura Historia links">
@@ -61,47 +53,35 @@ export default function AuthLogin() {
 
         <main className={styles.hero}>
           <section className={styles.introPanel}>
-            <span className={styles.tag}>Manual fallback</span>
+            <span className={styles.tag}>Shopify installation</span>
             <h1 className={`${styles.title} ${styles.wideTitle}`}>
-              Continue with your Shopify store domain.
+              Start installation from Shopify.
             </h1>
             <p className={styles.lead}>
-              Public App Store installs usually continue automatically because
-              Shopify provides the store context in the query string. Use this
-              page only when you need to resume approval from a direct app URL.
+              Aura Historia Partner Connect does not collect store domains on
+              this public page. Open the app from the Shopify App Store, Shopify
+              Admin, or the Partner Dashboard install action so Shopify can send
+              the required store context and begin OAuth approval.
             </p>
 
-            <Form className={styles.form} method="post">
-              <label className={styles.label} htmlFor="shop">
-                Shop domain
-                <input
-                  className={styles.input}
-                  id="shop"
-                  name="shop"
-                  type="text"
-                  autoComplete="on"
-                  placeholder="your-store.myshopify.com"
-                />
-              </label>
-              <p className={styles.fieldHint}>
-                Use your permanent shop domain. We will hand the request back to
-                Shopify so the merchant can approve installation.
-              </p>
-              {errors.shop ? (
-                <p className={styles.errorText}>{errors.shop}</p>
-              ) : null}
-              <div className={styles.buttonRow}>
-                <button className={styles.primaryAction} type="submit">
-                  Continue to Shopify approval
-                </button>
-                <a
-                  className={styles.secondaryAction}
-                  href="https://aura-historia.com"
-                >
-                  Visit aura-historia.com
-                </a>
-              </div>
-            </Form>
+            {errors.shop ? (
+              <p className={styles.errorText}>{errors.shop}</p>
+            ) : null}
+
+            <div className={styles.buttonRow}>
+              <a
+                className={styles.primaryAction}
+                href="https://aura-historia.com/partners/shopify"
+              >
+                View setup notes
+              </a>
+              <a
+                className={styles.secondaryAction}
+                href="https://aura-historia.com"
+              >
+                Visit aura-historia.com
+              </a>
+            </div>
           </section>
 
           <aside className={styles.supportPanel}>

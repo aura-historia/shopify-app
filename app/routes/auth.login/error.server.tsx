@@ -7,11 +7,15 @@ interface LoginErrorMessage {
 
 export function loginErrorMessage(loginErrors: LoginError): LoginErrorMessage {
   if (loginErrors?.shop === LoginErrorType.MissingShop) {
-    return { shop: "Please enter your shop domain to continue" };
+    return {
+      shop: "Start installation from Shopify so the store context is included.",
+    };
   }
 
   if (loginErrors?.shop === LoginErrorType.InvalidShop) {
-    return { shop: "Please enter a valid shop domain to continue" };
+    return {
+      shop: "Shopify sent an invalid store context. Reopen the app from Shopify Admin or the App Store.",
+    };
   }
 
   return {};

@@ -10,7 +10,7 @@ A minimal public Shopify app that forwards merchant product lifecycle events to 
   - `customers/data_request`
   - `customers/redact`
   - `shop/redact`
-- Handles `app/uninstalled` in-app so stored Shopify sessions are cleaned up.
+- Handles `app/uninstalled` in-app so stored Shopify sessions, Aura Historia connection credentials, and pending backfill context are cleaned up.
 - Starts Aura Historia OAuth automatically after Shopify approves installation.
 - Stores the Aura Historia partner shop ID plus bearer access token for the shop and queues the existing backfill.
 - Keeps all AWS EventBridge consumers out of this repository.
@@ -31,7 +31,7 @@ After Shopify approves installation, the app now:
 6. stores the returned `partner_shop_id` and access token for the Shopify shop
 7. queues the existing initial backfill and redirects the merchant back to the embedded Shopify admin app
 
-Manual shop-domain entry still exists, but only as a fallback for opening the app URL directly outside Shopify.
+If the app URL is opened without Shopify-provided store context, the public pages explain that installation must start from a Shopify-owned surface instead of collecting a shop domain manually.
 
 ## Webhook delivery
 
@@ -40,6 +40,7 @@ Manual shop-domain entry still exists, but only as a fallback for opening the ap
 | `products/create`, `products/update`, `products/delete` | Aura Historia AWS EventBridge partner source |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia AWS EventBridge partner source |
 | `app/uninstalled` | `https://shopify.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
+| `bulk_operations/finish` | `https://shopify.aura-historia.com/webhooks/bulk-operations/finish` handled by `app/routes/webhooks.bulk-operations.finish.tsx` for initial backfill completion |
 
 ## Public review surfaces
 
@@ -58,7 +59,7 @@ The install-success route lives at `/success`, for example `https://shopify.aura
 This repository intentionally stays small:
 
 - React Router handles install/auth, the embedded app shell, and the public success page.
-- Prisma stores Shopify sessions using SQLite by default.
+- Cloudflare KV stores Shopify sessions and Aura Historia connection metadata.
 - There is no sample GraphQL mutation logic, demo navigation, or placeholder business logic.
 - AWS routing, rules, and consumers live in another repository.
 
@@ -104,13 +105,7 @@ Configure these GitHub Actions secrets before using the workflow:
    npm install
    ```
 
-2. Prepare the local Prisma database:
-
-   ```bash
-   npm run setup
-   ```
-
-3. Configure the Aura Historia OAuth client in your local environment.
+2. Configure the Aura Historia OAuth client in your local environment.
 
    The app reads these runtime variables:
 
@@ -126,7 +121,7 @@ Configure these GitHub Actions secrets before using the workflow:
    - `AURA_HISTORIA_OAUTH_REDIRECT_URI`
    - `AURA_HISTORIA_OAUTH_SCOPE`
 
-4. Start the preferred localhost development flow:
+3. Start the preferred localhost development flow:
 
    ```bash
    npm run dev
@@ -134,7 +129,7 @@ Configure these GitHub Actions secrets before using the workflow:
 
    This runs `shopify app dev --use-localhost`.
 
-5. If you need Shopify to directly invoke the app during development, use tunnel mode instead:
+4. If you need Shopify to directly invoke the app during development, use tunnel mode instead:
 
    ```bash
    npm run dev:tunnel
@@ -161,7 +156,7 @@ That means:
 
 ## Runtime requirements
 
-Use Node.js `20.19.x` or newer in the supported `20` line, or Node.js `22.12.x` or newer.
+Use Node.js `20.19.x` or newer in the supported `20` line, or Node.js `22.12.x` or newer in current/future lines (`>=20.19 <22 || >=22.12`).
 
 ## Quality checks
 
@@ -193,7 +188,12 @@ Before submitting the app for Shopify App Store review:
 
 - Confirm the EventBridge ARN is correct for the target AWS account and region.
 - Confirm the mandatory compliance topics remain subscribed.
+- Confirm the app is listed as free, or implement Shopify App Pricing / Billing API before charging merchants.
+- Confirm the Partner Dashboard and App Store listing name match `Aura Historia Partner Connect`.
 - Confirm your Partner Dashboard listing includes a privacy policy URL.
 - Confirm the configured redirect URLs include the Shopify auth callback URL used by this app.
 - Confirm the Aura Historia OAuth client allows `https://shopify.aura-historia.com/oauth/callback` as a redirect URI.
-- Confirm the public routes still expose privacy, imprint, terms, and `contact@aura-historia.com`. 
+- Confirm the production Worker has `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `AURA_HISTORIA_OAUTH_CLIENT_ID`, and `AURA_HISTORIA_OAUTH_CLIENT_SECRET` configured as secrets.
+- Confirm the public routes still expose privacy, imprint, terms, and `contact@aura-historia.com`.
+- Provide Shopify App Review with current test credentials for Aura Historia OAuth, a development store, and an English screencast showing install, OAuth approval, embedded status, disconnect, uninstall/reinstall, and expected product-sync behavior.
+- Keep the emergency developer contact current in the Partner Dashboard.
