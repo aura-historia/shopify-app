@@ -40,7 +40,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@cloudflare/vite-plugin": "^1.40.0",
-    "@cloudflare/workers-types": "^4.20260607.1",
+    "@cloudflare/workers-types": "^4.20260608.1",
     "@hey-api/openapi-ts": "^0.98.1",
     "@shopify/polaris-types": "1.0.7",
     "@types/node": "^25.9.2",
