@@ -8,6 +8,11 @@ const ciWorkflow = readFileSync(
   "utf8",
 );
 
+const ciNodeVersions = Array.from(
+  ciWorkflow.matchAll(/^\s*-\s+v?(\d+\.\d+\.\d+)\s*$/gm),
+  (match) => match[1],
+);
+
 describe("CI workflow", () => {
   it("runs lint, typecheck, test, and build", () => {
     assert.match(ciWorkflow, /- lint/);
@@ -16,9 +21,8 @@ describe("CI workflow", () => {
     assert.match(ciWorkflow, /- build/);
   });
 
-  it("runs supported Node versions from the package engine", () => {
-    assert.match(ciWorkflow, /- 20\.19\.0/);
-    assert.match(ciWorkflow, /- 22\.12\.0/);
+  it("runs the full supported Node version matrix", () => {
+    assert.deepEqual(ciNodeVersions, ["22.18.0", "24.15.0"]);
   });
 
   it("installs dependencies with npm ci", () => {

@@ -12,7 +12,7 @@ const packageJson = JSON.parse(
 
 describe("tooling configuration", () => {
   it("keeps the Node engine compatible with current Shopify tooling", () => {
-    assert.equal(packageJson.engines.node, ">=20.19 <22 || >=22.12");
+    assert.equal(packageJson.engines.node, ">=22.18");
   });
 
   it("uses localhost mode for the default dev command", () => {
