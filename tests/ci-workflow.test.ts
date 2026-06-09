@@ -22,7 +22,7 @@ describe("CI workflow", () => {
   });
 
   it("runs the full supported Node version matrix", () => {
-    assert.deepEqual(ciNodeVersions, ["22.18.0", "24.15.0"]);
+    assert.deepEqual(ciNodeVersions, ["22.18.0", "24.15.0", "26.1.0"]);
   });
 
   it("installs dependencies with npm ci", () => {

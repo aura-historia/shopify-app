@@ -1,4 +1,5 @@
-import TurndownService from "turndown";
+import type { ConversionOptions } from "@kreuzberg/html-to-markdown-node";
+import htmlToMarkdownNode from "@kreuzberg/html-to-markdown-node";
 import { createClient } from "./generated/api/client";
 import type {
   CurrencyData,
@@ -126,13 +127,17 @@ const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
   ar: "ar",
 };
 
-const turndown = new TurndownService({
-  headingStyle: "atx",
-  bulletListMarker: "-",
-  emDelimiter: "*",
-  strongDelimiter: "**",
-  linkStyle: "inlined",
-});
+const { convert, HeadingStyle, LinkStyle, NewlineStyle } =
+  htmlToMarkdownNode as typeof import("@kreuzberg/html-to-markdown-node");
+
+const HTML_TO_MARKDOWN_OPTIONS: ConversionOptions = {
+  headingStyle: HeadingStyle.Atx,
+  bullets: "-",
+  strongEmSymbol: "*",
+  linkStyle: LinkStyle.Inline,
+  newlineStyle: NewlineStyle.Spaces,
+  extractMetadata: false,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -340,12 +345,9 @@ export function htmlToMarkdown(html: string): string {
     return "";
   }
 
-  return turndown
-    .turndown(html)
-    .replace(/\u00a0/g, " ")
-    .replace(/^([*-])\s+/gm, "$1 ")
-    .replace(/^(\d+)\.\s+/gm, "$1. ")
-    .trim();
+  const markdown = convert(html, HTML_TO_MARKDOWN_OPTIONS).content ?? "";
+
+  return markdown.replace(/\u00a0/g, " ").trim();
 }
 
 // ---------------------------------------------------------------------------

@@ -13,12 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     strategy:
       fail-fast: false
       matrix:
         node-version:
           - 22.18.0
           - 24.15.0
+          - 26.1.0
         task:
           - lint
           - typecheck
@@ -34,6 +36,12 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+
+      - name: Enable Corepack (ensures consistent package managers)
+        run: corepack enable
+
+      - name: Use npm 11 (fixes lockfile inconsistencies)
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci

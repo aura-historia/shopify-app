@@ -25,6 +25,7 @@
     "node": ">=22.18"
   },
   "dependencies": {
+    "@kreuzberg/html-to-markdown-node": "^3.5.5",
     "@react-router/dev": "^7.17.0",
     "@react-router/fs-routes": "^7.17.0",
     "@react-router/node": "^7.12.0",
@@ -34,7 +35,6 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router": "^7.12.0",
-    "turndown": "^7.2.4",
     "vite-tsconfig-paths": "^6.1.1"
   },
   "devDependencies": {
@@ -45,7 +45,6 @@
     "@types/node": "^25.9.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@types/turndown": "^5.0.6",
     "isbot": "^5.1.41",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
