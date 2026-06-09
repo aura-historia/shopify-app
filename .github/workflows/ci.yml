@@ -35,6 +35,26 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
+      - name: Debug install state
+        run: |
+          echo "HEAD:"
+          git rev-parse HEAD
+
+          echo "Node:"
+          node -v
+
+          echo "npm:"
+          npm -v
+
+          echo "package.json TS:"
+          npm pkg get devDependencies.typescript
+
+          echo "lockfile TS:"
+          node -e "const l=require('./package-lock.json'); console.log(l.packages['node_modules/typescript']?.version)"
+
+          echo "search for 5.9.3:"
+          grep -R "5.9.3" . || true
+
       - name: Install dependencies
         run: npm ci
 
