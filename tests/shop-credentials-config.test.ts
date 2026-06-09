@@ -5,17 +5,24 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
   clearShopCredentials,
-  getAuraHistoriaAccessTokenPreview,
+  clearShopCredentialsDisconnected,
+  getShopCredentialsDisconnectedStorageKey,
   getShopCredentialsStorageKey,
+  isShopCredentialsDisconnected,
   isValidAuraHistoriaAccessToken,
   isValidShopId,
   loadShopCredentials,
+  markShopCredentialsDisconnected,
   saveShopCredentials,
   toPublicShopCredentialsRecord,
 } from "../app/shop-credentials.server";
 
 const appRoute = readFileSync(
   resolve(process.cwd(), "app/routes/app.tsx"),
+  "utf8",
+);
+const uninstallWebhookRoute = readFileSync(
+  resolve(process.cwd(), "app/routes/webhooks.app.uninstalled.tsx"),
   "utf8",
 );
 
@@ -39,10 +46,14 @@ describe("shop OAuth credentials configuration", () => {
     );
   });
 
-  it("stores credentials per shop with the existing dedicated KV prefix", () => {
+  it("stores credentials and disconnect markers per shop with dedicated KV prefixes", () => {
     assert.equal(
       getShopCredentialsStorageKey("example-shop.myshopify.com"),
       "aura-historia:shop-credentials:example-shop.myshopify.com",
+    );
+    assert.equal(
+      getShopCredentialsDisconnectedStorageKey("example-shop.myshopify.com"),
+      "aura-historia:shop-credentials-disconnected:example-shop.myshopify.com",
     );
   });
 
@@ -89,25 +100,8 @@ describe("shop OAuth credentials configuration", () => {
     });
 
     assert.equal(publicRecord.hasAccessToken, true);
-    assert.equal(
-      publicRecord.accessTokenPreview,
-      "aurahistoria_accesstoken_****",
-    );
     assert.equal("accessToken" in publicRecord, false);
-  });
-
-  it("returns a safe access token preview with prefix and short key only", () => {
-    assert.equal(
-      getAuraHistoriaAccessTokenPreview(
-        "aurahistoria_accesstoken_foo_abcdef123456",
-      ),
-      "aurahistoria_accesstoken_foo_****",
-    );
-    assert.equal(
-      getAuraHistoriaAccessTokenPreview("aurahistoria_abcdef123456_secret"),
-      "aurahistoria_abcdef123456_****",
-    );
-    assert.equal(getAuraHistoriaAccessTokenPreview("invalid-token"), undefined);
+    assert.equal("accessTokenPreview" in publicRecord, false);
   });
 
   it("clears stored credentials for disconnect", async () => {
@@ -132,6 +126,53 @@ describe("shop OAuth credentials configuration", () => {
     assert.equal(
       await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
       null,
+    );
+  });
+
+  it("persists and clears intentional disconnect state", async () => {
+    const entries = new Map<string, string>();
+    const kv = {
+      get: async (key: string) => entries.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        entries.set(key, value);
+      },
+      delete: async (key: string) => {
+        entries.delete(key);
+      },
+    };
+
+    assert.equal(
+      await isShopCredentialsDisconnected(
+        kv as never,
+        "example-shop.myshopify.com",
+      ),
+      false,
+    );
+
+    await markShopCredentialsDisconnected(
+      kv as never,
+      "example-shop.myshopify.com",
+    );
+
+    assert.equal(
+      await isShopCredentialsDisconnected(
+        kv as never,
+        "example-shop.myshopify.com",
+      ),
+      true,
+    );
+
+    await clearShopCredentialsDisconnected(
+      kv as never,
+      "example-shop.myshopify.com",
+    );
+
+    assert.equal(
+      await isShopCredentialsDisconnected(
+        kv as never,
+        "example-shop.myshopify.com",
+      ),
+      false,
     );
   });
 
@@ -161,6 +202,17 @@ describe("shop OAuth credentials configuration", () => {
     assert.ok(savedRecord);
     assert.equal(savedRecord.accessToken, "aurahistoria_accesstoken_legacy");
     assert.equal(savedRecord.tokenType, "BEARER");
+  });
+
+  it("clears app-owned Aura Historia connection data on uninstall", () => {
+    assert.ok(uninstallWebhookRoute.includes("loadShopCredentials"));
+    assert.ok(uninstallWebhookRoute.includes("revokeAuraHistoriaAccessToken"));
+    assert.ok(uninstallWebhookRoute.includes("clearShopCredentials"));
+    assert.ok(
+      uninstallWebhookRoute.includes("clearShopCredentialsDisconnected"),
+    );
+    assert.ok(uninstallWebhookRoute.includes("clearBackfillContext"));
+    assert.ok(uninstallWebhookRoute.includes("clearedAuraHistoriaCredentials"));
   });
 
   it("marks the embedded app response as non-cacheable", () => {

@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { Form, redirect } from "react-router";
+import { redirect } from "react-router";
 import styles from "../../styles/public-page.module.css";
 
 const legalLinks = [
@@ -32,7 +32,8 @@ const accessSections = [
   },
   {
     title: "Compliance & uninstall",
-    description: "We're fully compliant and respect the mandatory webhooks.",
+    description:
+      "Mandatory public-app privacy and uninstall webhooks are declared.",
     items: [
       {
         name: "customers/data_request",
@@ -49,7 +50,7 @@ const accessSections = [
       {
         name: "app/uninstalled",
         description:
-          "Handled by this app so stored Shopify sessions are removed.",
+          "Handled by this app so stored sessions and connection data are removed.",
       },
     ],
   },
@@ -129,25 +130,27 @@ export default function MarketingIndex() {
           <section className={styles.introPanel}>
             <span className={styles.tag}>Aura Historia x Shopify</span>
             <h1 className={styles.title}>
-              Shopify App-Integration for Aura Historia.
+              Aura Historia Partner Connect for Shopify.
             </h1>
             <p className={styles.lead}>
-              You aren't really supposed to see this page. How have you got
-              here? Usually Shopify installs our app from the Shopify App-Store
-              and automatically pre-configures it for your shop. You're not lost
-              though - you can proceed by entering your Shopify App-Domain
-              below.
+              This minimal public Shopify app connects an approved Shopify store
+              with Aura Historia. Installation starts from the Shopify App Store
+              or Shopify Admin so Shopify can provide the store context and
+              OAuth approval automatically.
             </p>
 
             <div className={styles.buttonRow}>
-              <a className={styles.primaryAction} href="#manual-install">
-                Continue with store domain
+              <a
+                className={styles.primaryAction}
+                href="https://aura-historia.com/partners/shopify"
+              >
+                Learn about the integration
               </a>
               <a
                 className={styles.secondaryAction}
-                href="https://aura-historia.com/partners/shopify"
+                href="mailto:contact@aura-historia.com"
               >
-                Further information
+                Contact support
               </a>
             </div>
           </section>
@@ -177,38 +180,31 @@ export default function MarketingIndex() {
           ))}
         </section>
 
-        <section id="manual-install" className={styles.manualPanel}>
-          <p className={styles.cardTitle}>Manual fallback</p>
+        <section className={styles.manualPanel}>
+          <p className={styles.cardTitle}>Installation starts in Shopify</p>
           <h2 className={styles.manualTitle}>
-            Opened this URL outside Shopify?
+            Use the App Store or Shopify Admin to install.
           </h2>
           <p className={styles.manualText}>
-            If Shopify did not send the store context, enter the permanent
-            <strong> myshopify.com </strong>
-            domain to continue with approval. This remains a fallback, not the
-            normal install path.
+            For merchant security, this public page does not collect store
+            domains. When Shopify includes the store context, Aura Historia
+            Partner Connect redirects directly to Shopify OAuth approval and
+            then to the embedded app UI.
           </p>
-          <Form className={styles.form} method="post" action="/auth/login">
-            <label className={styles.label} htmlFor="shop">
-              Shop domain
-              <input
-                className={styles.input}
-                id="shop"
-                name="shop"
-                type="text"
-                autoComplete="on"
-                placeholder="your-store.myshopify.com"
-              />
-            </label>
-            <p className={styles.fieldHint}>
-              Use the permanent shop domain. Installs launched from Shopify
-              normally skip this field because Shopify provides the context
-              automatically.
-            </p>
-            <button className={styles.primaryAction} type="submit">
-              Continue to approval
-            </button>
-          </Form>
+          <div className={styles.buttonRow}>
+            <a
+              className={styles.primaryAction}
+              href="https://aura-historia.com/partners/shopify"
+            >
+              View setup notes
+            </a>
+            <a
+              className={styles.secondaryAction}
+              href="mailto:contact@aura-historia.com"
+            >
+              Email support
+            </a>
+          </div>
         </section>
 
         <footer className={styles.footer}>

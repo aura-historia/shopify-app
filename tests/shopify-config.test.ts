@@ -9,6 +9,10 @@ const appConfig = readFileSync(
 );
 
 describe("shopify.app.toml", () => {
+  it("uses the review-facing Aura Historia app name", () => {
+    assert.match(appConfig, /name = "Aura Historia Partner Connect"/);
+  });
+
   it("routes product lifecycle topics to EventBridge", () => {
     assert.match(
       appConfig,

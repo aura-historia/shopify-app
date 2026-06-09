@@ -7,9 +7,14 @@ const packageJson = JSON.parse(
   readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
 ) as {
   scripts: Record<string, string>;
+  engines: Record<string, string>;
 };
 
 describe("tooling configuration", () => {
+  it("keeps the Node engine compatible with current Shopify tooling", () => {
+    assert.equal(packageJson.engines.node, ">=22.18");
+  });
+
   it("uses localhost mode for the default dev command", () => {
     assert.equal(packageJson.scripts.dev, "shopify app dev --use-localhost");
   });
@@ -26,6 +31,14 @@ describe("tooling configuration", () => {
       packageJson.scripts.lint,
       "biome check --files-ignore-unknown=true .",
     );
+  });
+
+  it("keeps setup as a no-op because sessions use Cloudflare KV", () => {
+    assert.equal(
+      packageJson.scripts.setup,
+      "node -e \"console.log('No setup required: Shopify sessions use Cloudflare KV.')\"",
+    );
+    assert.equal(packageJson.scripts["docker-start"], "npm run start");
   });
 
   it("keeps a production config selection script", () => {

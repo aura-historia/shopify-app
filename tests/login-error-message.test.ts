@@ -8,15 +8,15 @@ describe("loginErrorMessage", () => {
     assert.deepEqual(loginErrorMessage({}), {});
   });
 
-  it("maps a missing shop to a helpful message", () => {
+  it("maps a missing shop to a Shopify-owned install guidance message", () => {
     assert.deepEqual(loginErrorMessage({ shop: LoginErrorType.MissingShop }), {
-      shop: "Please enter your shop domain to continue",
+      shop: "Start installation from Shopify so the store context is included.",
     });
   });
 
-  it("maps an invalid shop to a helpful message", () => {
+  it("maps an invalid shop to a Shopify-owned install guidance message", () => {
     assert.deepEqual(loginErrorMessage({ shop: LoginErrorType.InvalidShop }), {
-      shop: "Please enter a valid shop domain to continue",
+      shop: "Shopify sent an invalid store context. Reopen the app from Shopify Admin or the App Store.",
     });
   });
 });
