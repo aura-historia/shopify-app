@@ -7,6 +7,7 @@ import type {
 } from "./generated/api/types.gen";
 import {
   convert,
+  ensureHtmlToMarkdownRuntime,
   WasmConversionOptions,
   WasmHeadingStyle,
   WasmLinkStyle,
@@ -682,6 +683,7 @@ export async function patchShopMetadata(
 export async function processBackfillResults(
   jsonlUrl: string,
   context: BackfillContext,
+  runtimeBaseUrl?: string,
 ): Promise<{ total: number; failures: string[] }> {
   const response = await fetch(jsonlUrl);
   if (!response.ok) {
@@ -694,6 +696,8 @@ export async function processBackfillResults(
   if (products.length === 0) {
     return { total: 0, failures: [] };
   }
+
+  await ensureHtmlToMarkdownRuntime(runtimeBaseUrl);
 
   const transformed: PutProductData[] = products.map((product) =>
     transformProduct(

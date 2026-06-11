@@ -1,3 +1,7 @@
+export function ensureHtmlToMarkdownRuntime(_baseUrl?: string): Promise<void> {
+  return Promise.resolve();
+}
+
 export {
   convert,
   WasmConversionOptions,
