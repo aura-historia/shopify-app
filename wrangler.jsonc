@@ -22,6 +22,7 @@
     "SCOPES": "read_products,read_locales",
     "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com",
     "AURA_HISTORIA_OAUTH_ENV": "prod",
-    "AURA_HISTORIA_OAUTH_SCOPE": "products:write shops:manage"
+    "AURA_HISTORIA_OAUTH_SCOPE": "products:write shops:manage",
+    "AURA_HISTORIA_OAUTH_CLIENT_ID": "019eb09e-563a-7ad2-8e71-1ae86f8430ab"
   }
 }
