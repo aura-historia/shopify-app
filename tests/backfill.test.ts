@@ -981,6 +981,24 @@ describe("backfill configuration", () => {
     assert.ok(pkg.scripts["openapi:generate"]);
   });
 
+  it("uses the Kreuzberg WASM converter for Worker compatibility", () => {
+    const pkg = JSON.parse(
+      readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+    );
+    const viteConfig = readFileSync(
+      resolve(process.cwd(), "vite.config.ts"),
+      "utf8",
+    );
+
+    assert.equal(
+      pkg.dependencies["@kreuzberg/html-to-markdown-node"],
+      undefined,
+    );
+    assert.ok(pkg.dependencies["@kreuzberg/html-to-markdown-wasm"]);
+    assert.match(viteConfig, /html-to-markdown-runtime\.worker/);
+    assert.match(viteConfig, /ssrEmitAssets:\s*true/);
+  });
+
   it("declares bulk_operations/finish webhook in shopify.app.toml", () => {
     const content = readFileSync(
       resolve(process.cwd(), "shopify.app.toml"),

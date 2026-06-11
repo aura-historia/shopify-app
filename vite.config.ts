@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig, type UserConfig } from "vite";
@@ -17,6 +18,9 @@ const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost")
 const frontendPort = process.env.FRONTEND_PORT
   ? Number.parseInt(process.env.FRONTEND_PORT, 10)
   : undefined;
+const htmlToMarkdownWorkerRuntime = fileURLToPath(
+  new URL("./app/html-to-markdown-runtime.worker.ts", import.meta.url),
+);
 
 const hmrConfig =
   host === "localhost"
@@ -35,6 +39,12 @@ const hmrConfig =
 
 export default defineConfig({
   resolve: {
+    alias: [
+      {
+        find: /^\.\/html-to-markdown-runtime\.server$/,
+        replacement: htmlToMarkdownWorkerRuntime,
+      },
+    ],
     // Tunnel mode runs the app through Vite's SSR dev pipeline. Dedupe these
     // core packages so React Router hooks and Shopify's AppProvider always use
     // the same React dispatcher/context instance.
@@ -62,5 +72,6 @@ export default defineConfig({
   ],
   build: {
     assetsInlineLimit: 0,
+    ssrEmitAssets: true,
   },
 }) satisfies UserConfig;

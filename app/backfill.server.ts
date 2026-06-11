@@ -1,5 +1,3 @@
-import type { ConversionOptions } from "@kreuzberg/html-to-markdown-node";
-import htmlToMarkdownNode from "@kreuzberg/html-to-markdown-node";
 import { createClient } from "./generated/api/client";
 import type {
   CurrencyData,
@@ -7,6 +5,13 @@ import type {
   PatchShopData,
   PutProductData,
 } from "./generated/api/types.gen";
+import {
+  convert,
+  WasmConversionOptions,
+  WasmHeadingStyle,
+  WasmLinkStyle,
+  WasmNewlineStyle,
+} from "./html-to-markdown-runtime.server";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -127,17 +132,17 @@ const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
   ar: "ar",
 };
 
-const { convert, HeadingStyle, LinkStyle, NewlineStyle } =
-  htmlToMarkdownNode as typeof import("@kreuzberg/html-to-markdown-node");
+function createHtmlToMarkdownOptions(): WasmConversionOptions {
+  const options = WasmConversionOptions.default();
+  options.headingStyle = WasmHeadingStyle.Atx;
+  options.bullets = "-";
+  options.strongEmSymbol = "*";
+  options.linkStyle = WasmLinkStyle.Inline;
+  options.newlineStyle = WasmNewlineStyle.Spaces;
+  options.extractMetadata = false;
 
-const HTML_TO_MARKDOWN_OPTIONS: ConversionOptions = {
-  headingStyle: HeadingStyle.Atx,
-  bullets: "-",
-  strongEmSymbol: "*",
-  linkStyle: LinkStyle.Inline,
-  newlineStyle: NewlineStyle.Spaces,
-  extractMetadata: false,
-};
+  return options;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -345,7 +350,7 @@ export function htmlToMarkdown(html: string): string {
     return "";
   }
 
-  const markdown = convert(html, HTML_TO_MARKDOWN_OPTIONS).content ?? "";
+  const markdown = convert(html, createHtmlToMarkdownOptions()).content ?? "";
 
   return markdown.replace(/\u00a0/g, " ").trim();
 }
