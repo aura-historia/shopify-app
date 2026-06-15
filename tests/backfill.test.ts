@@ -981,7 +981,7 @@ describe("backfill configuration", () => {
     assert.ok(pkg.scripts["openapi:generate"]);
   });
 
-  it("uses the Kreuzberg WASM converter for Worker compatibility", () => {
+  it("uses a pure-JS HTML to Markdown converter for Worker compatibility", () => {
     const pkg = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
     );
@@ -989,14 +989,24 @@ describe("backfill configuration", () => {
       resolve(process.cwd(), "vite.config.ts"),
       "utf8",
     );
+    const backfillServer = readFileSync(
+      resolve(process.cwd(), "app/backfill.server.ts"),
+      "utf8",
+    );
 
+    assert.ok(pkg.dependencies["node-html-markdown"]);
     assert.equal(
       pkg.dependencies["@kreuzberg/html-to-markdown-node"],
       undefined,
     );
-    assert.ok(pkg.dependencies["@kreuzberg/html-to-markdown-wasm"]);
-    assert.match(viteConfig, /html-to-markdown-runtime\.worker/);
-    assert.match(viteConfig, /ssrEmitAssets:\s*true/);
+    assert.equal(
+      pkg.dependencies["@kreuzberg/html-to-markdown-wasm"],
+      undefined,
+    );
+    assert.match(backfillServer, /node-html-markdown/);
+    assert.doesNotMatch(backfillServer, /WebAssembly|Wasm|wasm/);
+    assert.doesNotMatch(viteConfig, /html-to-markdown-runtime\.worker/);
+    assert.doesNotMatch(viteConfig, /ssrEmitAssets:\s*true/);
   });
 
   it("declares bulk_operations/finish webhook in shopify.app.toml", () => {

@@ -54,11 +54,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
           return;
         }
 
-        const result = await processBackfillResults(
-          jsonlUrl,
-          backfillCtx,
-          request.url,
-        );
+        const result = await processBackfillResults(jsonlUrl, backfillCtx);
 
         console.log(
           `Backfill complete for ${shop}: ${result.total} products, ${result.failures.length} failures`,

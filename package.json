@@ -25,13 +25,13 @@
     "node": ">=22.18"
   },
   "dependencies": {
-    "@kreuzberg/html-to-markdown-wasm": "^3.6.2",
     "@react-router/dev": "^7.17.0",
     "@react-router/fs-routes": "^7.17.0",
     "@react-router/node": "^7.12.0",
     "@react-router/serve": "^7.12.0",
     "@shopify/shopify-app-react-router": "^1.2.0",
     "@shopify/shopify-app-session-storage-kv": "^6.0.0",
+    "node-html-markdown": "^2.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router": "^7.12.0",
