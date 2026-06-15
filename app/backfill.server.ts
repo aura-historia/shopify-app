@@ -1,3 +1,7 @@
+import {
+  NodeHtmlMarkdown,
+  type NodeHtmlMarkdownOptions,
+} from "node-html-markdown";
 import { createClient } from "./generated/api/client";
 import type {
   CurrencyData,
@@ -5,14 +9,6 @@ import type {
   PatchShopData,
   PutProductData,
 } from "./generated/api/types.gen";
-import {
-  convert,
-  ensureHtmlToMarkdownRuntime,
-  WasmConversionOptions,
-  WasmHeadingStyle,
-  WasmLinkStyle,
-  WasmNewlineStyle,
-} from "./html-to-markdown-runtime.server";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -133,17 +129,16 @@ const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
   ar: "ar",
 };
 
-function createHtmlToMarkdownOptions(): WasmConversionOptions {
-  const options = WasmConversionOptions.default();
-  options.headingStyle = WasmHeadingStyle.Atx;
-  options.bullets = "-";
-  options.strongEmSymbol = "*";
-  options.linkStyle = WasmLinkStyle.Inline;
-  options.newlineStyle = WasmNewlineStyle.Spaces;
-  options.extractMetadata = false;
+// Keep conversion on the pure-JS parser path for Cloudflare Workers.
+const htmlToMarkdownOptions = {
+  bulletMarker: "-",
+  emDelimiter: "*",
+  preferNativeParser: false,
+  strongDelimiter: "**",
+  useInlineLinks: true,
+} satisfies Partial<NodeHtmlMarkdownOptions>;
 
-  return options;
-}
+const markdownConverter = new NodeHtmlMarkdown(htmlToMarkdownOptions);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -351,9 +346,10 @@ export function htmlToMarkdown(html: string): string {
     return "";
   }
 
-  const markdown = convert(html, createHtmlToMarkdownOptions()).content ?? "";
-
-  return markdown.replace(/\u00a0/g, " ").trim();
+  return markdownConverter
+    .translate(html)
+    .replace(/\u00a0/g, " ")
+    .trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -683,7 +679,6 @@ export async function patchShopMetadata(
 export async function processBackfillResults(
   jsonlUrl: string,
   context: BackfillContext,
-  runtimeBaseUrl?: string,
 ): Promise<{ total: number; failures: string[] }> {
   const response = await fetch(jsonlUrl);
   if (!response.ok) {
@@ -696,8 +691,6 @@ export async function processBackfillResults(
   if (products.length === 0) {
     return { total: 0, failures: [] };
   }
-
-  await ensureHtmlToMarkdownRuntime(runtimeBaseUrl);
 
   const transformed: PutProductData[] = products.map((product) =>
     transformProduct(
