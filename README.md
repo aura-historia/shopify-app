@@ -26,7 +26,7 @@ After Shopify approves installation, the app now:
 1. redirects the merchant to the Aura Historia OAuth authorization endpoint
 2. sends `requires_partner_shop_id=true`
 3. encodes the Shopify store name into the base64 `state` payload
-4. receives the OAuth callback at `https://shopify.aura-historia.com/oauth/callback`
+4. receives the OAuth callback at `https://partner-connect.aura-historia.com/oauth/callback`
 5. exchanges the authorization `code` for an Aura Historia bearer access token
 6. stores the returned `partner_shop_id` and access token for the Shopify shop
 7. queues the existing initial backfill and redirects the merchant back to the embedded Shopify admin app
@@ -39,8 +39,8 @@ If the app URL is opened without Shopify-provided store context, the public page
 | --- | --- |
 | `products/create`, `products/update`, `products/delete` | Aura Historia AWS EventBridge partner source |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia AWS EventBridge partner source |
-| `app/uninstalled` | `https://shopify.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
-| `bulk_operations/finish` | `https://shopify.aura-historia.com/webhooks/bulk-operations/finish` handled by `app/routes/webhooks.bulk-operations.finish.tsx` for initial backfill completion |
+| `app/uninstalled` | `https://partner-connect.aura-historia.com/webhooks/app/uninstalled` handled by `app/routes/webhooks.app.uninstalled.tsx` |
+| `bulk_operations/finish` | `https://partner-connect.aura-historia.com/webhooks/bulk-operations/finish` handled by `app/routes/webhooks.bulk-operations.finish.tsx` for initial backfill completion |
 
 ## Public review surfaces
 
@@ -52,7 +52,7 @@ The public routes `/`, `/auth/login`, and `/success` all expose:
 - a link to `https://aura-historia.com/terms-and-conditions`
 - the direct contact email `contact@aura-historia.com`
 
-The install-success route lives at `/success`, for example `https://shopify.aura-historia.com/success` when the app is hosted on that domain.
+The install-success route lives at `/success`, for example `https://partner-connect.aura-historia.com/success` when the app is hosted on that domain.
 
 ## Repository design
 
@@ -192,7 +192,7 @@ Before submitting the app for Shopify App Store review:
 - Confirm the Partner Dashboard and App Store listing name match `Aura Historia Partner Connect`.
 - Confirm your Partner Dashboard listing includes a privacy policy URL.
 - Confirm the configured redirect URLs include the Shopify auth callback URL used by this app.
-- Confirm the Aura Historia OAuth client allows `https://shopify.aura-historia.com/oauth/callback` as a redirect URI.
+- Confirm the Aura Historia OAuth client allows `https://partner-connect.aura-historia.com/oauth/callback` as a redirect URI.
 - Confirm the production Worker has `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `AURA_HISTORIA_OAUTH_CLIENT_ID`, and `AURA_HISTORIA_OAUTH_CLIENT_SECRET` configured as secrets.
 - Confirm the public routes still expose privacy, imprint, terms, and `contact@aura-historia.com`.
 - Provide Shopify App Review with current test credentials for Aura Historia OAuth, a development store, and an English screencast showing install, OAuth approval, embedded status, disconnect, uninstall/reinstall, and expected product-sync behavior.
