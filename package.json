@@ -39,8 +39,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@cloudflare/vite-plugin": "^1.40.1",
-    "@cloudflare/workers-types": "^4.20260611.1",
+    "@cloudflare/vite-plugin": "^1.40.2",
+    "@cloudflare/workers-types": "^4.20260613.1",
     "@hey-api/openapi-ts": "^0.98.1",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
