@@ -30,9 +30,6 @@ interface LegacyShopCredentialsRecord {
 const SHOP_CREDENTIALS_KEY_PREFIX = "aura-historia:shop-credentials:";
 const SHOP_CREDENTIALS_DISCONNECTED_KEY_PREFIX =
   "aura-historia:shop-credentials-disconnected:";
-const SHOPIFY_INSTALL_LANDING_KEY_PREFIX =
-  "aura-historia:shopify-install-landing:";
-const SHOPIFY_INSTALL_LANDING_TTL_SECONDS = 10 * 60;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACCESS_TOKEN_PATTERN = /^aurahistoria(?:_[A-Za-z0-9-]+){2,}$/;
@@ -92,10 +89,6 @@ export function getShopCredentialsStorageKey(shop: string) {
 
 export function getShopCredentialsDisconnectedStorageKey(shop: string) {
   return `${SHOP_CREDENTIALS_DISCONNECTED_KEY_PREFIX}${shop.toLowerCase()}`;
-}
-
-export function getShopifyInstallLandingStorageKey(shop: string) {
-  return `${SHOPIFY_INSTALL_LANDING_KEY_PREFIX}${shop.toLowerCase()}`;
 }
 
 export function isValidShopId(value: string) {
@@ -179,26 +172,4 @@ export async function clearShopCredentialsDisconnected(
   shop: string,
 ) {
   await kv.delete(getShopCredentialsDisconnectedStorageKey(shop));
-}
-
-export async function markShopifyInstallLanding(kv: KVNamespace, shop: string) {
-  await kv.put(
-    getShopifyInstallLandingStorageKey(shop),
-    JSON.stringify({ installedAt: new Date().toISOString() }),
-    { expirationTtl: SHOPIFY_INSTALL_LANDING_TTL_SECONDS },
-  );
-}
-
-export async function consumeShopifyInstallLanding(
-  kv: KVNamespace,
-  shop: string,
-) {
-  const key = getShopifyInstallLandingStorageKey(shop);
-  const pending = Boolean(await kv.get(key));
-
-  if (pending) {
-    await kv.delete(key);
-  }
-
-  return pending;
 }

@@ -6,16 +6,13 @@ import { describe, it } from "node:test";
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
-  consumeShopifyInstallLanding,
   getShopCredentialsDisconnectedStorageKey,
   getShopCredentialsStorageKey,
-  getShopifyInstallLandingStorageKey,
   isShopCredentialsDisconnected,
   isValidAuraHistoriaAccessToken,
   isValidShopId,
   loadShopCredentials,
   markShopCredentialsDisconnected,
-  markShopifyInstallLanding,
   saveShopCredentials,
   toPublicShopCredentialsRecord,
 } from "../app/shop-credentials.server";
@@ -129,50 +126,6 @@ describe("shop OAuth credentials configuration", () => {
     assert.equal(
       await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
       null,
-    );
-  });
-
-  it("marks and consumes the one-time Shopify install landing state", async () => {
-    const entries = new Map<string, string>();
-    const ttls = new Map<string, number>();
-    const kv = {
-      get: async (key: string) => entries.get(key) ?? null,
-      put: async (
-        key: string,
-        value: string,
-        options?: { expirationTtl?: number },
-      ) => {
-        entries.set(key, value);
-        if (options?.expirationTtl) {
-          ttls.set(key, options.expirationTtl);
-        }
-      },
-      delete: async (key: string) => {
-        entries.delete(key);
-      },
-    };
-    const key = getShopifyInstallLandingStorageKey(
-      "example-shop.myshopify.com",
-    );
-
-    await markShopifyInstallLanding(kv as never, "example-shop.myshopify.com");
-
-    assert.equal(entries.has(key), true);
-    assert.equal(ttls.get(key), 600);
-    assert.equal(
-      await consumeShopifyInstallLanding(
-        kv as never,
-        "example-shop.myshopify.com",
-      ),
-      true,
-    );
-    assert.equal(entries.has(key), false);
-    assert.equal(
-      await consumeShopifyInstallLanding(
-        kv as never,
-        "example-shop.myshopify.com",
-      ),
-      false,
     );
   });
 

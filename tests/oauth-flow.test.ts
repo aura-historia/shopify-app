@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { describe, it, mock } from "node:test";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
-  createShopifyAdminAppRootUrl,
   createShopifyAdminAppUrl,
   decodeOAuthState,
   exchangeOAuthCodeForToken,
@@ -174,19 +173,14 @@ describe("Aura Historia OAuth flow helpers", () => {
     }
   });
 
-  it("builds the embedded Shopify admin return URLs", () => {
-    const appRootUrl = createShopifyAdminAppRootUrl("example-shop");
-    const appRouteUrl = createShopifyAdminAppUrl("example-shop", {
+  it("builds the embedded Shopify admin return URL", () => {
+    const url = createShopifyAdminAppUrl("example-shop", {
       oauth: "connected",
       backfill: "queued",
     });
 
     assert.equal(
-      appRootUrl.toString(),
-      "https://admin.shopify.com/store/example-shop/apps/aura-historia-partner-connect",
-    );
-    assert.equal(
-      appRouteUrl.toString(),
+      url.toString(),
       "https://admin.shopify.com/store/example-shop/apps/aura-historia-partner-connect/app?oauth=connected&backfill=queued",
     );
   });

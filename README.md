@@ -12,7 +12,7 @@ A minimal public Shopify app that forwards merchant product lifecycle events to 
   - `shop/redact`
 - Handles `app/uninstalled` in-app so stored Shopify sessions, Aura Historia connection credentials, and pending backfill context are cleaned up.
 - Returns merchants to the Shopify Admin app UI after Shopify approves installation.
-- Starts Aura Historia OAuth from the embedded merchant UI and stores the returned partner shop ID plus bearer access token for the shop.
+- Starts Aura Historia OAuth only after the merchant clicks the embedded app's connection action and stores the returned partner shop ID plus bearer access token for the shop.
 - Queues the existing backfill after Aura Historia OAuth succeeds.
 - Keeps all AWS EventBridge consumers out of this repository.
 
@@ -26,7 +26,7 @@ After Shopify approves installation, the app now:
 
 1. redirects the merchant back to the Shopify Admin app UI
 2. shows the embedded merchant UI with a clear Aura Historia connection action
-3. starts Aura Historia OAuth from that embedded app context
+3. starts Aura Historia OAuth only when the merchant clicks that connection action
 4. sends `requires_partner_shop_id=true`
 5. encodes the Shopify store name into the base64 `state` payload
 6. receives the OAuth callback at `https://partner-connect.aura-historia.com/oauth/callback`
