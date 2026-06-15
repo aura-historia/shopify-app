@@ -360,12 +360,6 @@ export default function AppIndex() {
             </span>
           </li>
           <li className={styles.topicItem}>
-            <span className={styles.topicName}>Initial Product-Backfill</span>
-            <span className={styles.topicDescription}>
-              {getBackfillMessage(integration.backfill)}
-            </span>
-          </li>
-          <li className={styles.topicItem}>
             <span className={styles.topicName}>Last configured</span>
             <span className={styles.topicDescription}>
               {credentials?.updatedAt ?? "Not configured yet."}
