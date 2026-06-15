@@ -30,13 +30,15 @@ describe("shopify.app.toml", () => {
   it("keeps uninstall cleanup on the deployed app URL for localhost dev compatibility", () => {
     assert.match(
       appConfig,
-      /topics = \["app\/uninstalled"\]\s+uri = "https:\/\/shopify\.aura-historia\.com\/webhooks\/app\/uninstalled"/,
+      /topics = \["app\/uninstalled"\]\s+uri = "https:\/\/partner-connect\.aura-historia\.com\/webhooks\/app\/uninstalled"/,
     );
   });
 
   it("allows the Shopify auth callback URLs used by the app", () => {
     assert.ok(
-      appConfig.includes("https://shopify.aura-historia.com/auth/callback"),
+      appConfig.includes(
+        "https://partner-connect.aura-historia.com/auth/callback",
+      ),
     );
   });
 });

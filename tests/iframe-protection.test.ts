@@ -8,7 +8,7 @@ describe("iframe protection", () => {
 
     addDocumentResponseHeaders(
       new Request(
-        "https://shopify.aura-historia.com/app?shop=example-store.myshopify.com&host=test",
+        "https://partner-connect.aura-historia.com/app?shop=example-store.myshopify.com&host=test",
       ),
       headers,
     );
@@ -23,7 +23,7 @@ describe("iframe protection", () => {
     const headers = new Headers();
 
     addDocumentResponseHeaders(
-      new Request("https://shopify.aura-historia.com/auth/login"),
+      new Request("https://partner-connect.aura-historia.com/auth/login"),
       headers,
     );
 
@@ -38,7 +38,7 @@ describe("iframe protection", () => {
 
     addDocumentResponseHeaders(
       new Request(
-        "https://shopify.aura-historia.com/auth/login?shop=example-store.myshopify.com",
+        "https://partner-connect.aura-historia.com/auth/login?shop=example-store.myshopify.com",
       ),
       headers,
     );
@@ -53,7 +53,7 @@ describe("iframe protection", () => {
     const headers = new Headers();
 
     addDocumentResponseHeaders(
-      new Request("https://shopify.aura-historia.com/auth"),
+      new Request("https://partner-connect.aura-historia.com/auth"),
       headers,
     );
 
@@ -68,7 +68,7 @@ describe("iframe protection", () => {
 
     addDocumentResponseHeaders(
       new Request(
-        "https://shopify.aura-historia.com/app?shop=example-store.myshopify.com%3Bhttps://evil.example",
+        "https://partner-connect.aura-historia.com/app?shop=example-store.myshopify.com%3Bhttps://evil.example",
       ),
       headers,
     );

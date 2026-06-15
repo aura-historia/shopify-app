@@ -34,13 +34,13 @@ describe("Aura Historia OAuth flow helpers", () => {
       AURA_HISTORIA_OAUTH_ENV: "dev",
       AURA_HISTORIA_OAUTH_CLIENT_ID: randomUUID(),
       AURA_HISTORIA_OAUTH_CLIENT_SECRET: "secret",
-      SHOPIFY_APP_URL: "https://shopify.aura-historia.com",
+      SHOPIFY_APP_URL: "https://partner-connect.aura-historia.com",
     } as never);
     const prodConfig = getAuraHistoriaOAuthConfig({
       AURA_HISTORIA_OAUTH_ENV: "production",
       AURA_HISTORIA_OAUTH_CLIENT_ID: randomUUID(),
       AURA_HISTORIA_OAUTH_CLIENT_SECRET: "secret",
-      SHOPIFY_APP_URL: "https://shopify.aura-historia.com",
+      SHOPIFY_APP_URL: "https://partner-connect.aura-historia.com",
     } as never);
 
     assert.equal(
@@ -59,7 +59,7 @@ describe("Aura Historia OAuth flow helpers", () => {
       AURA_HISTORIA_OAUTH_ENV: "dev",
       AURA_HISTORIA_OAUTH_CLIENT_ID: randomUUID(),
       AURA_HISTORIA_OAUTH_CLIENT_SECRET: "secret",
-      SHOPIFY_APP_URL: "https://shopify.aura-historia.com",
+      SHOPIFY_APP_URL: "https://partner-connect.aura-historia.com",
     };
 
     const authorization = await buildAuraHistoriaOAuthAuthorizeUrl(
@@ -82,7 +82,7 @@ describe("Aura Historia OAuth flow helpers", () => {
     assert.equal(authorization.url.searchParams.get("response_type"), "code");
     assert.equal(
       authorization.url.searchParams.get("redirect_uri"),
-      "https://shopify.aura-historia.com/oauth/callback",
+      "https://partner-connect.aura-historia.com/oauth/callback",
     );
     assert.equal(
       authorization.url.searchParams.get("code_challenge_method"),
@@ -106,7 +106,7 @@ describe("Aura Historia OAuth flow helpers", () => {
     assert.equal("shopifyAccessToken" in pending, false);
     assert.equal(
       pending.redirectUri,
-      "https://shopify.aura-historia.com/oauth/callback",
+      "https://partner-connect.aura-historia.com/oauth/callback",
     );
     assert.ok(pending.codeVerifier);
     assert.deepEqual(kv.put.mock.calls[0]?.arguments[2], {

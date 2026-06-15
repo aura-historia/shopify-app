@@ -46,7 +46,7 @@ const AURA_HISTORIA_PROD_AUTHORIZE_URL =
   "https://aura-historia.com/oauth/authorize";
 const AURA_HISTORIA_DEV_API_BASE_URL = "https://api.dev.aura-historia.com";
 const AURA_HISTORIA_PROD_API_BASE_URL = "https://api.aura-historia.com";
-const SHOPIFY_APP_PROD_URL = "https://shopify.aura-historia.com";
+const SHOPIFY_APP_PROD_URL = "https://partner-connect.aura-historia.com";
 const OAUTH_SCOPE = "products:write";
 const OAUTH_PENDING_CONTEXT_KEY_PREFIX = "aura-historia:oauth-pending:";
 const OAUTH_PENDING_CONTEXT_TTL_SECONDS = 10 * 60;

@@ -1025,7 +1025,7 @@ describe("backfill configuration", () => {
     assert.match(content, /bulk_operations\/finish/);
     assert.match(
       content,
-      /https:\/\/shopify\.aura-historia\.com\/webhooks\/bulk-operations\/finish/,
+      /https:\/\/partner-connect\.aura-historia\.com\/webhooks\/bulk-operations\/finish/,
     );
   });
 

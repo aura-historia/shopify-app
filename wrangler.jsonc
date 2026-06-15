@@ -18,7 +18,7 @@
   ],
   "vars": {
     "SHOPIFY_API_VERSION": "2026-04",
-    "SHOPIFY_APP_URL": "https://shopify.aura-historia.com",
+    "SHOPIFY_APP_URL": "https://partner-connect.aura-historia.com",
     "SCOPES": "read_products,read_locales",
     "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com",
     "AURA_HISTORIA_OAUTH_ENV": "prod",

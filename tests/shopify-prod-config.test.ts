@@ -30,7 +30,7 @@ describe("shopify.app.prod.toml", () => {
   it("keeps uninstall cleanup on the deployed app URL", () => {
     assert.match(
       prodConfig,
-      /topics = \["app\/uninstalled"\]\s+uri = "https:\/\/shopify\.aura-historia\.com\/webhooks\/app\/uninstalled"/,
+      /topics = \["app\/uninstalled"\]\s+uri = "https:\/\/partner-connect\.aura-historia\.com\/webhooks\/app\/uninstalled"/,
     );
   });
 });
