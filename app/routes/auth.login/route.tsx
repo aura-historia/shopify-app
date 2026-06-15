@@ -71,7 +71,7 @@ export default function AuthLogin() {
             <div className={styles.buttonRow}>
               <a
                 className={styles.primaryAction}
-                href="https://aura-historia.com/partners/shopify"
+                href="https://apps.shopify.com/aura-historia-partner-connect"
               >
                 View setup notes
               </a>
@@ -88,9 +88,9 @@ export default function AuthLogin() {
             <section className={styles.surfaceCardStrong}>
               <h2 className={styles.cardTitle}>After approval</h2>
               <p className={styles.cardBody}>
-                Once Shopify completes approval, the app continues directly into
-                the Aura Historia OAuth flow and then returns the merchant to
-                the embedded Shopify admin app with a clear status.
+                Once Shopify completes approval, the app opens in the embedded
+                Shopify Admin UI first. Merchants can then continue to Aura
+                Historia OAuth from that review-safe app context.
               </p>
             </section>
 

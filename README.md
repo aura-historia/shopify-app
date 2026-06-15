@@ -11,8 +11,9 @@ A minimal public Shopify app that forwards merchant product lifecycle events to 
   - `customers/redact`
   - `shop/redact`
 - Handles `app/uninstalled` in-app so stored Shopify sessions, Aura Historia connection credentials, and pending backfill context are cleaned up.
-- Starts Aura Historia OAuth automatically after Shopify approves installation.
-- Stores the Aura Historia partner shop ID plus bearer access token for the shop and queues the existing backfill.
+- Returns merchants to the Shopify Admin app UI after Shopify approves installation.
+- Starts Aura Historia OAuth from the embedded merchant UI and stores the returned partner shop ID plus bearer access token for the shop.
+- Queues the existing backfill after Aura Historia OAuth succeeds.
 - Keeps all AWS EventBridge consumers out of this repository.
 
 ## Install flow
@@ -23,13 +24,15 @@ In that flow, Shopify provides store context in the query string, including `sho
 
 After Shopify approves installation, the app now:
 
-1. redirects the merchant to the Aura Historia OAuth authorization endpoint
-2. sends `requires_partner_shop_id=true`
-3. encodes the Shopify store name into the base64 `state` payload
-4. receives the OAuth callback at `https://partner-connect.aura-historia.com/oauth/callback`
-5. exchanges the authorization `code` for an Aura Historia bearer access token
-6. stores the returned `partner_shop_id` and access token for the Shopify shop
-7. queues the existing initial backfill and redirects the merchant back to the embedded Shopify admin app
+1. redirects the merchant back to the Shopify Admin app UI
+2. shows the embedded merchant UI with a clear Aura Historia connection action
+3. starts Aura Historia OAuth from that embedded app context
+4. sends `requires_partner_shop_id=true`
+5. encodes the Shopify store name into the base64 `state` payload
+6. receives the OAuth callback at `https://partner-connect.aura-historia.com/oauth/callback`
+7. exchanges the authorization `code` for an Aura Historia bearer access token
+8. stores the returned `partner_shop_id` and access token for the Shopify shop
+9. queues the existing initial backfill and redirects the merchant back to the embedded Shopify admin app
 
 If the app URL is opened without Shopify-provided store context, the public pages explain that installation must start from a Shopify-owned surface instead of collecting a shop domain manually.
 

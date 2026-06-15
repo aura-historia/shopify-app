@@ -1,7 +1,11 @@
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { buildAuraHistoriaOAuthAuthorizeUrl } from "../oauth.server";
+import { markShopifyInstallLanding } from "../shop-credentials.server";
 import { getShopify } from "../shopify.server";
+import {
+  createShopifyAdminAppRootUrl,
+  getShopifyStoreName,
+} from "../shopify-admin-url";
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
@@ -9,31 +13,13 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     await getShopify(context).authenticate.admin(request);
 
   if (url.pathname.endsWith("/callback")) {
-    const authorization = await buildAuraHistoriaOAuthAuthorizeUrl(
-      context.cloudflare.env.KV,
-      context.cloudflare.env,
-      session.shop,
+    await markShopifyInstallLanding(context.cloudflare.env.KV, session.shop);
+
+    const adminAppUrl = createShopifyAdminAppRootUrl(
+      getShopifyStoreName(session.shop),
     );
 
-    if (authorization.isReady) {
-      return redirect(authorization.url.toString(), {
-        target: "_parent",
-      });
-    }
-
-    const successParams = new URLSearchParams();
-    successParams.set("shop", session.shop);
-    successParams.set("integration", "oauth-config-missing");
-    successParams.set("missing", authorization.missing.join(","));
-
-    const host = url.searchParams.get("host");
-    if (host) {
-      successParams.set("host", host);
-    }
-
-    return redirect(`/success?${successParams.toString()}`, {
-      target: "_parent",
-    });
+    return redirect(adminAppUrl.toString());
   }
 
   // Auth succeeded but we're not at the callback path.

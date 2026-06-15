@@ -12,6 +12,7 @@ import {
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
+  consumeShopifyInstallLanding,
   isShopCredentialsDisconnected,
   loadShopCredentials,
   markShopCredentialsDisconnected,
@@ -127,6 +128,15 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const credentials = disconnectedByAction ? null : storedCredentials;
   const oauthResult = url.searchParams.get("oauth");
   const manualConnect = url.searchParams.get("manual_connect") === "1";
+  const installLandingMarked =
+    !manualConnect &&
+    !oauthResult &&
+    !disconnectedByAction &&
+    (await consumeShopifyInstallLanding(
+      context.cloudflare.env.KV,
+      session.shop,
+    ));
+  const installLandingPending = !credentials && installLandingMarked;
   const manuallyDisconnected = credentials
     ? false
     : disconnectedByAction ||
@@ -146,7 +156,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   if (
     !credentials &&
     !connectionPaused &&
-    (manualConnect || oauthResult !== "failed")
+    (manualConnect || (!installLandingPending && oauthResult !== "failed"))
   ) {
     const authorization = await buildAuraHistoriaOAuthAuthorizeUrl(
       context.cloudflare.env.KV,
@@ -210,6 +220,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
       error: url.searchParams.get("oauth_error"),
       disconnectError: url.searchParams.get("disconnect_error"),
       disconnected: disconnectedByAction,
+      shopifyInstallComplete: installLandingPending,
       backfill,
       missingConfig,
     },
@@ -271,6 +282,7 @@ export default function AppIndex() {
     useLoaderData<typeof loader>();
   const isConnected = integration.status === "connected";
   const isDisconnected = integration.status === "disconnected";
+  const isInstallLanding = integration.shopifyInstallComplete;
   const canManualConnect = isDisconnected || integration.status === "failed";
   const canDisconnect = isConnected;
   const manualConnectUrl = createShopifyAdminAppUrl(getShopifyStoreName(shop), {
@@ -278,18 +290,29 @@ export default function AppIndex() {
   }).toString();
   const statusLabel = isConnected
     ? "Connected via OAuth"
-    : isDisconnected
-      ? "Disconnected"
-      : integration.status === "config_missing"
-        ? "OAuth environment incomplete"
-        : "OAuth connection failed";
+    : integration.status === "config_missing"
+      ? "OAuth environment incomplete"
+      : isInstallLanding
+        ? "Shopify installation approved"
+        : isDisconnected
+          ? "Disconnected"
+          : "OAuth connection failed";
   const statusDescription = isConnected
     ? "This Shopify installation is mapped to Aura Historia."
+    : integration.status === "config_missing"
+      ? isInstallLanding
+        ? "Shopify approval is complete, but the app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
+        : "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
+      : isInstallLanding
+        ? "Shopify approval is complete. Continue to Aura Historia authorization from this merchant UI to finish the partner connection."
+        : isDisconnected
+          ? "Aura Historia is disconnected for this shop until you reconnect it."
+          : "The automatic OAuth flow did not finish. Reopen the app to retry once the issue below is resolved.";
+  const connectButtonLabel = isInstallLanding
+    ? "Continue to Aura Historia authorization"
     : isDisconnected
-      ? "Aura Historia is disconnected for this shop until you reconnect it."
-      : integration.status === "config_missing"
-        ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
-        : "The automatic OAuth flow did not finish. Reopen the app to retry once the issue below is resolved.";
+      ? "Reconnect Aura Historia"
+      : "Retry Aura Historia connection";
 
   return (
     <div className={styles.page}>
@@ -384,9 +407,7 @@ export default function AppIndex() {
               href={manualConnectUrl}
               target="_top"
             >
-              {isDisconnected
-                ? "Reconnect Aura Historia"
-                : "Retry Aura Historia connection"}
+              {connectButtonLabel}
             </a>
           ) : (
             <button
@@ -411,6 +432,12 @@ export default function AppIndex() {
             </button>
           </Form>
         </div>
+        {integration.shopifyInstallComplete ? (
+          <p className={styles.successText}>
+            Shopify installation was approved. Continue from this embedded app
+            to connect Aura Historia.
+          </p>
+        ) : null}
         {integration.disconnected ? (
           <p className={styles.successText}>
             Aura Historia was disconnected for this shop.
@@ -450,7 +477,7 @@ export default function AppIndex() {
             </a>
             <a
               className={styles.link}
-              href="https://aura-historia.com/partners/shopify"
+              href="https://apps.shopify.com/aura-historia-partner-connect"
             >
               Further information
             </a>

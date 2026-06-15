@@ -2,6 +2,7 @@ import type { KVNamespace } from "@cloudflare/workers-types";
 import type { OAuthTokenResponseData } from "./generated/api/types.gen";
 import type { CloudflareShopifyEnv } from "./shopify.server";
 import {
+  createShopifyAdminAppRootUrl,
   createShopifyAdminAppUrl,
   getShopifyStoreName,
 } from "./shopify-admin-url";
@@ -145,7 +146,11 @@ export function getMissingAuraHistoriaOAuthConfig(
   return missing;
 }
 
-export { createShopifyAdminAppUrl, getShopifyStoreName };
+export {
+  createShopifyAdminAppRootUrl,
+  createShopifyAdminAppUrl,
+  getShopifyStoreName,
+};
 
 export function getShopDomainFromStoreName(shopifyStoreName: string) {
   return `${shopifyStoreName.toLowerCase()}.myshopify.com`;
