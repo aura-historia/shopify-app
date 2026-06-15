@@ -63,11 +63,19 @@ describe("public install flow", () => {
     );
   });
 
-  it("starts Aura Historia OAuth after the Shopify auth callback", () => {
-    assert.ok(authRoute.includes("buildAuraHistoriaOAuthAuthorizeUrl"));
-    assert.match(authRoute, /authorization\.url\.toString\(\)/);
-    assert.ok(authRoute.includes('target: "_parent"'));
-    assert.ok(authRoute.includes('integration", "oauth-config-missing"'));
+  it("returns to Shopify Admin after the Shopify auth callback", () => {
+    assert.equal(
+      authRoute.includes("buildAuraHistoriaOAuthAuthorizeUrl"),
+      false,
+    );
+    assert.ok(authRoute.includes("markShopifyInstallLanding"));
+    assert.ok(authRoute.includes("createShopifyAdminAppRootUrl"));
+    assert.match(authRoute, /redirect\(adminAppUrl\.toString\(\)\)/);
+    assert.ok(appIndexRoute.includes("consumeShopifyInstallLanding"));
+    assert.ok(appIndexRoute.includes("!installLandingPending"));
+    assert.ok(
+      appIndexRoute.includes("Continue to Aura Historia authorization"),
+    );
   });
 
   it("keeps review links and contact details on the success page", () => {
