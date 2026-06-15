@@ -102,14 +102,14 @@ describe("public install flow", () => {
 
   it("keeps the public and embedded home routes focused on support and access details", () => {
     assert.ok(
-      marketingRoute.includes("https://aura-historia.com/partners/shopify"),
+      marketingRoute.includes("https://apps.shopify.com/aura-historia-partner-connect"),
     );
     assert.ok(marketingRoute.includes("products/create"));
     assert.ok(marketingRoute.includes("customers/data_request"));
     assert.ok(marketingRoute.includes("read_locales"));
     assert.ok(appIndexRoute.includes("https://aura-historia.com"));
     assert.ok(
-      appIndexRoute.includes("https://aura-historia.com/partners/shopify"),
+      appIndexRoute.includes("https://apps.shopify.com/aura-historia-partner-connect"),
     );
     assert.ok(appIndexRoute.includes("contact@aura-historia.com"));
     assert.ok(appIndexRoute.includes("products/update"));

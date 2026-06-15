@@ -477,7 +477,7 @@ export default function AppIndex() {
             </a>
             <a
               className={styles.link}
-              href="https://aura-historia.com/partners/shopify"
+              href="https://apps.shopify.com/aura-historia-partner-connect"
             >
               Further information
             </a>

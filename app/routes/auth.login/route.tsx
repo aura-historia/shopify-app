@@ -71,7 +71,7 @@ export default function AuthLogin() {
             <div className={styles.buttonRow}>
               <a
                 className={styles.primaryAction}
-                href="https://aura-historia.com/partners/shopify"
+                href="https://apps.shopify.com/aura-historia-partner-connect"
               >
                 View setup notes
               </a>
