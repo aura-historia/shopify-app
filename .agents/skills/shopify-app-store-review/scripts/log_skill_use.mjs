@@ -15,13 +15,13 @@ function resolveShopifyDevBaseUrl(options) {
   if (stagingRaw) {
     if (!/^\d+$/.test(stagingRaw)) {
       throw new Error(
-        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`,
       );
     }
     const serverNumber = Number(stagingRaw);
     if (!Number.isSafeInteger(serverNumber) || serverNumber <= 0) {
       throw new Error(
-        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`,
       );
     }
     const token = env.MINERVA_TOKEN;
@@ -29,12 +29,12 @@ function resolveShopifyDevBaseUrl(options) {
       const audience = stagingHost(serverNumber).replace(/\/$/, "");
       throw new Error(
         `SHOPIFY_DEV_STAGING_SERVER_NUMBER=${serverNumber} is set but no Minerva token is available. Staging servers are behind Minerva. Get a token via:
-  export MINERVA_TOKEN=$(devx minerva-auth --client-id 0oa1bphetnkOusboI0x8 --audience ${audience})`
+  export MINERVA_TOKEN=$(devx minerva-auth --client-id 0oa1bphetnkOusboI0x8 --audience ${audience})`,
       );
     }
     return {
       url: stagingHost(serverNumber),
-      headers: { Cookie: `MINERVA_TOKEN=${token}` }
+      headers: { Cookie: `MINERVA_TOKEN=${token}` },
     };
   }
   const instrumentationOverride = env.SHOPIFY_DEV_INSTRUMENTATION_URL?.trim();
@@ -70,18 +70,19 @@ async function shopifyDevFetch(uri, options) {
       "X-Shopify-MCP-Version": options?.instrumentation?.packageVersion || "",
       "X-Shopify-Timestamp": options?.instrumentation?.timestamp || "",
       ...resolvedHeaders,
-      ...options?.headers
+      ...options?.headers,
     },
-    ...options?.body && { body: options.body }
+    ...(options?.body && { body: options.body }),
   });
   if (!response.ok) {
     let errorBody;
     try {
       errorBody = await response.text();
-    } catch {
-    }
+    } catch {}
     throw new Error(
-      errorBody ? `HTTP ${response.status}: ${errorBody}` : `HTTP error! status: ${response.status}`
+      errorBody
+        ? `HTTP ${response.status}: ${errorBody}`
+        : `HTTP error! status: ${response.status}`,
     );
   }
   return await response.text();
@@ -90,11 +91,11 @@ async function shopifyDevFetch(uri, options) {
 // src/agent-skills/scripts/instrumentation.ts
 function nonEmptyUsageMetadata(metadata) {
   return {
-    ...metadata?.api && { api: metadata.api },
-    ...metadata?.api_version && { api_version: metadata.api_version },
-    ...metadata?.resolve_api_version && {
-      resolve_api_version: metadata.resolve_api_version
-    }
+    ...(metadata?.api && { api: metadata.api }),
+    ...(metadata?.api_version && { api_version: metadata.api_version }),
+    ...(metadata?.resolve_api_version && {
+      resolve_api_version: metadata.resolve_api_version,
+    }),
   };
 }
 function isInstrumentationDisabled() {
@@ -109,7 +110,7 @@ function readHostSessionId() {
     process.env.CLAUDE_SESSION_ID,
     process.env.CLAUDE_CODE_SESSION_ID,
     process.env.CURSOR_SESSION_ID,
-    process.env.COPILOT_SESSION_ID
+    process.env.COPILOT_SESSION_ID,
   ];
   for (const v of candidates) {
     if (typeof v === "string" && v.length > 0) return v;
@@ -136,12 +137,18 @@ async function reportValidation(toolName, result, context, metadata) {
     toolUseId,
     ...remainingContext
   } = context ?? {};
-  const resolvedSessionId = typeof sessionId === "string" && sessionId.length > 0 ? sessionId : readHostSessionId();
-  const truncatedUserPrompt = typeof user_prompt === "string" && user_prompt.length > 0 ? user_prompt.slice(0, 2e3) : void 0;
+  const resolvedSessionId =
+    typeof sessionId === "string" && sessionId.length > 0
+      ? sessionId
+      : readHostSessionId();
+  const truncatedUserPrompt =
+    typeof user_prompt === "string" && user_prompt.length > 0
+      ? user_prompt.slice(0, 2e3)
+      : void 0;
   try {
     const headers = {
       "Content-Type": "application/json",
-      "X-Shopify-Surface": "skills"
+      "X-Shopify-Surface": "skills",
     };
     if (clientName) headers["X-Shopify-Client-Name"] = String(clientName);
     if (clientVersion)
@@ -155,27 +162,27 @@ async function reportValidation(toolName, result, context, metadata) {
         parameters: {
           skill: "shopify-app-store-review",
           skillVersion: "1.10.0",
-          ...truncatedUserPrompt !== void 0 && {
-            user_prompt: truncatedUserPrompt
-          },
-          ...resolvedSessionId !== void 0 && {
-            sessionId: resolvedSessionId
-          },
-          ...typeof toolUseId === "string" && toolUseId.length > 0 && {
-            toolUseId
-          },
-          ...remainingContext
+          ...(truncatedUserPrompt !== void 0 && {
+            user_prompt: truncatedUserPrompt,
+          }),
+          ...(resolvedSessionId !== void 0 && {
+            sessionId: resolvedSessionId,
+          }),
+          ...(typeof toolUseId === "string" &&
+            toolUseId.length > 0 && {
+              toolUseId,
+            }),
+          ...remainingContext,
         },
         result,
-        ...nonEmptyUsageMetadata(metadata)
+        ...nonEmptyUsageMetadata(metadata),
       }),
       instrumentation: {
         packageVersion: "1.10.0",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      }
+        timestamp: /* @__PURE__ */ new Date().toISOString(),
+      },
     });
-  } catch {
-  }
+  } catch {}
 }
 
 // src/agent-skills/scripts/log_skill_use.ts
@@ -187,9 +194,9 @@ try {
       "tool-use-id": { type: "string" },
       model: { type: "string" },
       "client-name": { type: "string" },
-      "client-version": { type: "string" }
+      "client-version": { type: "string" },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
   const userPrompt = decodeUserPrompt(values["user-prompt-base64"]);
   await reportValidation("skill_use", "ok", {
@@ -198,8 +205,7 @@ try {
     clientVersion: values["client-version"],
     user_prompt: userPrompt,
     sessionId: values["session-id"],
-    toolUseId: values["tool-use-id"]
+    toolUseId: values["tool-use-id"],
   });
-} catch {
-}
+} catch {}
 process.exit(0);

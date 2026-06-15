@@ -36,7 +36,9 @@ describe("shopify.app.toml", () => {
 
   it("allows the Shopify auth callback URLs used by the app", () => {
     assert.ok(
-      appConfig.includes("https://partner-connect.aura-historia.com/auth/callback"),
+      appConfig.includes(
+        "https://partner-connect.aura-historia.com/auth/callback",
+      ),
     );
   });
 });
