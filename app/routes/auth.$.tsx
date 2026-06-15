@@ -1,25 +1,16 @@
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { markShopifyInstallLanding } from "../shop-credentials.server";
 import { getShopify } from "../shopify.server";
-import {
-  createShopifyAdminAppRootUrl,
-  getShopifyStoreName,
-} from "../shopify-admin-url";
+
+const SHOPIFY_ADMIN_APP_URL =
+  "https://admin.shopify.com/apps/aura-historia-partner-connect";
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
-  const { redirect, session } =
-    await getShopify(context).authenticate.admin(request);
+  const { redirect } = await getShopify(context).authenticate.admin(request);
 
   if (url.pathname.endsWith("/callback")) {
-    await markShopifyInstallLanding(context.cloudflare.env.KV, session.shop);
-
-    const adminAppUrl = createShopifyAdminAppRootUrl(
-      getShopifyStoreName(session.shop),
-    );
-
-    return redirect(adminAppUrl.toString());
+    return redirect(SHOPIFY_ADMIN_APP_URL);
   }
 
   // Auth succeeded but we're not at the callback path.

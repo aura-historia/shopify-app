@@ -63,19 +63,25 @@ describe("public install flow", () => {
     );
   });
 
-  it("returns to Shopify Admin after the Shopify auth callback", () => {
+  it("returns to Shopify Admin after the Shopify auth callback and waits for merchant connect", () => {
     assert.equal(
       authRoute.includes("buildAuraHistoriaOAuthAuthorizeUrl"),
       false,
     );
-    assert.ok(authRoute.includes("markShopifyInstallLanding"));
-    assert.ok(authRoute.includes("createShopifyAdminAppRootUrl"));
-    assert.match(authRoute, /redirect\(adminAppUrl\.toString\(\)\)/);
-    assert.ok(appIndexRoute.includes("consumeShopifyInstallLanding"));
-    assert.ok(appIndexRoute.includes("!installLandingPending"));
+    assert.equal(authRoute.includes("markShopifyInstallLanding"), false);
     assert.ok(
-      appIndexRoute.includes("Continue to Aura Historia authorization"),
+      authRoute.includes(
+        "https://admin.shopify.com/apps/aura-historia-partner-connect",
+      ),
     );
+    assert.match(authRoute, /redirect\(SHOPIFY_ADMIN_APP_URL\)/);
+    assert.equal(appIndexRoute.includes("consumeShopifyInstallLanding"), false);
+    assert.match(
+      appIndexRoute,
+      /!credentials && !connectionPaused && manualConnect/,
+    );
+    assert.ok(appIndexRoute.includes('"not_connected"'));
+    assert.ok(appIndexRoute.includes("Connect Aura Historia"));
   });
 
   it("keeps review links and contact details on the success page", () => {
@@ -131,6 +137,7 @@ describe("public install flow", () => {
         "Failed to revoke Aura Historia access on disconnect",
       ),
     );
+    assert.ok(appIndexRoute.includes("Connect Aura Historia"));
     assert.ok(appIndexRoute.includes("Reconnect Aura Historia"));
     assert.ok(appIndexRoute.includes("Retry Aura Historia connection"));
     assert.ok(appIndexRoute.includes("Disconnect Aura Historia"));
