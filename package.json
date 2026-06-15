@@ -25,7 +25,7 @@
     "node": ">=22.18"
   },
   "dependencies": {
-    "@kreuzberg/html-to-markdown-wasm": "^3.5.5",
+    "@kreuzberg/html-to-markdown-wasm": "^3.6.2",
     "@react-router/dev": "^7.17.0",
     "@react-router/fs-routes": "^7.17.0",
     "@react-router/node": "^7.12.0",
