@@ -193,21 +193,3 @@ GitHub Actions runs the following checks on pushes and pull requests:
 - `npm run build`
 
 The workflow lives at `.github/workflows/ci.yml`.
-
-## Public app checklist
-
-Before submitting the app for Shopify App Store review:
-
-- Confirm the EventBridge ARN is correct for the target AWS account and region.
-- Confirm the channel config extension is deployed and released with the Shopify app.
-- Confirm the supported country, language, and currency metadata in `extensions/channel-config/specifications/aura-historia.toml` stays aligned with Shopify country coverage and the generated Aura Historia backend `LanguageData`/`CurrencyData` unions.
-- Confirm the mandatory compliance topics remain subscribed.
-- Confirm the app is listed as free, or implement Shopify App Pricing / Billing API before charging merchants.
-- Confirm the Partner Dashboard and App Store listing name match `Aura Historia Partner Connect`.
-- Confirm your Partner Dashboard listing includes a privacy policy URL.
-- Confirm the configured redirect URLs include the Shopify auth callback URL used by this app.
-- Confirm the Aura Historia OAuth client allows `https://partner-connect.aura-historia.com/oauth/callback` as a redirect URI.
-- Confirm the production Worker has `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `AURA_HISTORIA_OAUTH_CLIENT_ID`, and `AURA_HISTORIA_OAUTH_CLIENT_SECRET` configured as secrets.
-- Confirm the public routes still expose privacy, imprint, terms, and `contact@aura-historia.com`.
-- Provide Shopify App Review with current test credentials for Aura Historia OAuth, a development store, and an English screencast showing install, OAuth approval, embedded status, disconnect, uninstall/reinstall, and expected product-sync behavior.
-- Keep the emergency developer contact current in the Partner Dashboard.
