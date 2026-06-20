@@ -27,19 +27,22 @@ import styles from "../styles/app-home.module.css";
 const accessSections = [
   {
     title: "Products",
-    description: "Product lifecycle events are forwarded to Aura Historia.",
+    description:
+      "Product lifecycle events publish merchant catalogs to the Aura Historia sales channel.",
     items: [
       {
         name: "products/create",
-        description: "New catalog entries are delivered without manual export.",
+        description: "New catalog entries are published without manual export.",
       },
       {
         name: "products/update",
-        description: "Edits stay in sync as merchants refine their listings.",
+        description:
+          "Edits stay in sync as merchants refine their sales channel listings.",
       },
       {
         name: "products/delete",
-        description: "Removals are passed on so downstream records can close.",
+        description:
+          "Removals are passed on so sales channel records can close.",
       },
     ],
   },
@@ -68,7 +71,8 @@ const accessSections = [
   },
   {
     title: "Locale & shop context",
-    description: "Read-only shop data keeps product sync mapped correctly.",
+    description:
+      "Read-only shop data keeps sales channel product sync mapped correctly.",
     items: [
       {
         name: "read_locales",
@@ -287,11 +291,11 @@ export default function AppIndex() {
           ? "Disconnected"
           : "OAuth connection failed";
   const statusDescription = isConnected
-    ? "This Shopify installation is mapped to Aura Historia."
+    ? "This Shopify installation is mapped to the Aura Historia sales channel."
     : integration.status === "config_missing"
       ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
       : isNotConnected
-        ? "Shopify installation is approved. Connect Aura Historia from this merchant UI to finish the partner authorization."
+        ? "Shopify installation is approved. Connect Aura Historia from this merchant UI to finish sales channel authorization."
         : isDisconnected
           ? "Aura Historia is disconnected for this shop until you reconnect it."
           : "The OAuth flow did not finish. Retry the Aura Historia connection once the issue below is resolved.";
@@ -305,12 +309,15 @@ export default function AppIndex() {
     <div className={styles.page}>
       <section className={styles.hero}>
         <div>
-          <p className={styles.eyebrow}>Shopify partner connect</p>
-          <h1 className={styles.heading}>Connect Aura Historia.</h1>
+          <p className={styles.eyebrow}>Shopify sales channel</p>
+          <h1 className={styles.heading}>
+            Connect Aura Historia Sales Channel.
+          </h1>
           <p className={styles.lead}>
-            Check the connection status below and start Aura Historia
-            authorization from this embedded app. You can disconnect the
-            integration or uninstall the Shopify app at any time.
+            Publish Shopify products to Aura Historia, where shoppers can
+            discover them and continue checkout in your Shopify store. Start
+            Aura Historia authorization from this embedded app, disconnect the
+            integration, or uninstall the Shopify app at any time.
           </p>
         </div>
 
@@ -341,7 +348,7 @@ export default function AppIndex() {
       </section>
 
       <section className={isConnected ? styles.panel : styles.panelMuted}>
-        <h2 className={styles.cardTitle}>Aura Historia integration status</h2>
+        <h2 className={styles.cardTitle}>Aura Historia sales channel status</h2>
         <ul className={styles.topicList}>
           <li className={styles.topicItem}>
             <span className={styles.topicName}>Aura Historia access</span>
@@ -375,6 +382,18 @@ export default function AppIndex() {
           <p className={styles.errorText}>
             Missing environment variables:{" "}
             {integration.missingConfig.join(", ")}
+          </p>
+        ) : null}
+
+        {integration.backfill ? (
+          <p
+            className={
+              integration.backfill === "queued"
+                ? styles.successText
+                : styles.errorText
+            }
+          >
+            {getBackfillMessage(integration.backfill)}
           </p>
         ) : null}
 

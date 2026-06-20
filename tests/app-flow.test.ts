@@ -115,6 +115,7 @@ describe("public install flow", () => {
     assert.ok(marketingRoute.includes("products/create"));
     assert.ok(marketingRoute.includes("customers/data_request"));
     assert.ok(marketingRoute.includes("read_locales"));
+    assert.ok(marketingRoute.includes("Shopify sales channel"));
     assert.ok(appIndexRoute.includes("https://aura-historia.com"));
     assert.ok(
       appIndexRoute.includes(
@@ -126,6 +127,8 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("app/uninstalled"));
     assert.ok(appIndexRoute.includes("read_locales"));
     assert.ok(appIndexRoute.includes("Connected via OAuth"));
+    assert.ok(appIndexRoute.includes("Aura Historia sales channel status"));
+    assert.ok(successRoute.includes("Shopify sales channel connection"));
     assert.ok(appIndexRoute.includes('"disconnected"'));
     assert.ok(appIndexRoute.includes("isShopCredentialsDisconnected"));
     assert.ok(appIndexRoute.includes("markShopCredentialsDisconnected"));

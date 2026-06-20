@@ -14,19 +14,22 @@ const legalLinks = [
 const accessSections = [
   {
     title: "Products",
-    description: "Product lifecycle events are forwarded to Aura Historia.",
+    description:
+      "Product lifecycle events publish merchant catalogs to the Aura Historia sales channel.",
     items: [
       {
         name: "products/create",
-        description: "New catalog entries are delivered without manual export.",
+        description: "New catalog entries are published without manual export.",
       },
       {
         name: "products/update",
-        description: "Edits stay in sync as merchants refine their listings.",
+        description:
+          "Edits stay in sync as merchants refine their sales channel listings.",
       },
       {
         name: "products/delete",
-        description: "Removals are passed on so downstream records can close.",
+        description:
+          "Removals are passed on so sales channel records can close.",
       },
     ],
   },
@@ -56,7 +59,8 @@ const accessSections = [
   },
   {
     title: "Locale & shop context",
-    description: "Read-only shop data keeps product sync mapped correctly.",
+    description:
+      "Read-only shop data keeps sales channel product sync mapped correctly.",
     items: [
       {
         name: "read_locales",
@@ -103,7 +107,7 @@ export default function MarketingIndex() {
       <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brandBlock}>
-            <p className={styles.eyebrow}>Shopify partner connect</p>
+            <p className={styles.eyebrow}>Shopify sales channel</p>
             <a className={styles.brand} href="https://aura-historia.com">
               Aura Historia
             </a>
@@ -130,13 +134,15 @@ export default function MarketingIndex() {
           <section className={styles.introPanel}>
             <span className={styles.tag}>Aura Historia x Shopify</span>
             <h1 className={styles.title}>
-              Aura Historia Partner Connect for Shopify.
+              Aura Historia Sales Channel for Shopify.
             </h1>
             <p className={styles.lead}>
-              This minimal public Shopify app connects an approved Shopify store
-              with Aura Historia. Installation starts from the Shopify App Store
-              or Shopify Admin so Shopify can provide the store context and
-              OAuth approval automatically.
+              This minimal public Shopify sales channel connects an approved
+              Shopify store with Aura Historia so shoppers can discover merchant
+              products and continue checkout in the merchant's Shopify store.
+              Installation starts from the Shopify App Store or Shopify Admin so
+              Shopify can provide the store context and OAuth approval
+              automatically.
             </p>
 
             <div className={styles.buttonRow}>
@@ -188,8 +194,8 @@ export default function MarketingIndex() {
           <p className={styles.manualText}>
             For merchant security, this public page does not collect store
             domains. When Shopify includes the store context, Aura Historia
-            Partner Connect redirects directly to Shopify OAuth approval and
-            then to the embedded app UI.
+            Sales Channel redirects directly to Shopify OAuth approval and then
+            to the embedded app UI.
           </p>
           <div className={styles.buttonRow}>
             <a
