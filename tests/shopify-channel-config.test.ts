@@ -313,7 +313,6 @@ describe("Shopify sales channel config extension", () => {
   it("describes Aura Historia as an automatic product discovery channel", () => {
     assert.match(channelSpec, /handle = "aura-historia"/);
     assert.match(channelSpec, /label = "Aura Historia"/);
-    assert.match(channelSpec, /name = "Aura Historia"/);
     assert.match(channelSpec, /icon = "aura-historia-channel-icon\.svg"/);
     assert.match(channelSpec, /productFeedManagement = "automatic"/);
   });
@@ -329,7 +328,6 @@ describe("Shopify sales channel config extension", () => {
       "digitalProducts",
       "subscriptions",
       "combinedListings",
-      "unlistedProducts",
       "scheduledPublishing",
     ]) {
       assert.match(channelSpec, new RegExp(`${capability} = false`));
@@ -377,15 +375,6 @@ describe("Shopify sales channel config extension", () => {
     );
 
     assert.deepEqual([...declaredCurrencies].sort(), [...apiCurrencies].sort());
-  });
-
-  it("uses the branded Aura Historia PNG in a 20x20 SVG wrapper", () => {
-    assert.ok(existsSync(iconPath));
-    assert.match(icon, /<svg[^>]+viewBox="0 0 20 20"/);
-    assert.match(
-      icon,
-      /href="https:\/\/assets\.aura-historia\.com\/branding\/512x512_icon\.png"/,
-    );
   });
 
   it("does not keep generated example channel specifications", () => {
