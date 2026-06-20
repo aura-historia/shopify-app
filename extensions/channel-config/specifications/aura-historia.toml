@@ -1,0 +1,1231 @@
+handle = "aura-historia"
+label = "Aura Historia"
+icon = "aura-historia-channel-icon.svg"
+productFeedManagement = "automatic"
+
+[capabilities]
+bundles = false
+digitalProducts = false
+subscriptions = false
+combinedListings = false
+unlistedProducts = true
+scheduledPublishing = false
+
+[requirements]
+expectsOnlineStoreParity = true
+merchantOfRecord = "merchant"
+
+[[countries]]
+code = "AC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "AD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "AE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AED"
+
+[[countries]]
+code = "AF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "AU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "AW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "AX"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "AZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BB"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "BF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BJ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "BM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BQ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "BRL"
+
+[[countries]]
+code = "BS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BV"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "BZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "CAD"
+
+[[countries]]
+code = "CC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "CD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "CHF"
+
+[[countries]]
+code = "CI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "NZD"
+
+[[countries]]
+code = "CL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "CNY"
+
+[[countries]]
+code = "CO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CV"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "CX"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "CY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "CZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "CZK"
+
+[[countries]]
+code = "DE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "DJ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "DK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "DM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "DO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "DZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "EC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "EE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "EG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "EH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ER"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ES"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "ET"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "FI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "FJ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "FK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "FO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "FR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "GA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GB"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "GD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "GG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "GH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GP"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "GQ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "GS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "GT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "GY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "HK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "HKD"
+
+[[countries]]
+code = "HM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "HN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "HR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "HT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "HU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ID"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "IE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "IL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "IM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "IN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "IO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "IQ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "IR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "IS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "IT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "JE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "JM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "JO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "JP"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "JPY"
+
+[[countries]]
+code = "KE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "KM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KP"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "KZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LB"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "CHF"
+
+[[countries]]
+code = "LK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "LT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "LU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "LV"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "LY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "MD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ME"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "MF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "MG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ML"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MQ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "MR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "MU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MV"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MX"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "MZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "NO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NP"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "NR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "NU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "NZD"
+
+[[countries]]
+code = "NZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "NZD"
+
+[[countries]]
+code = "OM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "PLN"
+
+[[countries]]
+code = "PM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "PN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "NZD"
+
+[[countries]]
+code = "PS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "PT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "PY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "QA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "RE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "RO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "RS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "RU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "RUB"
+
+[[countries]]
+code = "RW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "SAR"
+
+[[countries]]
+code = "SB"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "SGD"
+
+[[countries]]
+code = "SH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "SI"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "SJ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "SL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "SN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ST"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SV"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SX"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "SZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "GBP"
+
+[[countries]]
+code = "TC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TD"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "TG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TH"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TJ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "NZD"
+
+[[countries]]
+code = "TL"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TO"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TR"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "TRY"
+
+[[countries]]
+code = "TT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TV"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "AUD"
+
+[[countries]]
+code = "TW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "TZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "UA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "UG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "UM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "US"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "UY"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "UZ"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "VA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "VC"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "VE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "VG"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "VN"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "VU"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "WF"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "WS"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "XK"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "YE"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "YT"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "EUR"
+
+[[countries]]
+code = "ZA"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ZM"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"
+
+[[countries]]
+code = "ZW"
+languages = ["de", "en", "fr", "es", "it", "zh", "pt", "pl", "tr", "nl", "cs", "ja", "ru", "ar"]
+currency = "USD"

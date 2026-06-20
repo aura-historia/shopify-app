@@ -1,0 +1,6 @@
+[[extensions]]
+type = "channel_config"
+name = "Aura Historia channel config"
+description = "Sales channel configuration for publishing Shopify products to Aura Historia discovery surfaces."
+handle = "channel-config"
+create_legacy_channel_on_app_install = false

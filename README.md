@@ -1,11 +1,12 @@
 # Aura Historia Partner Connect
 
-A minimal public Shopify app that forwards merchant product lifecycle events to Aura Historia over Amazon EventBridge.
+A minimal public Shopify sales channel app that publishes merchant products to Aura Historia and forwards product lifecycle events over Amazon EventBridge.
 
 ## What this app does
 
-- Authenticates merchants and installs as an embedded Shopify app.
-- Subscribes to `products/create`, `products/update`, and `products/delete`.
+- Authenticates merchants and installs as an embedded Shopify sales channel app.
+- Declares a `channel_config` extension so Shopify registers Aura Historia as a sales channel.
+- Keeps the Aura Historia discovery catalog in sync through `products/create`, `products/update`, and `products/delete`.
 - Subscribes to the mandatory Shopify App Store compliance topics:
   - `customers/data_request`
   - `customers/redact`
@@ -14,6 +15,7 @@ A minimal public Shopify app that forwards merchant product lifecycle events to 
 - Returns merchants to the Shopify Admin app UI after Shopify approves installation.
 - Starts Aura Historia OAuth only after the merchant clicks the embedded app's connection action and stores the returned partner shop ID plus bearer access token for the shop.
 - Queues the existing backfill after Aura Historia OAuth succeeds.
+- Directs shoppers who discover products on Aura Historia back to the merchant's Shopify store for checkout.
 - Keeps all AWS EventBridge consumers out of this repository.
 
 ## Install flow
@@ -35,6 +37,12 @@ After Shopify approves installation, the app now:
 9. queues the existing initial backfill and redirects the merchant back to the embedded Shopify admin app
 
 If the app URL is opened without Shopify-provided store context, the public pages explain that installation must start from a Shopify-owned surface instead of collecting a shop domain manually.
+
+## Sales channel configuration
+
+Aura Historia is configured as a traffic-driving discovery channel: shoppers discover products on Aura Historia, then continue checkout in the merchant's Shopify store. The channel spec therefore keeps `merchantOfRecord = "merchant"` and `expectsOnlineStoreParity = true`.
+
+The channel specification covers every concrete Shopify country/region code and every language currently accepted by the generated Aura Historia backend API `LanguageData` type. Country feed currencies are always selected from the generated backend `CurrencyData` union (`EUR`, `GBP`, `USD`, `AUD`, `CAD`, `NZD`, `CNY`, `BRL`, `PLN`, `TRY`, `JPY`, `CZK`, `RUB`, `AED`, `SAR`, `HKD`, `SGD`, `CHF`); countries whose local currency is not accepted by the backend use a supported fallback currency so Shopify can apply feed currency conversion.
 
 ## Webhook delivery
 
@@ -61,7 +69,8 @@ The install-success route lives at `/success`, for example `https://partner-conn
 
 This repository intentionally stays small:
 
-- React Router handles install/auth, the embedded app shell, and the public success page.
+- React Router handles install/auth, the embedded sales channel app shell, and the public success page.
+- The Shopify channel config extension declares the Aura Historia sales channel capabilities.
 - Cloudflare KV stores Shopify sessions and Aura Historia connection metadata.
 - There is no sample GraphQL mutation logic, demo navigation, or placeholder business logic.
 - AWS routing, rules, and consumers live in another repository.
@@ -184,19 +193,3 @@ GitHub Actions runs the following checks on pushes and pull requests:
 - `npm run build`
 
 The workflow lives at `.github/workflows/ci.yml`.
-
-## Public app checklist
-
-Before submitting the app for Shopify App Store review:
-
-- Confirm the EventBridge ARN is correct for the target AWS account and region.
-- Confirm the mandatory compliance topics remain subscribed.
-- Confirm the app is listed as free, or implement Shopify App Pricing / Billing API before charging merchants.
-- Confirm the Partner Dashboard and App Store listing name match `Aura Historia Partner Connect`.
-- Confirm your Partner Dashboard listing includes a privacy policy URL.
-- Confirm the configured redirect URLs include the Shopify auth callback URL used by this app.
-- Confirm the Aura Historia OAuth client allows `https://partner-connect.aura-historia.com/oauth/callback` as a redirect URI.
-- Confirm the production Worker has `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `AURA_HISTORIA_OAUTH_CLIENT_ID`, and `AURA_HISTORIA_OAUTH_CLIENT_SECRET` configured as secrets.
-- Confirm the public routes still expose privacy, imprint, terms, and `contact@aura-historia.com`.
-- Provide Shopify App Review with current test credentials for Aura Historia OAuth, a development store, and an English screencast showing install, OAuth approval, embedded status, disconnect, uninstall/reinstall, and expected product-sync behavior.
-- Keep the emergency developer contact current in the Partner Dashboard.
