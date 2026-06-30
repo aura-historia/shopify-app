@@ -25,10 +25,10 @@
     "node": ">=22.18"
   },
   "dependencies": {
-    "@react-router/dev": "^7.18.0",
-    "@react-router/fs-routes": "^7.18.0",
-    "@react-router/node": "^7.12.0",
-    "@react-router/serve": "^7.12.0",
+    "@react-router/dev": "^8.0.1",
+    "@react-router/fs-routes": "^8.0.1",
+    "@react-router/node": "^8.0.1",
+    "@react-router/serve": "^8.0.1",
     "@shopify/shopify-app-react-router": "^1.2.1",
     "@shopify/shopify-app-session-storage-kv": "^6.0.1",
     "node-html-markdown": "^2.0.0",
