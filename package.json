@@ -38,7 +38,7 @@
     "vite-tsconfig-paths": "^6.1.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.1",
+    "@biomejs/biome": "^2.5.2",
     "@cloudflare/vite-plugin": "^1.42.4",
     "@cloudflare/workers-types": "^4.20260701.1",
     "@hey-api/openapi-ts": "^0.99.0",
