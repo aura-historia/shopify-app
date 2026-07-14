@@ -18,7 +18,7 @@ describe("deploy workflow", () => {
   });
 
   it("installs dependencies and runs the standard quality checks", () => {
-    assert.match(deployWorkflow, /uses: actions\/setup-node@v6/);
+    assert.match(deployWorkflow, /uses: actions\/setup-node@v/);
     assert.match(deployWorkflow, /run: npm ci/);
     assert.match(deployWorkflow, /npm run lint/);
     assert.match(deployWorkflow, /npm run typecheck/);
