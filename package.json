@@ -48,7 +48,7 @@
     "isbot": "^5.2.1",
     "tsx": "^4.23.1",
     "typescript": "^6.0.3",
-    "vite": "^8.1.4",
+    "vite": "^8.1.5",
     "wrangler": "^4.102.0"
   },
   "optionalDependencies": {
