@@ -36,7 +36,8 @@ describe("public install flow", () => {
   it("uses Shopify AppProvider for embedded App Bridge boot", () => {
     assert.equal(rootDocument.includes("shopifycloud/app-bridge.js"), false);
     assert.ok(appShellRoute.includes("AppProvider"));
-    assert.ok(appShellRoute.includes("embedded apiKey={apiKey}"));
+    assert.ok(appShellRoute.includes("AppProvider apiKey={apiKey}"));
+    assert.equal(appShellRoute.includes("embedded"), false);
   });
 
   it("routes a shop-only App Store link directly to the login handler", () => {

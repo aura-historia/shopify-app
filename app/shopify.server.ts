@@ -15,7 +15,6 @@ export interface CloudflareShopifyEnv {
   SHOPIFY_API_SECRET?: string;
   SHOPIFY_APP_URL?: string;
   SHOPIFY_API_VERSION?: string;
-  SHOP_CUSTOM_DOMAIN?: string;
   AURA_HISTORIA_API_BASE_URL?: string;
   AURA_HISTORIA_ENV?: string;
   AURA_HISTORIA_OAUTH_ENV?: string;
@@ -41,8 +40,6 @@ function getResolvedConfig(env: CloudflareShopifyEnv) {
       env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_API_SECRET ?? "",
     appUrl: env.SHOPIFY_APP_URL ?? process.env.SHOPIFY_APP_URL ?? "",
     scopes: getScopes(env.SCOPES ?? process.env.SCOPES),
-    customShopDomain:
-      env.SHOP_CUSTOM_DOMAIN ?? process.env.SHOP_CUSTOM_DOMAIN ?? "",
   };
 }
 
@@ -54,7 +51,6 @@ function getCacheKey(env: CloudflareShopifyEnv) {
     config.apiSecretKey,
     config.appUrl,
     config.scopes.join(","),
-    config.customShopDomain,
   ].join("|");
 }
 
@@ -89,9 +85,6 @@ export function getShopify(context: AppLoadContext) {
     future: {
       expiringOfflineAccessTokens: true,
     },
-    ...(config.customShopDomain
-      ? { customShopDomains: [config.customShopDomain] }
-      : {}),
   });
 
   shopifyCache.set(cacheKey, shopify);

@@ -21,4 +21,9 @@ describe("shopify runtime configuration", () => {
   it("keeps the auth path prefix on /auth", () => {
     assert.match(shopifyServer, /authPathPrefix: "\/auth"/);
   });
+
+  it("does not use removed custom-shop domain configuration", () => {
+    assert.equal(shopifyServer.includes("SHOP_CUSTOM_DOMAIN"), false);
+    assert.equal(shopifyServer.includes("customShopDomains"), false);
+  });
 });
