@@ -42,7 +42,7 @@
     "@cloudflare/vite-plugin": "^1.54.2",
     "@cloudflare/workers-types": "^5.20260901.1",
     "@hey-api/openapi-ts": "^0.99.0",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "isbot": "^5.2.2",
