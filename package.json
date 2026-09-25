@@ -52,7 +52,7 @@
     "wrangler": "^4.131.0"
   },
   "optionalDependencies": {
-    "@rolldown/binding-linux-x64-gnu": "1.2.9"
+    "@rolldown/binding-linux-x64-gnu": "1.2.10"
   },
   "overrides": {
     "p-map": "^4.0.0"
