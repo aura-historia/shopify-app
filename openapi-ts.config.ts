@@ -1,8 +1,8 @@
 import { defineConfig } from "@hey-api/openapi-ts";
 
 // Pinned to a specific commit for reproducible client generation.
-// Regenerate with: npx @hey-api/openapi-ts
-const SWAGGER_COMMIT = "1ad5e8660d42f85a5633c185f8c2c94ac91122bd";
+// Regenerate with: npm run openapi:generate
+const SWAGGER_COMMIT = "792444f6d62cfb9f8dd4dc44ffb47a420de54cad";
 
 export default defineConfig({
   input: `https://raw.githubusercontent.com/aura-historia/backend/${SWAGGER_COMMIT}/docs/swagger.yaml`,

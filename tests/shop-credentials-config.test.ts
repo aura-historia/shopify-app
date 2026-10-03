@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
@@ -10,12 +9,14 @@ import {
   getShopCredentialsStorageKey,
   isShopCredentialsDisconnected,
   isValidAuraHistoriaAccessToken,
-  isValidShopId,
+  isValidListingSourceId,
   loadShopCredentials,
   markShopCredentialsDisconnected,
   saveShopCredentials,
   toPublicShopCredentialsRecord,
 } from "../app/shop-credentials.server";
+
+const listingSourceId = `ls_${"0".repeat(26)}`;
 
 const appRoute = readFileSync(
   resolve(process.cwd(), "app/routes/app.tsx"),
@@ -27,14 +28,24 @@ const uninstallWebhookRoute = readFileSync(
 );
 
 describe("shop OAuth credentials configuration", () => {
-  it("validates the expected shop ID and access token formats", () => {
-    const validShopId = randomUUID();
+  it("validates canonical listing source TypeIDs and access token formats", () => {
     const validAccessToken = "aurahistoria_accesstoken_1234567890abcdef";
     const validMultiSegmentAccessToken =
       "aurahistoria_accesstoken_access_1234567890abcdef";
 
-    assert.equal(isValidShopId(validShopId), true);
-    assert.equal(isValidShopId("not-a-uuid"), false);
+    assert.equal(isValidListingSourceId(listingSourceId), true);
+    assert.equal(isValidListingSourceId(`ls_7${"v".repeat(25)}`), true);
+    for (const invalid of [
+      "not-a-uuid",
+      `ls_8${"0".repeat(25)}`,
+      `ls_${"0".repeat(25)}`,
+      `ls_${"0".repeat(27)}`,
+      `ls_0${"i".repeat(25)}`,
+      `LS_${"0".repeat(26)}`,
+      `ls_0${"O".repeat(25)}`,
+    ]) {
+      assert.equal(isValidListingSourceId(invalid), false, invalid);
+    }
     assert.equal(isValidAuraHistoriaAccessToken(validAccessToken), true);
     assert.equal(
       isValidAuraHistoriaAccessToken(validMultiSegmentAccessToken),
@@ -67,9 +78,9 @@ describe("shop OAuth credentials configuration", () => {
     };
 
     await saveShopCredentials(kv as never, "example-shop.myshopify.com", {
-      shopId: randomUUID(),
+      listingSourceId,
       accessToken: "aurahistoria_accesstoken_abcdef123456",
-      scope: "products:write",
+      scope: "listing-sources:write product-listings:write",
       shopifyStoreName: "example-shop",
     });
 
@@ -85,21 +96,27 @@ describe("shop OAuth credentials configuration", () => {
       "aurahistoria_accesstoken_abcdef123456",
     );
     assert.equal(savedRecord.tokenType, "BEARER");
-    assert.equal(savedRecord.scope, "products:write");
+    assert.equal(
+      savedRecord.scope,
+      "listing-sources:write product-listings:write",
+    );
+    assert.equal(savedRecord.listingSourceId, listingSourceId);
     assert.equal(savedRecord.shopifyStoreName, "example-shop");
   });
 
   it("keeps the stored access token out of public loader data", async () => {
     const publicRecord = toPublicShopCredentialsRecord({
-      shopId: randomUUID(),
+      listingSourceId,
       accessToken: "aurahistoria_accesstoken_abcdef123456",
       tokenType: "BEARER",
-      scope: "products:write",
+      scope: "listing-sources:write product-listings:write",
       shopifyStoreName: "example-shop",
       updatedAt: "2026-06-06T00:00:00.000Z",
     });
 
     assert.equal(publicRecord.hasAccessToken, true);
+    assert.equal(publicRecord.listingSourceId, listingSourceId);
+    assert.equal("shopId" in publicRecord, false);
     assert.equal("accessToken" in publicRecord, false);
     assert.equal("accessTokenPreview" in publicRecord, false);
   });
@@ -117,7 +134,7 @@ describe("shop OAuth credentials configuration", () => {
     };
 
     await saveShopCredentials(kv as never, "example-shop.myshopify.com", {
-      shopId: randomUUID(),
+      listingSourceId,
       accessToken: "aurahistoria_accesstoken_abcdef123456",
     });
 
@@ -176,7 +193,7 @@ describe("shop OAuth credentials configuration", () => {
     );
   });
 
-  it("can read pre-OAuth records that used the apiKey field", async () => {
+  it("rejects legacy apiKey and shopId records instead of treating them as connected", async () => {
     const entries = new Map<string, string>();
     const kv = {
       get: async (key: string) => entries.get(key) ?? null,
@@ -188,7 +205,7 @@ describe("shop OAuth credentials configuration", () => {
     entries.set(
       getShopCredentialsStorageKey("example-shop.myshopify.com"),
       JSON.stringify({
-        shopId: randomUUID(),
+        shopId: "550e8400-e29b-41d4-a716-446655440000",
         apiKey: "aurahistoria_accesstoken_legacy",
         updatedAt: "2026-06-06T00:00:00.000Z",
       }),
@@ -199,9 +216,33 @@ describe("shop OAuth credentials configuration", () => {
       "example-shop.myshopify.com",
     );
 
-    assert.ok(savedRecord);
-    assert.equal(savedRecord.accessToken, "aurahistoria_accesstoken_legacy");
-    assert.equal(savedRecord.tokenType, "BEARER");
+    assert.equal(savedRecord, null);
+
+    entries.set(
+      getShopCredentialsStorageKey("example-shop.myshopify.com"),
+      JSON.stringify({
+        shopId: "550e8400-e29b-41d4-a716-446655440000",
+        accessToken: "aurahistoria_accesstoken_legacy",
+        updatedAt: "2026-06-06T00:00:00.000Z",
+      }),
+    );
+    assert.equal(
+      await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
+      null,
+    );
+
+    entries.set(
+      getShopCredentialsStorageKey("example-shop.myshopify.com"),
+      JSON.stringify({
+        listingSourceId: `ls_8${"0".repeat(25)}`,
+        accessToken: "aurahistoria_accesstoken_legacy",
+        updatedAt: "2026-06-06T00:00:00.000Z",
+      }),
+    );
+    assert.equal(
+      await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
+      null,
+    );
   });
 
   it("clears app-owned Aura Historia connection data on uninstall", () => {

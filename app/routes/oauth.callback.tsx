@@ -10,10 +10,12 @@ import {
   getAuraHistoriaOAuthConfig,
   getMissingAuraHistoriaOAuthConfig,
   getShopDomainFromStoreName,
+  type InitialBackfillStatus,
   loadOAuthPendingContext,
+  persistCredentialsAfterInitialBackfill,
   summarizeOAuthError,
 } from "../oauth.server";
-import { isValidShopId, saveShopCredentials } from "../shop-credentials.server";
+import { isValidListingSourceId } from "../shop-credentials.server";
 import { getShopify } from "../shopify.server";
 import styles from "../styles/public-page.module.css";
 
@@ -26,21 +28,19 @@ const legalLinks = [
   },
 ];
 
-type BackfillStatus = "queued" | "missing_shopify_session" | "not_queued";
-
 async function queueInitialBackfill({
   context,
   shopDomain,
-  shopId,
+  listingSourceId,
   accessToken,
   apiBaseUrl,
 }: {
   context: LoaderFunctionArgs["context"];
   shopDomain: string;
-  shopId: string;
+  listingSourceId: string;
   accessToken: string;
   apiBaseUrl: string;
-}): Promise<BackfillStatus> {
+}): Promise<InitialBackfillStatus> {
   try {
     const shopify = getShopify(context);
     const { admin } = await shopify.unauthenticated.admin(shopDomain);
@@ -50,7 +50,7 @@ async function queueInitialBackfill({
       graphqlRequest,
       context.cloudflare.env.KV,
       shopDomain,
-      shopId,
+      listingSourceId,
       accessToken,
       apiBaseUrl,
     );
@@ -115,9 +115,9 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     return fail("Aura Historia did not return an OAuth authorization code.");
   }
 
-  const partnerShopId = url.searchParams.get("partner_shop_id");
-  if (!partnerShopId || !isValidShopId(partnerShopId)) {
-    return fail("Aura Historia did not return a valid partner_shop_id.");
+  const listingSourceId = url.searchParams.get("listing_source_id");
+  if (!listingSourceId || !isValidListingSourceId(listingSourceId)) {
+    return fail("Aura Historia did not return a valid listing_source_id.");
   }
 
   if (!stateValue || !state || !shopifyStoreName) {
@@ -154,24 +154,35 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     const shopDomain =
       pending.shopDomain || getShopDomainFromStoreName(shopifyStoreName);
 
-    await saveShopCredentials(context.cloudflare.env.KV, shopDomain, {
-      shopId: partnerShopId,
-      accessToken: token.access_token,
-      tokenType: token.token_type,
-      scope: token.scope,
-      shopifyStoreName,
-    });
-
     const apiBaseUrl =
       getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
       new URL(config.tokenUrl).origin;
-    const backfill = await queueInitialBackfill({
-      context,
+    const backfill = await persistCredentialsAfterInitialBackfill(
+      context.cloudflare.env.KV,
       shopDomain,
-      shopId: partnerShopId,
-      accessToken: token.access_token,
-      apiBaseUrl,
-    });
+      {
+        listingSourceId,
+        accessToken: token.access_token,
+        tokenType: token.token_type,
+        scope: token.scope,
+        shopifyStoreName,
+      },
+      () =>
+        queueInitialBackfill({
+          context,
+          shopDomain,
+          listingSourceId,
+          accessToken: token.access_token,
+          apiBaseUrl,
+        }),
+    );
+    if (backfill !== "queued") {
+      return fail(
+        backfill === "missing_shopify_session"
+          ? "No offline Shopify session was available to complete the Aura Historia connection. Reopen the Shopify app to retry."
+          : "Aura Historia setup could not be completed. Reopen the Shopify app to retry.",
+      );
+    }
 
     await clearOAuthPendingContext(context.cloudflare.env.KV, stateValue);
 

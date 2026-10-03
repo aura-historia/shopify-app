@@ -31,6 +31,10 @@ const appIndexRoute = readFileSync(
   resolve(process.cwd(), "app/routes/app._index.tsx"),
   "utf8",
 );
+const oauthCallbackRoute = readFileSync(
+  resolve(process.cwd(), "app/routes/oauth.callback.tsx"),
+  "utf8",
+);
 
 describe("public install flow", () => {
   it("uses Shopify AppProvider for embedded App Bridge boot", () => {
@@ -83,6 +87,31 @@ describe("public install flow", () => {
     );
     assert.ok(appIndexRoute.includes('"not_connected"'));
     assert.ok(appIndexRoute.includes("Connect Aura Historia"));
+  });
+
+  it("uses the listing source ID throughout the OAuth callback and embedded app", () => {
+    assert.ok(
+      oauthCallbackRoute.includes('searchParams.get("listing_source_id")'),
+    );
+    assert.ok(
+      oauthCallbackRoute.includes("isValidListingSourceId(listingSourceId)"),
+    );
+    assert.ok(oauthCallbackRoute.includes("listingSourceId,"));
+    assert.equal(oauthCallbackRoute.includes("partner_shop_id"), false);
+    assert.ok(appIndexRoute.includes("credentials?.listingSourceId"));
+    assert.equal(appIndexRoute.includes("credentials.shopId"), false);
+    assert.ok(appIndexRoute.includes("Aura Historia Listing Source ID"));
+  });
+
+  it("does not report the callback as connected when initial setup fails", () => {
+    assert.match(
+      oauthCallbackRoute,
+      /const backfill = await persistCredentialsAfterInitialBackfill\([\s\S]*?if \(backfill !== "queued"\) \{\s*return fail\(/,
+    );
+    assert.match(
+      oauthCallbackRoute,
+      /backfill === "missing_shopify_session"[\s\S]*?return adminRedirect\(shopifyStoreName, \{\s*oauth: "connected"/,
+    );
   });
 
   it("keeps review links and contact details on the success page", () => {

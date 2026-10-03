@@ -5,27 +5,35 @@ import { describe, it, mock } from "node:test";
 import {
   type BackfillContext,
   type BulkJsonlProduct,
-  buildShopMetadataPatch,
+  buildShopifyIngestionConfiguration,
   clearBackfillContext,
   createAdminGraphqlRequest,
+  createBackfillIdempotencyKey,
   extractShopifyNumericId,
   fetchBulkOperationResultUrl,
   fetchShopMetadata,
   type GraphqlRequestFn,
-  htmlToMarkdown,
   loadBackfillContext,
   mapShopifyCurrencyCode,
   mapShopifyLocaleToLanguage,
-  mapShopifyStatus,
   normalizeShopifyDomain,
   parseProductsFromJsonl,
-  patchShopMetadata,
+  processBackfillResults,
+  putShopifyIngestionConfiguration,
   resolveLanguage,
+  sendProductBatch,
   storeBackfillContext,
   submitBulkOperation,
   transformProduct,
+  transformWithdrawal,
   triggerBackfill,
 } from "../app/backfill.server";
+
+const listingSourceId = `ls_${"0".repeat(26)}`;
+const apiBaseUrl = "https://api.test.com";
+const shopDomain = "my-shop.myshopify.com";
+const accessToken = "aurahistoria_accesstoken_test";
+const bulkOperationId = "gid://shopify/BulkOperation/789";
 
 function makeProduct(
   overrides: Partial<BulkJsonlProduct> = {},
@@ -33,10 +41,26 @@ function makeProduct(
   return {
     id: "gid://shopify/Product/12345",
     title: "Antique Clock",
-    descriptionHtml: "<p>A beautiful <strong>antique</strong> clock.</p>",
     status: "ACTIVE",
     totalInventory: 5,
-    onlineStoreUrl: "https://my-shop.myshopify.com/products/antique-clock",
+    onlineStoreUrl: `https://${shopDomain}/products/antique-clock`,
+    handle: "antique-clock",
+    ...overrides,
+  };
+}
+
+function makeContext(
+  overrides: Partial<BackfillContext> = {},
+): BackfillContext {
+  return {
+    listingSourceId,
+    accessToken,
+    apiBaseUrl,
+    primaryLocale: "de",
+    currencyCode: "EUR",
+    shopDomain,
+    bulkOperationId,
+    createdAt: "2026-06-06T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -46,1012 +70,917 @@ function makeKv() {
   return {
     get: mock.fn(async (key: string) => entries.get(key) ?? null),
     put: mock.fn(
-      async (key: string, value: string, _opts?: { expirationTtl?: number }) =>
-        entries.set(key, value),
+      async (
+        key: string,
+        value: string,
+        _opts?: { expirationTtl?: number },
+      ) => {
+        entries.set(key, value);
+      },
     ),
-    delete: mock.fn(async (key: string) => entries.delete(key)),
-    _entries: entries,
+    delete: mock.fn(async (key: string) => {
+      entries.delete(key);
+    }),
+    entries,
   };
 }
 
-describe("extractShopifyNumericId", () => {
-  it("extracts numeric ID from a Shopify GID", () => {
+function report(
+  acceptedCount: number,
+  failures: Array<{
+    index: number;
+    sourceListingId?: string;
+    error: string;
+    retryable: boolean;
+  }> = [],
+) {
+  return { submissionId: "submission-1", acceptedCount, failures };
+}
+
+function jsonResponse(value: unknown, status = 202): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function asRequest(input: RequestInfo | URL): Request {
+  return input instanceof Request ? input : new Request(input);
+}
+
+function withFetch(
+  fetcher: typeof fetch,
+  run: () => Promise<void>,
+): Promise<void> {
+  const original = globalThis.fetch;
+  globalThis.fetch = fetcher;
+  return run().finally(() => {
+    globalThis.fetch = original;
+  });
+}
+
+describe("Shopify IDs, locale, currency and domain", () => {
+  it("extracts numeric IDs from Shopify GIDs and plain IDs", () => {
     assert.equal(
       extractShopifyNumericId("gid://shopify/Product/12345"),
       "12345",
     );
-  });
-
-  it("handles plain numeric strings", () => {
     assert.equal(extractShopifyNumericId("99999"), "99999");
   });
-});
 
-describe("mapShopifyStatus", () => {
-  it("maps ACTIVE with inventory to AVAILABLE", () => {
-    assert.equal(mapShopifyStatus("ACTIVE", 5), "AVAILABLE");
-  });
-
-  it("maps ACTIVE with null inventory (untracked) to AVAILABLE", () => {
-    assert.equal(mapShopifyStatus("ACTIVE", null), "AVAILABLE");
-  });
-
-  it("maps ACTIVE with zero inventory to SOLD", () => {
-    assert.equal(mapShopifyStatus("ACTIVE", 0), "SOLD");
-  });
-
-  it("maps ACTIVE with negative inventory to SOLD", () => {
-    assert.equal(mapShopifyStatus("ACTIVE", -1), "SOLD");
-  });
-
-  it("maps DRAFT to LISTED regardless of inventory", () => {
-    assert.equal(mapShopifyStatus("DRAFT", 10), "LISTED");
-    assert.equal(mapShopifyStatus("DRAFT", 0), "LISTED");
-  });
-
-  it("maps ARCHIVED to REMOVED", () => {
-    assert.equal(mapShopifyStatus("ARCHIVED", 0), "REMOVED");
-  });
-
-  it("maps unknown statuses to UNKNOWN", () => {
-    assert.equal(mapShopifyStatus("SOMETHING_ELSE", null), "UNKNOWN");
-  });
-});
-
-describe("resolveLanguage", () => {
-  it("maps supported Shopify locales without defaulting", () => {
-    assert.equal(mapShopifyLocaleToLanguage("de"), "de");
-    assert.equal(mapShopifyLocaleToLanguage("en"), "en");
-    assert.equal(mapShopifyLocaleToLanguage("fr"), "fr");
-    assert.equal(mapShopifyLocaleToLanguage("ja"), "ja");
-  });
-
-  it("extracts base locale from regional codes without defaulting", () => {
-    assert.equal(mapShopifyLocaleToLanguage("en-US"), "en");
+  it("maps supported regional locales without silently defaulting configuration", () => {
     assert.equal(mapShopifyLocaleToLanguage("de-AT"), "de");
     assert.equal(mapShopifyLocaleToLanguage("pt-BR"), "pt");
-  });
-
-  it("returns undefined for unsupported locales when omission is required", () => {
-    assert.equal(mapShopifyLocaleToLanguage("ko"), undefined);
-    assert.equal(mapShopifyLocaleToLanguage("sv"), undefined);
+    assert.equal(mapShopifyLocaleToLanguage("ja"), "ja");
+    assert.equal(mapShopifyLocaleToLanguage("sv-SE"), undefined);
     assert.equal(mapShopifyLocaleToLanguage(undefined), undefined);
+    assert.equal(resolveLanguage("sv-SE"), "en");
   });
 
-  it("maps supported Shopify locales to LanguageData", () => {
-    assert.equal(resolveLanguage("de"), "de");
-    assert.equal(resolveLanguage("en"), "en");
-    assert.equal(resolveLanguage("fr"), "fr");
-    assert.equal(resolveLanguage("ja"), "ja");
-  });
-
-  it("extracts base locale from regional codes", () => {
-    assert.equal(resolveLanguage("en-US"), "en");
-    assert.equal(resolveLanguage("de-AT"), "de");
-    assert.equal(resolveLanguage("pt-BR"), "pt");
-  });
-
-  it("falls back to English for unsupported locales", () => {
-    assert.equal(resolveLanguage("ko"), "en");
-    assert.equal(resolveLanguage("sv"), "en");
-  });
-});
-
-describe("mapShopifyCurrencyCode", () => {
-  it("keeps supported Shopify currencies", () => {
+  it("accepts supported currencies and normalizes the shop domain", () => {
+    assert.equal(mapShopifyCurrencyCode("JPY"), "JPY");
     assert.equal(mapShopifyCurrencyCode("EUR"), "EUR");
-    assert.equal(mapShopifyCurrencyCode("USD"), "USD");
-  });
-
-  it("returns undefined for unknown or unsupported currencies", () => {
     assert.equal(mapShopifyCurrencyCode("SEK"), undefined);
     assert.equal(mapShopifyCurrencyCode(undefined), undefined);
+    assert.equal(normalizeShopifyDomain(" My-Shop.MyShopify.com "), shopDomain);
+    assert.equal(normalizeShopifyDomain("  "), undefined);
   });
-});
 
-describe("buildShopMetadataPatch", () => {
-  it("includes shopify domain, supported currency, and language", () => {
+  it("always configures the normalized domain and only known currency/language", () => {
     assert.deepEqual(
-      buildShopMetadataPatch(
-        {
-          primaryLocale: "de-AT",
-          currencyCode: "EUR",
-        },
-        "My-Shop.MyShopify.com ",
+      buildShopifyIngestionConfiguration(
+        { primaryLocale: "de-AT", currencyCode: "EUR" },
+        " My-Shop.MyShopify.com ",
       ),
-      {
-        shopifyDomain: "my-shop.myshopify.com",
-        shopifyLanguage: "de",
-        shopifyCurrency: "EUR",
-      },
+      { domain: shopDomain, currency: "EUR", language: "de" },
     );
-  });
-
-  it("omits unknown metadata fields while keeping known domain", () => {
     assert.deepEqual(
-      buildShopMetadataPatch(
-        {
-          primaryLocale: "sv-SE",
-          currencyCode: "EUR",
-        },
-        "my-shop.myshopify.com",
+      buildShopifyIngestionConfiguration(
+        { primaryLocale: "sv-SE", currencyCode: "SEK" },
+        shopDomain,
       ),
-      {
-        shopifyDomain: "my-shop.myshopify.com",
-        shopifyCurrency: "EUR",
-      },
-    );
-    assert.equal(
-      buildShopMetadataPatch({
-        primaryLocale: undefined,
-        currencyCode: "SEK",
-      }),
-      null,
+      { domain: shopDomain },
     );
   });
 });
 
-describe("normalizeShopifyDomain", () => {
-  it("trims and lowercases the known shopify domain", () => {
-    assert.equal(
-      normalizeShopifyDomain(" My-Shop.MyShopify.com "),
-      "my-shop.myshopify.com",
-    );
-  });
-
-  it("returns undefined when shopify domain is missing", () => {
-    assert.equal(normalizeShopifyDomain(undefined), undefined);
-    assert.equal(normalizeShopifyDomain("   "), undefined);
-  });
-});
-
-describe("htmlToMarkdown", () => {
-  it("converts paragraphs", () => {
-    assert.equal(htmlToMarkdown("<p>Hello</p><p>World</p>"), "Hello\n\nWorld");
-  });
-
-  it("converts bold and italic", () => {
-    assert.equal(
-      htmlToMarkdown("<strong>bold</strong> and <em>italic</em>"),
-      "**bold** and *italic*",
-    );
-  });
-
-  it("converts headings", () => {
-    assert.equal(htmlToMarkdown("<h1>Title</h1>"), "# Title");
-    assert.equal(htmlToMarkdown("<h3>Subtitle</h3>"), "### Subtitle");
-  });
-
-  it("converts unordered lists", () => {
-    const html = "<ul><li>Item A</li><li>Item B</li></ul>";
-    assert.equal(htmlToMarkdown(html), "- Item A\n- Item B");
-  });
-
-  it("converts ordered lists", () => {
-    const html = "<ol><li>First</li><li>Second</li></ol>";
-    assert.equal(htmlToMarkdown(html), "1. First\n2. Second");
-  });
-
-  it("converts links", () => {
-    assert.equal(
-      htmlToMarkdown('<a href="https://example.com">click</a>'),
-      "[click](https://example.com)",
-    );
-  });
-
-  it("converts line breaks", () => {
-    assert.equal(htmlToMarkdown("Line 1<br>Line 2"), "Line 1  \nLine 2");
-  });
-
-  it("strips unsupported tags", () => {
-    assert.equal(htmlToMarkdown("<div><span>text</span></div>"), "text");
-  });
-
-  it("decodes HTML entities", () => {
-    assert.equal(htmlToMarkdown("&amp; &lt; &gt; &quot; &#39;"), "& < > \" '");
-    assert.equal(htmlToMarkdown("hello&nbsp;world"), "hello world");
-  });
-
-  it("handles empty string", () => {
-    assert.equal(htmlToMarkdown(""), "");
-  });
-
-  it("handles a typical Shopify product description", () => {
-    const html =
-      "<p>A beautiful <strong>antique</strong> clock.</p><p>Perfect for collectors.</p>";
-    const expected =
-      "A beautiful **antique** clock.\n\nPerfect for collectors.";
-    assert.equal(htmlToMarkdown(html), expected);
-  });
-});
-
-describe("transformProduct", () => {
-  it("transforms a product with all fields", () => {
-    const product = makeProduct();
-    const result = transformProduct(
-      product,
-      ["https://cdn.shopify.com/clock-1.jpg"],
-      "29.99",
-      "en",
-      "EUR",
-      "my-shop.myshopify.com",
-    );
-
-    assert.equal(result.shopsProductId, "12345");
-    assert.deepEqual(result.title, { text: "Antique Clock", language: "en" });
-    assert.equal(result.state, "AVAILABLE");
-    assert.equal(
-      result.url,
-      "https://my-shop.myshopify.com/products/antique-clock",
-    );
-    assert.deepEqual(result.images, ["https://cdn.shopify.com/clock-1.jpg"]);
-    assert.deepEqual(result.price, { amount: 2999, currency: "EUR" });
-  });
-
-  it("uses the shop's locale for language", () => {
+describe("Shopify product transformation", () => {
+  it("upserts source listing ID, localized title, URL, images and monetary price", () => {
     const result = transformProduct(
       makeProduct(),
-      [],
-      null,
+      ["https://cdn.shopify.com/clock.jpg"],
+      "29.99",
       "de",
       "EUR",
-      "shop.com",
+      shopDomain,
     );
-    assert.equal(result.title?.language, "de");
-  });
-
-  it("converts description HTML to markdown", () => {
-    const result = transformProduct(
-      makeProduct(),
-      [],
-      null,
-      "en",
-      "EUR",
-      "shop.com",
-    );
-    assert.equal(result.description?.text, "A beautiful **antique** clock.");
-  });
-
-  it("uses fallback URL when onlineStoreUrl is null", () => {
-    const product = makeProduct({ onlineStoreUrl: null });
-    const result = transformProduct(
-      product,
-      [],
-      null,
-      "en",
-      "EUR",
-      "my-shop.myshopify.com",
-    );
-    assert.equal(result.url, "https://my-shop.myshopify.com/products/12345");
-  });
-
-  it("handles no variant price", () => {
-    const result = transformProduct(
-      makeProduct(),
-      [],
-      null,
-      "en",
-      "EUR",
-      "shop.com",
-    );
-    assert.equal(result.price, undefined);
-  });
-
-  it("handles zero price", () => {
-    const result = transformProduct(
-      makeProduct(),
-      [],
-      "0.00",
-      "en",
-      "EUR",
-      "shop.com",
-    );
-    assert.deepEqual(result.price, { amount: 0, currency: "EUR" });
-  });
-
-  it("skips price for unsupported currencies", () => {
-    const result = transformProduct(
-      makeProduct(),
-      [],
-      "10.00",
-      "en",
-      "XYZ",
-      "shop.com",
-    );
-    assert.equal(result.price, undefined);
-  });
-
-  it("maps ACTIVE + 0 inventory to SOLD", () => {
-    const product = makeProduct({ status: "ACTIVE", totalInventory: 0 });
-    const result = transformProduct(product, [], null, "en", "EUR", "shop.com");
-    assert.equal(result.state, "SOLD");
-  });
-
-  it("maps ACTIVE + null inventory (untracked) to AVAILABLE", () => {
-    const product = makeProduct({ status: "ACTIVE", totalInventory: null });
-    const result = transformProduct(product, [], null, "en", "EUR", "shop.com");
-    assert.equal(result.state, "AVAILABLE");
-  });
-
-  it("maps DRAFT to LISTED", () => {
-    const product = makeProduct({ status: "DRAFT" });
-    const result = transformProduct(product, [], null, "en", "EUR", "shop.com");
-    assert.equal(result.state, "LISTED");
-  });
-});
-
-describe("parseProductsFromJsonl", () => {
-  it("parses products with images and variants from JSONL", () => {
-    const jsonl = [
-      '{"id":"gid://shopify/Product/1","title":"Clock","descriptionHtml":"<p>Nice</p>","status":"ACTIVE","totalInventory":3,"onlineStoreUrl":"https://shop.com/1"}',
-      '{"id":"gid://shopify/ProductImage/10","url":"https://cdn.shopify.com/img1.jpg","__parentId":"gid://shopify/Product/1"}',
-      '{"id":"gid://shopify/ProductImage/11","url":"https://cdn.shopify.com/img2.jpg","__parentId":"gid://shopify/Product/1"}',
-      '{"id":"gid://shopify/ProductVariant/100","price":"49.99","__parentId":"gid://shopify/Product/1"}',
-    ].join("\n");
-
-    const { products, images, variants } = parseProductsFromJsonl(jsonl);
-
-    assert.equal(products.length, 1);
-    assert.equal(products[0].title, "Clock");
-    assert.deepEqual(images.get("gid://shopify/Product/1"), [
-      "https://cdn.shopify.com/img1.jpg",
-      "https://cdn.shopify.com/img2.jpg",
-    ]);
-    assert.equal(variants.get("gid://shopify/Product/1"), "49.99");
-  });
-
-  it("handles multiple products", () => {
-    const jsonl = [
-      '{"id":"gid://shopify/Product/1","title":"A","descriptionHtml":"","status":"ACTIVE","totalInventory":1,"onlineStoreUrl":null}',
-      '{"id":"gid://shopify/Product/2","title":"B","descriptionHtml":"","status":"DRAFT","totalInventory":0,"onlineStoreUrl":null}',
-    ].join("\n");
-
-    const { products } = parseProductsFromJsonl(jsonl);
-    assert.equal(products.length, 2);
-  });
-
-  it("handles empty JSONL", () => {
-    const { products, images, variants } = parseProductsFromJsonl("");
-    assert.equal(products.length, 0);
-    assert.equal(images.size, 0);
-    assert.equal(variants.size, 0);
-  });
-
-  it("initializes empty image array for products without images", () => {
-    const jsonl =
-      '{"id":"gid://shopify/Product/1","title":"A","descriptionHtml":"","status":"ACTIVE","totalInventory":1,"onlineStoreUrl":null}';
-
-    const { images } = parseProductsFromJsonl(jsonl);
-    assert.deepEqual(images.get("gid://shopify/Product/1"), []);
-  });
-
-  it("only takes the first variant price per product", () => {
-    const jsonl = [
-      '{"id":"gid://shopify/Product/1","title":"A","descriptionHtml":"","status":"ACTIVE","totalInventory":1,"onlineStoreUrl":null}',
-      '{"id":"gid://shopify/ProductVariant/10","price":"10.00","__parentId":"gid://shopify/Product/1"}',
-      '{"id":"gid://shopify/ProductVariant/11","price":"20.00","__parentId":"gid://shopify/Product/1"}',
-    ].join("\n");
-
-    const { variants } = parseProductsFromJsonl(jsonl);
-    assert.equal(variants.get("gid://shopify/Product/1"), "10.00");
-  });
-});
-
-describe("backfill context KV helpers", () => {
-  it("round-trips backfill context through KV", async () => {
-    const kv = makeKv();
-    const ctx: BackfillContext = {
-      shopId: "550e8400-e29b-41d4-a716-446655440000",
-      accessToken: "aurahistoria_partner_test",
-      apiBaseUrl: "https://api.test.com",
-      primaryLocale: "de",
-      currencyCode: "EUR",
-      shopDomain: "my-shop.myshopify.com",
-      bulkOperationId: "gid://shopify/BulkOperation/123",
-      createdAt: new Date().toISOString(),
-    };
-
-    await storeBackfillContext(kv as never, "my-shop.myshopify.com", ctx);
-    const loaded = await loadBackfillContext(
-      kv as never,
-      "my-shop.myshopify.com",
-    );
-
-    assert.deepEqual(loaded, ctx);
-  });
-
-  it("returns null when no context exists", async () => {
-    const kv = makeKv();
-    const loaded = await loadBackfillContext(kv as never, "no-shop.com");
-    assert.equal(loaded, null);
-  });
-
-  it("clears stored context", async () => {
-    const kv = makeKv();
-    const ctx: BackfillContext = {
-      shopId: "test",
-      accessToken: "test",
-      apiBaseUrl: "test",
-      primaryLocale: "en",
-      currencyCode: "EUR",
-      shopDomain: "shop.com",
-      bulkOperationId: "test",
-      createdAt: new Date().toISOString(),
-    };
-
-    await storeBackfillContext(kv as never, "shop.com", ctx);
-    await clearBackfillContext(kv as never, "shop.com");
-    const loaded = await loadBackfillContext(kv as never, "shop.com");
-    assert.equal(loaded, null);
-  });
-
-  it("stores with TTL", async () => {
-    const kv = makeKv();
-    await storeBackfillContext(kv as never, "shop.com", {
-      shopId: "test",
-      accessToken: "test",
-      apiBaseUrl: "test",
-      primaryLocale: "en",
-      currencyCode: "EUR",
-      shopDomain: "shop.com",
-      bulkOperationId: "test",
-      createdAt: new Date().toISOString(),
+    assert.equal(result.sourceListingId, "12345");
+    assert.deepEqual(result.title, { text: "Antique Clock", language: "de" });
+    assert.equal(result.url, `https://${shopDomain}/products/antique-clock`);
+    assert.deepEqual(result.images, ["https://cdn.shopify.com/clock.jpg"]);
+    assert.deepEqual(result.price, {
+      type: "MONETARY",
+      amount: 2999,
+      currency: "EUR",
     });
+    assert.equal("description" in result, false);
+    assert.equal("state" in result, false);
+  });
 
-    const putCall = kv.put.mock.calls[0];
-    assert.ok(putCall);
-    assert.deepEqual(putCall.arguments[2], { expirationTtl: 3600 });
+  it("uses zero-decimal JPY minor units and preserves a zero price", () => {
+    assert.deepEqual(
+      transformProduct(makeProduct(), [], "1234", "ja", "JPY", shopDomain)
+        .price,
+      { type: "MONETARY", amount: 1234, currency: "JPY" },
+    );
+    assert.deepEqual(
+      transformProduct(makeProduct(), [], "0.00", "en", "EUR", shopDomain)
+        .price,
+      { type: "MONETARY", amount: 0, currency: "EUR" },
+    );
+  });
+
+  it("clears a stale price when Shopify has none or currency is unsupported", () => {
+    assert.equal(
+      transformProduct(makeProduct(), [], null, "en", "EUR", shopDomain).price,
+      null,
+    );
+    assert.equal(
+      transformProduct(makeProduct(), [], "10.00", "en", "SEK", shopDomain)
+        .price,
+      null,
+    );
+  });
+
+  it("maps tracked and untracked inventory to availability without legacy states", () => {
+    const available = transformProduct(
+      makeProduct(),
+      [],
+      null,
+      "en",
+      "EUR",
+      shopDomain,
+    );
+    const soldOut = transformProduct(
+      makeProduct({ totalInventory: 0 }),
+      [],
+      null,
+      "en",
+      "EUR",
+      shopDomain,
+    );
+    const untracked = transformProduct(
+      makeProduct({ totalInventory: null }),
+      [],
+      null,
+      "en",
+      "EUR",
+      shopDomain,
+    );
+    assert.equal(available.availability, "IN_STOCK");
+    assert.equal(soldOut.availability, "OUT_OF_STOCK");
+    assert.equal(untracked.availability, null);
+  });
+
+  it("uses the product handle for missing onlineStoreUrl and does not invent a numeric product path", () => {
+    const result = transformProduct(
+      makeProduct({ onlineStoreUrl: null }),
+      [],
+      null,
+      "en",
+      "EUR",
+      shopDomain,
+    );
+    assert.equal(result.url, `https://${shopDomain}/products/antique-clock`);
+    assert.throws(
+      () =>
+        transformProduct(
+          makeProduct({ onlineStoreUrl: null, handle: "" }),
+          [],
+          null,
+          "en",
+          "EUR",
+          shopDomain,
+        ),
+      /Missing storefront URL/,
+    );
+  });
+
+  it("withdraws an inactive Shopify product using only its source listing ID", () => {
+    assert.deepEqual(transformWithdrawal(makeProduct({ status: "ARCHIVED" })), {
+      sourceListingId: "12345",
+    });
   });
 });
 
-describe("fetchShopMetadata", () => {
-  it("extracts primary locale and currency from GraphQL response", async () => {
+describe("Shopify JSONL and KV context", () => {
+  it("parses product, image and first variant price without description HTML", () => {
+    const jsonl = [
+      JSON.stringify(makeProduct({ id: "gid://shopify/Product/1" })),
+      '{"id":"gid://shopify/ProductImage/10","url":"https://cdn.shopify.com/1.jpg","__parentId":"gid://shopify/Product/1"}',
+      '{"id":"gid://shopify/ProductVariant/10","price":"49.99","__parentId":"gid://shopify/Product/1"}',
+      '{"id":"gid://shopify/ProductVariant/11","price":"50.00","__parentId":"gid://shopify/Product/1"}',
+    ].join("\n");
+    const { products, images, variants } = parseProductsFromJsonl(jsonl);
+    assert.deepEqual(products, [
+      makeProduct({ id: "gid://shopify/Product/1" }),
+    ]);
+    assert.deepEqual(images.get(products[0].id), [
+      "https://cdn.shopify.com/1.jpg",
+    ]);
+    assert.equal(variants.get(products[0].id), "49.99");
+  });
+
+  it("returns empty collections for empty JSONL and initializes images for products", () => {
+    const empty = parseProductsFromJsonl("");
+    assert.equal(empty.products.length, 0);
+    assert.equal(empty.images.size, 0);
+    assert.equal(empty.variants.size, 0);
+    const parsed = parseProductsFromJsonl(JSON.stringify(makeProduct()));
+    assert.deepEqual(parsed.images.get(makeProduct().id), []);
+  });
+
+  it("round-trips the new required context with a TTL and supports clearing", async () => {
+    const kv = makeKv();
+    const context = makeContext();
+    await storeBackfillContext(kv as never, shopDomain, context);
+    assert.deepEqual(
+      await loadBackfillContext(kv as never, shopDomain),
+      context,
+    );
+    assert.deepEqual(kv.put.mock.calls[0].arguments[2], {
+      expirationTtl: 3600,
+    });
+    assert.equal("shopId" in context, false);
+    assert.equal("apiKey" in context, false);
+    await clearBackfillContext(kv as never, shopDomain);
+    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+  });
+
+  it("returns null for absent or malformed context", async () => {
+    const kv = makeKv();
+    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    kv.entries.set(`aura-historia:backfill:${shopDomain}`, "{");
+    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    kv.entries.set(
+      `aura-historia:backfill:${shopDomain}`,
+      JSON.stringify({
+        ...makeContext(),
+        listingSourceId: undefined,
+        shopId: "550e8400-e29b-41d4-a716-446655440000",
+      }),
+    );
+    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+  });
+});
+
+describe("Shopify GraphQL", () => {
+  it("fetches locale and currency and retains undefined missing values", async () => {
     const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
       data: {
-        shopLocales: [
-          { locale: "de", primary: true },
-          { locale: "en", primary: false },
-        ],
+        shopLocales: [{ locale: "de", primary: true }],
         shop: { currencyCode: "EUR" },
       },
     }));
-
-    const metadata = await fetchShopMetadata(graphqlRequest);
-    assert.equal(metadata.primaryLocale, "de");
-    assert.equal(metadata.currencyCode, "EUR");
-  });
-
-  it("keeps metadata undefined when Shopify does not provide it", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      data: { shopLocales: [], shop: {} },
-    }));
-
-    const metadata = await fetchShopMetadata(graphqlRequest);
-    assert.equal(metadata.primaryLocale, undefined);
-    assert.equal(metadata.currencyCode, undefined);
-  });
-
-  it("throws on GraphQL errors", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      errors: [{ message: "Unauthorized" }],
-    }));
-
-    await assert.rejects(() => fetchShopMetadata(graphqlRequest), {
-      message: /Unauthorized/,
+    assert.deepEqual(await fetchShopMetadata(graphqlRequest), {
+      primaryLocale: "de",
+      currencyCode: "EUR",
     });
-  });
-
-  it("throws useful messages for Shopify string error payloads", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      errors: "Not Found",
-    }));
-
-    await assert.rejects(() => fetchShopMetadata(graphqlRequest), {
-      message: "Failed to fetch shop metadata: Not Found",
-    });
-  });
-});
-
-describe("createAdminGraphqlRequest", () => {
-  it("adapts the Shopify Admin GraphQL client to the backfill request shape", async () => {
-    const admin = {
-      graphql: mock.fn(
-        async (
-          query: string,
-          options?: { variables?: Record<string, unknown> },
-        ) => {
-          assert.equal(query, "query Test($id: ID!) { node(id: $id) { id } }");
-          assert.deepEqual(options?.variables, {
-            id: "gid://shopify/Product/1",
-          });
-          return new Response(JSON.stringify({ data: { ok: true } }), {
-            headers: { "Content-Type": "application/json" },
-          });
-        },
-      ),
-    };
-
-    const graphqlRequest = createAdminGraphqlRequest(admin);
-    const response = await graphqlRequest(
-      "query Test($id: ID!) { node(id: $id) { id } }",
-      { id: "gid://shopify/Product/1" },
+    assert.deepEqual(
+      await fetchShopMetadata(async () => ({
+        data: { shopLocales: [], shop: {} },
+      })),
+      { primaryLocale: undefined, currencyCode: undefined },
     );
-
-    assert.deepEqual(response, { data: { ok: true } });
-    assert.equal(admin.graphql.mock.calls.length, 1);
-  });
-});
-
-describe("submitBulkOperation", () => {
-  it("returns the bulk operation ID on success", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      data: {
-        bulkOperationRunQuery: {
-          bulkOperation: {
-            id: "gid://shopify/BulkOperation/456",
-            status: "CREATED",
-          },
-          userErrors: [],
-        },
-      },
-    }));
-
-    const id = await submitBulkOperation(graphqlRequest);
-    assert.equal(id, "gid://shopify/BulkOperation/456");
+    await assert.rejects(
+      () => fetchShopMetadata(async () => ({ errors: "Not Found" })),
+      /Not Found/,
+    );
   });
 
-  it("throws on GraphQL errors", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      errors: [{ message: "Rate limited" }],
-    }));
-
-    await assert.rejects(() => submitBulkOperation(graphqlRequest), {
-      message: /Rate limited/,
-    });
-  });
-
-  it("throws on user errors", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      data: {
-        bulkOperationRunQuery: {
-          bulkOperation: null,
-          userErrors: [{ field: ["query"], message: "Already running" }],
-        },
-      },
-    }));
-
-    await assert.rejects(() => submitBulkOperation(graphqlRequest), {
-      message: /Already running/,
-    });
-  });
-
-  it("throws when no operation ID returned", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      data: {
-        bulkOperationRunQuery: {
-          bulkOperation: null,
-          userErrors: [],
-        },
-      },
-    }));
-
-    await assert.rejects(() => submitBulkOperation(graphqlRequest), {
-      message: /no operation ID/,
-    });
-  });
-});
-
-describe("fetchBulkOperationResultUrl", () => {
-  it("returns the completed bulk operation download URL", async () => {
+  it("submits a bulk query without descriptions and returns the operation ID", async () => {
     const graphqlRequest: GraphqlRequestFn = mock.fn(
-      async (_query, variables) => {
-        assert.deepEqual(variables, { id: "gid://shopify/BulkOperation/123" });
+      async (_mutation, variables) => {
+        const bulkQuery = variables.query;
+        assert.equal(typeof bulkQuery, "string");
+        assert.match(bulkQuery as string, /handle/);
+        assert.doesNotMatch(bulkQuery as string, /descriptionHtml|description/);
         return {
           data: {
-            node: {
-              id: "gid://shopify/BulkOperation/123",
-              status: "COMPLETED",
-              errorCode: null,
-              url: "https://cdn.shopify.com/bulk/result.jsonl",
+            bulkOperationRunQuery: {
+              bulkOperation: { id: bulkOperationId, status: "CREATED" },
+              userErrors: [],
             },
           },
         };
       },
     );
-
-    assert.equal(
-      await fetchBulkOperationResultUrl(
-        graphqlRequest,
-        "gid://shopify/BulkOperation/123",
-      ),
-      "https://cdn.shopify.com/bulk/result.jsonl",
+    assert.equal(await submitBulkOperation(graphqlRequest), bulkOperationId);
+    await assert.rejects(
+      () =>
+        submitBulkOperation(async () => ({
+          data: {
+            bulkOperationRunQuery: {
+              bulkOperation: null,
+              userErrors: [{ message: "Already running" }],
+            },
+          },
+        })),
+      /Already running/,
     );
   });
 
-  it("throws useful messages for Shopify string error payloads", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      errors: "Invalid API key or access token",
-    }));
-
+  it("adapts the Admin GraphQL client and fetches completed bulk URLs", async () => {
+    const admin = {
+      graphql: mock.fn(
+        async (
+          _query: string,
+          options?: { variables?: Record<string, unknown> },
+        ) => {
+          assert.deepEqual(options?.variables, { id: bulkOperationId });
+          return jsonResponse(
+            {
+              data: {
+                node: {
+                  id: bulkOperationId,
+                  status: "COMPLETED",
+                  url: "https://cdn.shopify.com/result.jsonl",
+                },
+              },
+            },
+            200,
+          );
+        },
+      ),
+    };
+    const request = createAdminGraphqlRequest(admin);
+    assert.equal(
+      await fetchBulkOperationResultUrl(request, bulkOperationId),
+      "https://cdn.shopify.com/result.jsonl",
+    );
     await assert.rejects(
       () =>
         fetchBulkOperationResultUrl(
-          graphqlRequest,
-          "gid://shopify/BulkOperation/123",
+          async () => ({ errors: "Invalid API key" }),
+          bulkOperationId,
         ),
-      {
-        message:
-          "Failed to query bulk operation: Invalid API key or access token",
+      /Invalid API key/,
+    );
+  });
+});
+
+describe("listing source ingestion configuration", () => {
+  for (const status of [201, 204]) {
+    it(`accepts provider ${status} and sends canonical domain and credentials`, async () => {
+      const fetchMock = mock.fn(async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        assert.equal(request.method, "PUT");
+        assert.equal(
+          request.url,
+          `${apiBaseUrl}/api/v1/listing-sources/${listingSourceId}/ingestion-configurations/shopify`,
+        );
+        assert.equal(
+          request.headers.get("Authorization"),
+          `Bearer ${accessToken}`,
+        );
+        assert.deepEqual(await request.json(), {
+          domain: shopDomain,
+          language: "de",
+          currency: "EUR",
+        });
+        return new Response(null, { status });
+      });
+      await withFetch(fetchMock as typeof fetch, async () => {
+        await putShopifyIngestionConfiguration(
+          apiBaseUrl,
+          listingSourceId,
+          accessToken,
+          { primaryLocale: "de", currencyCode: "EUR" },
+          shopDomain,
+        );
+        assert.equal(fetchMock.mock.callCount(), 1);
+      });
+    });
+  }
+
+  it("sends only the required domain for unsupported locale and currency", async () => {
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        assert.deepEqual(await asRequest(input).json(), { domain: shopDomain });
+        return new Response(null, { status: 204 });
+      }) as typeof fetch,
+      async () => {
+        await putShopifyIngestionConfiguration(
+          apiBaseUrl,
+          listingSourceId,
+          accessToken,
+          { primaryLocale: "sv", currencyCode: "SEK" },
+          shopDomain,
+        );
+      },
+    );
+  });
+
+  it("rejects provider errors rather than treating them as configuration success", async () => {
+    await withFetch(
+      (async () =>
+        jsonResponse({ error: "Invalid domain" }, 400)) as typeof fetch,
+      async () => {
+        await assert.rejects(() =>
+          putShopifyIngestionConfiguration(
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            {},
+            shopDomain,
+          ),
+        );
       },
     );
   });
 });
 
-describe("patchShopMetadata", () => {
-  it("patches only known shop metadata fields", async () => {
-    const originalFetch = globalThis.fetch;
-    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
-      const received =
-        request instanceof Request ? request : new Request(request);
-      assert.equal(received.method, "PATCH");
-      assert.equal(
-        received.url,
-        "https://api.test.com/api/v1/shops/shop-id-123",
-      );
-      assert.equal(
-        received.headers.get("Authorization"),
-        "Bearer access-token-456",
-      );
-      assert.deepEqual(await received.json(), {
-        shopifyDomain: "my-shop.myshopify.com",
-        shopifyCurrency: "EUR",
-      });
-
-      return new Response("{}", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    });
-
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    try {
-      const patched = await patchShopMetadata(
-        "https://api.test.com",
-        "shop-id-123",
-        "access-token-456",
-        {
-          primaryLocale: "sv-SE",
-          currencyCode: "EUR",
-        },
-        "my-shop.myshopify.com",
-      );
-
-      assert.equal(patched, true);
-      assert.equal(fetchMock.mock.calls.length, 1);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+describe("async product listing batches", () => {
+  it("derives deterministic, distinct verb/batch keys from the bulk operation", () => {
+    const put0 = createBackfillIdempotencyKey(bulkOperationId, "put", 0);
+    assert.equal(put0, createBackfillIdempotencyKey(bulkOperationId, "put", 0));
+    assert.notEqual(
+      put0,
+      createBackfillIdempotencyKey(bulkOperationId, "delete", 0),
+    );
+    assert.notEqual(
+      put0,
+      createBackfillIdempotencyKey(bulkOperationId, "put", 1),
+    );
+    assert.match(put0, /^[\x21-\x7e]{1,128}$/);
+    assert.doesNotMatch(put0, /,/);
   });
 
-  it("patches the known shopify domain even when currency and language are unknown", async () => {
-    const originalFetch = globalThis.fetch;
-    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
-      const received =
-        request instanceof Request ? request : new Request(request);
-      assert.deepEqual(await received.json(), {
-        shopifyDomain: "my-shop.myshopify.com",
+  for (const verb of ["put", "delete"] as const) {
+    it(`sends ${verb.toUpperCase()} with a stable Idempotency-Key and returns report failures`, async () => {
+      const items =
+        verb === "put"
+          ? [
+              transformProduct(
+                makeProduct(),
+                [],
+                "29.99",
+                "en",
+                "EUR",
+                shopDomain,
+              ),
+            ]
+          : [transformWithdrawal(makeProduct())];
+      const idempotencyKey = createBackfillIdempotencyKey(
+        bulkOperationId,
+        verb,
+        0,
+      );
+      const fetchMock = mock.fn(async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        assert.equal(request.method.toLowerCase(), verb);
+        assert.equal(
+          request.url,
+          `${apiBaseUrl}/api/v1/listing-sources/${listingSourceId}/product-listings/async`,
+        );
+        assert.equal(
+          request.headers.get("Authorization"),
+          `Bearer ${accessToken}`,
+        );
+        assert.equal(request.headers.get("Idempotency-Key"), idempotencyKey);
+        assert.deepEqual(await request.json(), items);
+        return jsonResponse(
+          report(0, [
+            {
+              index: 0,
+              sourceListingId: "12345",
+              error: "BAD_BODY_VALUE",
+              retryable: false,
+            },
+          ]),
+          400,
+        );
       });
-
-      return new Response("{}", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
+      await withFetch(fetchMock as typeof fetch, async () => {
+        assert.deepEqual(
+          await sendProductBatch(
+            items,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            verb,
+            idempotencyKey,
+          ),
+          ["12345"],
+        );
+        assert.equal(fetchMock.mock.callCount(), 1);
       });
     });
+  }
 
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    try {
-      const patched = await patchShopMetadata(
-        "https://api.test.com",
-        "shop-id-123",
-        "access-token-456",
-        {
-          primaryLocale: undefined,
-          currencyCode: "SEK",
-        },
-        "my-shop.myshopify.com",
-      );
-
-      assert.equal(patched, true);
-      assert.equal(fetchMock.mock.calls.length, 1);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+  it("reads partial failures from an accepted 202 report", async () => {
+    const items = [
+      transformProduct(makeProduct(), [], null, "en", "EUR", shopDomain),
+      transformProduct(
+        makeProduct({ id: "gid://shopify/Product/2" }),
+        [],
+        null,
+        "en",
+        "EUR",
+        shopDomain,
+      ),
+    ];
+    await withFetch(
+      (async () =>
+        jsonResponse(
+          report(1, [
+            {
+              index: 1,
+              sourceListingId: "2",
+              error: "BAD_BODY_VALUE",
+              retryable: false,
+            },
+          ]),
+        )) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await sendProductBatch(
+            items,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            "put",
+            "batch-1",
+          ),
+          ["2"],
+        );
+      },
+    );
   });
 
-  it("skips the patch request entirely when no shop metadata or domain is known", async () => {
-    const originalFetch = globalThis.fetch;
-    const fetchMock = mock.fn(async () => {
-      throw new Error("fetch should not be called");
-    });
+  it("uses the report index when a failed source listing ID cannot be echoed", async () => {
+    const items = [
+      transformWithdrawal(makeProduct()),
+      transformWithdrawal(makeProduct({ id: "gid://shopify/Product/2" })),
+    ];
+    await withFetch(
+      (async () =>
+        jsonResponse(
+          report(1, [{ index: 1, error: "BAD_BODY_VALUE", retryable: false }]),
+        )) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await sendProductBatch(
+            items,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            "delete",
+            "batch-index",
+          ),
+          ["2"],
+        );
+      },
+    );
+  });
 
-    globalThis.fetch = fetchMock as typeof fetch;
+  it("rejects a non-report API error rather than counting it as admitted", async () => {
+    await withFetch(
+      (async () =>
+        jsonResponse({ error: "INVALID_CREDENTIALS" }, 401)) as typeof fetch,
+      async () => {
+        await assert.rejects(() =>
+          sendProductBatch(
+            [transformWithdrawal(makeProduct())],
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            "delete",
+            "bad-credentials",
+          ),
+        );
+      },
+    );
+  });
 
-    try {
-      const patched = await patchShopMetadata(
-        "https://api.test.com",
-        "shop-id-123",
-        "access-token-456",
-        {
-          primaryLocale: undefined,
-          currencyCode: "SEK",
-        },
-      );
+  it("retries the unchanged entire batch with the same key on retryable report failures", async () => {
+    const items = [transformWithdrawal(makeProduct())];
+    const requests: Array<{ key: string | null; body: unknown }> = [];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        requests.push({
+          key: request.headers.get("Idempotency-Key"),
+          body: await request.json(),
+        });
+        return requests.length === 1
+          ? jsonResponse(
+              report(0, [
+                {
+                  index: 0,
+                  sourceListingId: "12345",
+                  error: "ENQUEUE_UNCONFIRMED",
+                  retryable: true,
+                },
+              ]),
+              503,
+            )
+          : jsonResponse(report(1));
+      }) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await sendProductBatch(
+            items,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            "delete",
+            "retry-key",
+          ),
+          [],
+        );
+      },
+    );
+    assert.ok(requests.length >= 2);
+    assert.deepEqual(
+      requests,
+      requests.map(() => ({ key: "retry-key", body: items })),
+    );
+  });
 
-      assert.equal(patched, false);
-      assert.equal(fetchMock.mock.calls.length, 0);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+  it("retries a transient pre-evaluation 503 with the same full batch and key", async () => {
+    const items = [transformWithdrawal(makeProduct())];
+    const requests: Array<{ key: string | null; body: unknown }> = [];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        requests.push({
+          key: request.headers.get("Idempotency-Key"),
+          body: await request.json(),
+        });
+        return requests.length === 1
+          ? jsonResponse({ error: "DEPENDENCY_UNAVAILABLE" }, 503)
+          : jsonResponse(report(1));
+      }) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await sendProductBatch(
+            items,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            "delete",
+            "retry-503",
+          ),
+          [],
+        );
+      },
+    );
+    assert.deepEqual(requests, [
+      { key: "retry-503", body: items },
+      { key: "retry-503", body: items },
+    ]);
+  });
+
+  it("retries a network failure with the same key and unchanged payload", async () => {
+    const requests: Array<{ key: string | null; body: unknown }> = [];
+    const items = [transformWithdrawal(makeProduct())];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        requests.push({
+          key: request.headers.get("Idempotency-Key"),
+          body: await request.json(),
+        });
+        if (requests.length === 1) throw new TypeError("Connection reset");
+        return jsonResponse(report(1));
+      }) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await sendProductBatch(
+            items,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            "delete",
+            "network-retry",
+          ),
+          [],
+        );
+      },
+    );
+    assert.ok(requests.length >= 2);
+    assert.deepEqual(
+      requests,
+      requests.map(() => ({ key: "network-retry", body: items })),
+    );
+  });
+});
+
+describe("processing bulk results", () => {
+  it("routes active products to PUT, inactive products to DELETE, and keeps batches <= 100", async () => {
+    const products = Array.from({ length: 101 }, (_, index) =>
+      makeProduct({
+        id: `gid://shopify/Product/${index + 1}`,
+        handle: `clock-${index + 1}`,
+      }),
+    );
+    products.push(
+      makeProduct({ id: "gid://shopify/Product/102", status: "ARCHIVED" }),
+    );
+    const requests: Array<{
+      verb: string;
+      key: string | null;
+      body: Array<{ sourceListingId: string }>;
+    }> = [];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        if (request.url === "https://cdn.shopify.com/result.jsonl") {
+          return new Response(
+            products.map((product) => JSON.stringify(product)).join("\n"),
+          );
+        }
+        const body = (await request.json()) as Array<{
+          sourceListingId: string;
+        }>;
+        requests.push({
+          verb: request.method.toLowerCase(),
+          key: request.headers.get("Idempotency-Key"),
+          body,
+        });
+        return jsonResponse(report(body.length));
+      }) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await processBackfillResults(
+            "https://cdn.shopify.com/result.jsonl",
+            makeContext(),
+          ),
+          { total: 102, failures: [] },
+        );
+      },
+    );
+    const puts = requests.filter((request) => request.verb === "put");
+    const deletes = requests.filter((request) => request.verb === "delete");
+    assert.equal(
+      puts.reduce((total, request) => total + request.body.length, 0),
+      101,
+    );
+    assert.equal(
+      deletes.reduce((total, request) => total + request.body.length, 0),
+      1,
+    );
+    assert.ok(requests.every((request) => request.body.length <= 100));
+    assert.deepEqual(deletes[0].body, [{ sourceListingId: "102" }]);
+    assert.ok(requests.every((request) => request.key));
+    assert.equal(
+      new Set(requests.map((request) => request.key)).size,
+      requests.length,
+    );
+  });
+
+  it("returns reported failures rather than silently treating admission as success", async () => {
+    const jsonl = [
+      makeProduct(),
+      makeProduct({ id: "gid://shopify/Product/6", status: "DRAFT" }),
+    ]
+      .map((product) => JSON.stringify(product))
+      .join("\n");
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        if (request.url.endsWith(".jsonl")) return new Response(jsonl);
+        const body = (await request.json()) as Array<{
+          sourceListingId: string;
+        }>;
+        return jsonResponse(
+          report(
+            0,
+            body.map((product, index) => ({
+              index,
+              sourceListingId: product.sourceListingId,
+              error: "BAD_BODY_VALUE",
+              retryable: false,
+            })),
+          ),
+          400,
+        );
+      }) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await processBackfillResults(
+            "https://cdn.shopify.com/result.jsonl",
+            makeContext(),
+          ),
+          { total: 2, failures: ["12345", "6"] },
+        );
+      },
+    );
   });
 });
 
 describe("triggerBackfill", () => {
-  it("does not throw on errors (fire-and-forget)", async () => {
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => ({
-      errors: [{ message: "Something broke" }],
-    }));
-    const kv = makeKv();
-
-    const submitted = await triggerBackfill(
-      graphqlRequest,
-      kv as never,
-      "shop.com",
-      "shop-id",
-      "access-token",
-      "https://api.test.com",
-    );
-
-    assert.equal(submitted, false);
-  });
-
-  it("stores backfill context in KV on success", async () => {
-    let callCount = 0;
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          data: {
-            shopLocales: [{ locale: "de", primary: true }],
-            shop: { currencyCode: "EUR" },
-          },
-        };
-      }
-      return {
-        data: {
-          bulkOperationRunQuery: {
-            bulkOperation: {
-              id: "gid://shopify/BulkOperation/789",
-              status: "CREATED",
+  function graphqlRequest(): GraphqlRequestFn {
+    return mock.fn(async (query: string) =>
+      query.includes("shopLocales")
+        ? {
+            data: {
+              shopLocales: [{ locale: "de", primary: true }],
+              shop: { currencyCode: "EUR" },
             },
-            userErrors: [],
-          },
-        },
-      };
-    });
-    const kv = makeKv();
-    const originalFetch = globalThis.fetch;
-    const fetchMock = mock.fn(async (request: RequestInfo | URL) => {
-      const received =
-        request instanceof Request ? request : new Request(request);
-      assert.equal(
-        received.headers.get("Authorization"),
-        "Bearer access-token-456",
-      );
-      assert.deepEqual(await received.json(), {
-        shopifyDomain: "my-shop.myshopify.com",
-        shopifyLanguage: "de",
-        shopifyCurrency: "EUR",
-      });
-
-      return new Response("{}", {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    });
-
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    try {
-      const submitted = await triggerBackfill(
-        graphqlRequest,
-        kv as never,
-        "my-shop.myshopify.com",
-        "shop-id-123",
-        "access-token-456",
-        "https://api.test.com",
-      );
-
-      assert.equal(submitted, true);
-
-      const stored = await loadBackfillContext(
-        kv as never,
-        "my-shop.myshopify.com",
-      );
-      assert.ok(stored);
-      assert.equal(stored.shopId, "shop-id-123");
-      assert.equal(stored.accessToken, "access-token-456");
-      assert.equal(stored.shopifyAccessToken, undefined);
-      assert.equal(stored.primaryLocale, "de");
-      assert.equal(stored.currencyCode, "EUR");
-      assert.equal(stored.bulkOperationId, "gid://shopify/BulkOperation/789");
-      assert.equal(fetchMock.mock.calls.length, 1);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("continues the backfill when shop metadata patching fails", async () => {
-    let callCount = 0;
-    const graphqlRequest: GraphqlRequestFn = mock.fn(async () => {
-      callCount++;
-      if (callCount === 1) {
-        return {
-          data: {
-            shopLocales: [{ locale: "de", primary: true }],
-            shop: { currencyCode: "EUR" },
-          },
-        };
-      }
-      return {
-        data: {
-          bulkOperationRunQuery: {
-            bulkOperation: {
-              id: "gid://shopify/BulkOperation/790",
-              status: "CREATED",
+          }
+        : {
+            data: {
+              bulkOperationRunQuery: {
+                bulkOperation: { id: bulkOperationId, status: "CREATED" },
+                userErrors: [],
+              },
             },
-            userErrors: [],
           },
-        },
-      };
-    });
-    const kv = makeKv();
-    const originalFetch = globalThis.fetch;
-    const fetchMock = mock.fn(
-      async () =>
-        new Response(JSON.stringify({ error: "boom" }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }),
     );
+  }
 
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    try {
-      const submitted = await triggerBackfill(
-        graphqlRequest,
-        kv as never,
-        "my-shop.myshopify.com",
-        "shop-id-123",
-        "access-token-456",
-        "https://api.test.com",
+  for (const status of [201, 204]) {
+    it(`stores context and submits bulk work after provider ${status}`, async () => {
+      const kv = makeKv();
+      await withFetch(
+        (async () => new Response(null, { status })) as typeof fetch,
+        async () => {
+          assert.equal(
+            await triggerBackfill(
+              graphqlRequest(),
+              kv as never,
+              shopDomain,
+              listingSourceId,
+              accessToken,
+              apiBaseUrl,
+            ),
+            true,
+          );
+        },
       );
-
-      assert.equal(submitted, true);
-
-      const stored = await loadBackfillContext(
-        kv as never,
-        "my-shop.myshopify.com",
-      );
+      const stored = await loadBackfillContext(kv as never, shopDomain);
       assert.ok(stored);
-      assert.equal(stored.bulkOperationId, "gid://shopify/BulkOperation/790");
-      assert.equal(fetchMock.mock.calls.length, 1);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+      assert.equal(stored.listingSourceId, listingSourceId);
+      assert.equal(stored.accessToken, accessToken);
+      assert.equal(stored.bulkOperationId, bulkOperationId);
+      assert.equal("shopId" in stored, false);
+    });
+  }
+
+  it("does not submit the bulk operation or store context when provider configuration fails", async () => {
+    const kv = makeKv();
+    const graphql = mock.fn(graphqlRequest());
+    await withFetch(
+      (async () => jsonResponse({ error: "Forbidden" }, 403)) as typeof fetch,
+      async () => {
+        assert.equal(
+          await triggerBackfill(
+            graphql,
+            kv as never,
+            shopDomain,
+            listingSourceId,
+            accessToken,
+            apiBaseUrl,
+          ),
+          false,
+        );
+      },
+    );
+    assert.equal(graphql.mock.callCount(), 1);
+    assert.equal(kv.put.mock.callCount(), 0);
   });
 });
 
 describe("backfill configuration", () => {
-  it("includes Aura Historia API and OAuth vars in wrangler vars", () => {
-    const content = readFileSync(
-      resolve(process.cwd(), "wrangler.jsonc"),
-      "utf8",
-    );
-    assert.match(content, /AURA_HISTORIA_API_BASE_URL/);
-    assert.match(content, /AURA_HISTORIA_OAUTH_ENV/);
-    assert.match(content, /AURA_HISTORIA_OAUTH_SCOPE/);
-    assert.match(content, /SCOPES/);
+  it("declares bulk operations finish webhook in app configurations", () => {
+    for (const file of [
+      "shopify.app.toml",
+      "shopify.app.tunnel.toml",
+      "shopify.app.prod.toml",
+    ]) {
+      const content = readFileSync(resolve(process.cwd(), file), "utf8");
+      assert.match(content, /bulk_operations\/finish/);
+      assert.match(content, /webhooks\/bulk-operations\/finish/);
+    }
   });
 
-  it("has a pinned commit in openapi-ts config", () => {
-    const content = readFileSync(
+  it("requests read_locales and pins OpenAPI generation", () => {
+    for (const file of ["shopify.app.toml", "shopify.app.prod.toml"]) {
+      assert.match(
+        readFileSync(resolve(process.cwd(), file), "utf8"),
+        /read_locales/,
+      );
+    }
+    const config = readFileSync(
       resolve(process.cwd(), "openapi-ts.config.ts"),
       "utf8",
     );
-    assert.match(content, /SWAGGER_COMMIT/);
-    assert.match(content, /[0-9a-f]{40}/);
-  });
-
-  it("has an openapi:generate script in package.json", () => {
+    assert.match(config, /[0-9a-f]{40}/);
     const pkg = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
     );
     assert.ok(pkg.scripts["openapi:generate"]);
-  });
-
-  it("uses a pure-JS HTML to Markdown converter for Worker compatibility", () => {
-    const pkg = JSON.parse(
-      readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
-    );
-    const viteConfig = readFileSync(
-      resolve(process.cwd(), "vite.config.ts"),
-      "utf8",
-    );
-    const backfillServer = readFileSync(
-      resolve(process.cwd(), "app/backfill.server.ts"),
-      "utf8",
-    );
-
-    assert.ok(pkg.dependencies["node-html-markdown"]);
-    assert.equal(
-      pkg.dependencies["@kreuzberg/html-to-markdown-node"],
-      undefined,
-    );
-    assert.equal(
-      pkg.dependencies["@kreuzberg/html-to-markdown-wasm"],
-      undefined,
-    );
-    assert.match(backfillServer, /node-html-markdown/);
-    assert.doesNotMatch(backfillServer, /WebAssembly|Wasm|wasm/);
-    assert.doesNotMatch(viteConfig, /html-to-markdown-runtime\.worker/);
-    assert.doesNotMatch(viteConfig, /ssrEmitAssets:\s*true/);
-  });
-
-  it("declares bulk_operations/finish webhook in shopify.app.toml", () => {
-    const content = readFileSync(
-      resolve(process.cwd(), "shopify.app.toml"),
-      "utf8",
-    );
-    assert.match(content, /bulk_operations\/finish/);
-    assert.match(content, /webhooks\/bulk-operations\/finish/);
-  });
-
-  it("declares a tunnel-local bulk_operations/finish webhook in shopify.app.tunnel.toml", () => {
-    const content = readFileSync(
-      resolve(process.cwd(), "shopify.app.tunnel.toml"),
-      "utf8",
-    );
-    assert.match(content, /bulk_operations\/finish/);
-    assert.match(content, /uri = "\/webhooks\/bulk-operations\/finish"/);
-  });
-
-  it("declares bulk_operations/finish webhook in shopify.app.prod.toml", () => {
-    const content = readFileSync(
-      resolve(process.cwd(), "shopify.app.prod.toml"),
-      "utf8",
-    );
-    assert.match(content, /bulk_operations\/finish/);
-    assert.match(
-      content,
-      /https:\/\/partner-connect\.aura-historia\.com\/webhooks\/bulk-operations\/finish/,
-    );
-  });
-
-  it("includes read_locales scope in shopify.app.toml", () => {
-    const content = readFileSync(
-      resolve(process.cwd(), "shopify.app.toml"),
-      "utf8",
-    );
-    assert.match(content, /read_locales/);
-  });
-
-  it("includes read_locales scope in shopify.app.prod.toml", () => {
-    const content = readFileSync(
-      resolve(process.cwd(), "shopify.app.prod.toml"),
-      "utf8",
-    );
-    assert.match(content, /read_locales/);
   });
 });

@@ -7,8 +7,14 @@ import {
   decodeOAuthState,
   exchangeOAuthCodeForToken,
   getAuraHistoriaOAuthConfig,
+  type InitialBackfillStatus,
   loadOAuthPendingContext,
+  persistCredentialsAfterInitialBackfill,
 } from "../app/oauth.server";
+import {
+  getShopCredentialsStorageKey,
+  loadShopCredentials,
+} from "../app/shop-credentials.server";
 
 function makeKv() {
   const entries = new Map<string, string>();
@@ -51,9 +57,21 @@ describe("Aura Historia OAuth flow helpers", () => {
       prodConfig.authorizeUrl,
       "https://aura-historia.com/oauth/authorize",
     );
+    assert.equal(
+      devConfig.tokenUrl,
+      "https://api.stage.aura-historia.com/api/v1/oauth/token",
+    );
+    assert.equal(
+      prodConfig.tokenUrl,
+      "https://api.aura-historia.com/api/v1/oauth/token",
+    );
+    assert.equal(
+      devConfig.scope,
+      "listing-sources:write product-listings:write",
+    );
   });
 
-  it("builds the authorize URL with partner-shop requirement, PKCE, and base64 state", async () => {
+  it("builds the authorize URL with listing-source requirement, PKCE, and base64 state", async () => {
     const kv = makeKv();
     const env = {
       AURA_HISTORIA_OAUTH_ENV: "dev",
@@ -76,8 +94,16 @@ describe("Aura Historia OAuth flow helpers", () => {
       "https://stage.aura-historia.com/oauth/authorize",
     );
     assert.equal(
-      authorization.url.searchParams.get("requires_partner_shop_id"),
+      authorization.url.searchParams.get("requires_listing_source_id"),
       "true",
+    );
+    assert.equal(
+      authorization.url.searchParams.has("requires_partner_shop_id"),
+      false,
+    );
+    assert.equal(
+      authorization.url.searchParams.get("scope"),
+      "listing-sources:write product-listings:write",
     );
     assert.equal(authorization.url.searchParams.get("response_type"), "code");
     assert.equal(
@@ -140,7 +166,7 @@ describe("Aura Historia OAuth flow helpers", () => {
             access_token: "aurahistoria_partner_token",
             token_type: "BEARER",
             expires_in: null,
-            scope: "products:write",
+            scope: "listing-sources:write product-listings:write",
           }),
           {
             status: 200,
@@ -160,17 +186,94 @@ describe("Aura Historia OAuth flow helpers", () => {
           redirectUri: "https://shopify.test/callback",
           clientId: "client-id",
           clientSecret: "client-secret",
-          scope: "products:write",
+          scope: "listing-sources:write product-listings:write",
         },
         "oauth-code",
         "code-verifier",
       );
 
       assert.equal(token.access_token, "aurahistoria_partner_token");
-      assert.equal(token.scope, "products:write");
+      assert.equal(token.scope, "listing-sources:write product-listings:write");
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("does not persist credentials when setup is not queued or the Shopify session is missing", async () => {
+    for (const status of ["not_queued", "missing_shopify_session"] as const) {
+      const kv = makeKv();
+      const queue = mock.fn(async () => status);
+      const result = await persistCredentialsAfterInitialBackfill(
+        kv as never,
+        "example-shop.myshopify.com",
+        {
+          listingSourceId: `ls_${"0".repeat(26)}`,
+          accessToken: "aurahistoria_partner_token",
+        },
+        queue,
+      );
+
+      assert.equal(result, status);
+      assert.equal(queue.mock.callCount(), 1);
+      assert.equal(kv.put.mock.callCount(), 0);
+      assert.equal(
+        await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
+        null,
+      );
+    }
+  });
+
+  it("does not persist credentials when setup throws", async () => {
+    const kv = makeKv();
+    await assert.rejects(
+      persistCredentialsAfterInitialBackfill(
+        kv as never,
+        "example-shop.myshopify.com",
+        {
+          listingSourceId: `ls_${"0".repeat(26)}`,
+          accessToken: "aurahistoria_partner_token",
+        },
+        async () => {
+          throw new Error("Provider setup failed");
+        },
+      ),
+      /Provider setup failed/,
+    );
+    assert.equal(kv.put.mock.callCount(), 0);
+  });
+
+  it("persists credentials only after initial setup completes successfully", async () => {
+    const kv = makeKv();
+    let finishSetup!: (status: InitialBackfillStatus) => void;
+    const setup = new Promise<InitialBackfillStatus>((resolve) => {
+      finishSetup = resolve;
+    });
+    const shopDomain = "example-shop.myshopify.com";
+    const queue = mock.fn(() => setup);
+
+    const connection = persistCredentialsAfterInitialBackfill(
+      kv as never,
+      shopDomain,
+      {
+        listingSourceId: `ls_${"0".repeat(26)}`,
+        accessToken: "aurahistoria_partner_token",
+      },
+      queue,
+    );
+
+    assert.equal(queue.mock.callCount(), 1);
+    assert.equal(kv.put.mock.callCount(), 0);
+    assert.equal(
+      kv._entries.has(getShopCredentialsStorageKey(shopDomain)),
+      false,
+    );
+
+    finishSetup("queued");
+    assert.equal(await connection, "queued");
+    assert.equal(kv.put.mock.callCount(), 1);
+    const credentials = await loadShopCredentials(kv as never, shopDomain);
+    assert.equal(credentials?.listingSourceId, `ls_${"0".repeat(26)}`);
+    assert.equal(credentials?.accessToken, "aurahistoria_partner_token");
   });
 
   it("builds the embedded Shopify admin return URL", () => {

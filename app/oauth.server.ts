@@ -1,5 +1,9 @@
 import type { KVNamespace } from "@cloudflare/workers-types";
 import type { OAuthTokenResponseData } from "./generated/api/types.gen";
+import {
+  type ShopCredentialsValues,
+  saveShopCredentials,
+} from "./shop-credentials.server";
 import type { CloudflareShopifyEnv } from "./shopify.server";
 import {
   createShopifyAdminAppUrl,
@@ -28,6 +32,24 @@ export interface OAuthPendingContext {
   createdAt: string;
 }
 
+export type InitialBackfillStatus =
+  | "queued"
+  | "missing_shopify_session"
+  | "not_queued";
+
+export async function persistCredentialsAfterInitialBackfill(
+  kv: KVNamespace,
+  shopDomain: string,
+  credentials: ShopCredentialsValues,
+  queueInitialBackfill: () => Promise<InitialBackfillStatus>,
+): Promise<InitialBackfillStatus> {
+  const status = await queueInitialBackfill();
+  if (status === "queued") {
+    await saveShopCredentials(kv, shopDomain, credentials);
+  }
+  return status;
+}
+
 export type BuildOAuthAuthorizeUrlResult =
   | {
       isReady: true;
@@ -44,10 +66,10 @@ const AURA_HISTORIA_STAGE_AUTHORIZE_URL =
   "https://stage.aura-historia.com/oauth/authorize";
 const AURA_HISTORIA_PROD_AUTHORIZE_URL =
   "https://aura-historia.com/oauth/authorize";
-const AURA_HISTORIA_DEV_API_BASE_URL = "https://api.dev.aura-historia.com";
+const AURA_HISTORIA_STAGE_API_BASE_URL = "https://api.stage.aura-historia.com";
 const AURA_HISTORIA_PROD_API_BASE_URL = "https://api.aura-historia.com";
 const SHOPIFY_APP_PROD_URL = "https://partner-connect.aura-historia.com";
-const OAUTH_SCOPE = "products:write";
+const OAUTH_SCOPE = "listing-sources:write product-listings:write";
 const OAUTH_PENDING_CONTEXT_KEY_PREFIX = "aura-historia:oauth-pending:";
 const OAUTH_PENDING_CONTEXT_TTL_SECONDS = 10 * 60;
 const SHOPIFY_STORE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -99,7 +121,7 @@ function resolveDefaultApiBaseUrl(authorizeUrl: string) {
   const hostname = new URL(authorizeUrl).hostname;
   return hostname === "aura-historia.com"
     ? AURA_HISTORIA_PROD_API_BASE_URL
-    : AURA_HISTORIA_DEV_API_BASE_URL;
+    : AURA_HISTORIA_STAGE_API_BASE_URL;
 }
 
 export function getAuraHistoriaApiBaseUrl(env: CloudflareShopifyEnv) {
@@ -308,7 +330,7 @@ export async function buildAuraHistoriaOAuthAuthorizeUrl(
   authorizeUrl.searchParams.set("redirect_uri", config.redirectUri);
   authorizeUrl.searchParams.set("scope", config.scope);
   authorizeUrl.searchParams.set("state", state);
-  authorizeUrl.searchParams.set("requires_partner_shop_id", "true");
+  authorizeUrl.searchParams.set("requires_listing_source_id", "true");
   authorizeUrl.searchParams.set("code_challenge", pkce.codeChallenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
 
