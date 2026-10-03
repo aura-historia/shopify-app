@@ -892,6 +892,51 @@ describe("processing bulk results", () => {
     );
   });
 
+  it("ignores UNLISTED and unknown statuses without a PUT, DELETE, or failure", async () => {
+    const products = [
+      makeProduct({ id: "gid://shopify/Product/201", status: "ACTIVE" }),
+      makeProduct({ id: "gid://shopify/Product/202", status: "DRAFT" }),
+      makeProduct({ id: "gid://shopify/Product/203", status: "ARCHIVED" }),
+      makeProduct({ id: "gid://shopify/Product/204", status: "UNLISTED" }),
+      makeProduct({
+        id: "gid://shopify/Product/205",
+        status: "SOME_FUTURE_STATUS",
+      }),
+    ];
+    const requests: Array<{ method: string; ids: string[] }> = [];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = asRequest(input);
+        if (request.url === "https://cdn.shopify.com/result.jsonl") {
+          return new Response(
+            products.map((product) => JSON.stringify(product)).join("\n"),
+          );
+        }
+        const body = (await request.json()) as Array<{
+          sourceListingId: string;
+        }>;
+        requests.push({
+          method: request.method,
+          ids: body.map((item) => item.sourceListingId),
+        });
+        return jsonResponse(report(body.length));
+      }) as typeof fetch,
+      async () => {
+        assert.deepEqual(
+          await processBackfillResults(
+            "https://cdn.shopify.com/result.jsonl",
+            makeContext(),
+          ),
+          { total: 5, failures: [] },
+        );
+      },
+    );
+    assert.deepEqual(requests, [
+      { method: "PUT", ids: ["201"] },
+      { method: "DELETE", ids: ["202", "203"] },
+    ]);
+  });
+
   it("returns reported failures rather than silently treating admission as success", async () => {
     const jsonl = [
       makeProduct(),

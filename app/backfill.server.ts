@@ -394,6 +394,21 @@ export function transformWithdrawal(
   return { sourceListingId: extractShopifyNumericId(product.id) };
 }
 
+type ShopifyBackfillAction = "upsert" | "withdraw" | "ignore";
+
+function classifyShopifyBackfillAction(status: string): ShopifyBackfillAction {
+  switch (status) {
+    case "ACTIVE":
+      return "upsert";
+    case "DRAFT":
+    case "ARCHIVED":
+      return "withdraw";
+    case "UNLISTED":
+    default:
+      return "ignore";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // JSONL parsing
 // ---------------------------------------------------------------------------
@@ -783,9 +798,10 @@ export async function processBackfillResults(
   const withdrawals: WithdrawProductListingData[] = [];
   const allFailures: string[] = [];
   for (const product of products) {
-    if (product.status === "DRAFT" || product.status === "ARCHIVED") {
+    const action = classifyShopifyBackfillAction(product.status);
+    if (action === "withdraw") {
       withdrawals.push(transformWithdrawal(product));
-    } else if (product.status === "ACTIVE") {
+    } else if (action === "upsert") {
       try {
         upserts.push(
           transformProduct(
@@ -804,8 +820,6 @@ export async function processBackfillResults(
           error,
         );
       }
-    } else {
-      allFailures.push(extractShopifyNumericId(product.id));
     }
   }
 
