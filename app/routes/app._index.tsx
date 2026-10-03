@@ -2,7 +2,13 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, redirect, useLoaderData } from "react-router";
 
 import {
+  configureShopifyListingSource,
+  createAdminGraphqlRequest,
+  triggerBackfill,
+} from "../backfill.server";
+import {
   buildAuraHistoriaOAuthAuthorizeUrl,
+  getAuraHistoriaApiBaseUrl,
   getAuraHistoriaOAuthConfig,
   getMissingAuraHistoriaOAuthConfig,
   revokeAuraHistoriaAccessToken,
@@ -184,6 +190,55 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   redirectParams.delete("oauth_error");
   redirectParams.delete("backfill");
 
+  if (intent === "retry_backfill") {
+    const credentials = await loadShopCredentials(
+      context.cloudflare.env.KV,
+      session.shop,
+    );
+    if (!credentials) {
+      redirectParams.set("backfill", "not_queued");
+      return redirect(`/app?${redirectParams.toString()}`);
+    }
+
+    try {
+      const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
+      const apiBaseUrl =
+        getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
+        new URL(config.tokenUrl).origin;
+      const { admin } = await getShopify(context).unauthenticated.admin(
+        session.shop,
+      );
+      const graphqlRequest = createAdminGraphqlRequest(admin);
+      const metadata = await configureShopifyListingSource(
+        graphqlRequest,
+        apiBaseUrl,
+        credentials.listingSourceId,
+        credentials.accessToken,
+        session.shop,
+      );
+      const queued = await triggerBackfill(
+        graphqlRequest,
+        context.cloudflare.env.KV,
+        session.shop,
+        credentials.listingSourceId,
+        credentials.accessToken,
+        apiBaseUrl,
+        metadata,
+      );
+      redirectParams.set("backfill", queued ? "queued" : "not_queued");
+    } catch (error) {
+      console.error(
+        "Failed to retry initial backfill:",
+        summarizeOAuthError(error).replaceAll(
+          credentials.accessToken,
+          "[redacted]",
+        ),
+      );
+      redirectParams.set("backfill", "not_queued");
+    }
+    return redirect(`/app?${redirectParams.toString()}`);
+  }
+
   if (intent !== "disconnect") {
     redirectParams.set("disconnect_error", "Unknown action.");
     return redirect(`/app?${redirectParams.toString()}`);
@@ -338,10 +393,15 @@ export default function AppIndex() {
           </p>
         ) : null}
 
-        {integration.status === "connected" &&
-        integration.backfill === "queued" ? (
+        {isConnected && integration.backfill === "queued" ? (
           <p className={styles.successText}>
             Initial product backfill was queued.
+          </p>
+        ) : null}
+        {isConnected && integration.backfill === "not_queued" ? (
+          <p className={styles.errorText}>
+            Connected, but initial product backfill could not be queued. You can
+            retry without reconnecting.
           </p>
         ) : null}
 
@@ -365,6 +425,15 @@ export default function AppIndex() {
                 : "Connection retry unavailable"}
             </button>
           )}
+
+          {isConnected ? (
+            <Form method="post">
+              <input type="hidden" name="intent" value="retry_backfill" />
+              <button className={styles.secondaryButton} type="submit">
+                Retry initial backfill
+              </button>
+            </Form>
+          ) : null}
 
           <Form method="post">
             <input type="hidden" name="intent" value="disconnect" />

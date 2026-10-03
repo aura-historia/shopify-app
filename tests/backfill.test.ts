@@ -7,6 +7,7 @@ import {
   type BulkJsonlProduct,
   buildShopifyIngestionConfiguration,
   clearBackfillContext,
+  configureShopifyListingSource,
   createAdminGraphqlRequest,
   createBackfillIdempotencyKey,
   extractShopifyNumericId,
@@ -20,6 +21,7 @@ import {
   parseProductsFromJsonl,
   processBackfillResults,
   putShopifyIngestionConfiguration,
+  requireSupportedShopifyCurrency,
   resolveLanguage,
   sendProductBatch,
   storeBackfillContext,
@@ -27,6 +29,7 @@ import {
   transformProduct,
   transformWithdrawal,
   triggerBackfill,
+  type ValidatedShopifyMetadata,
 } from "../app/backfill.server";
 
 const listingSourceId = `ls_${"0".repeat(26)}`;
@@ -43,6 +46,7 @@ function makeProduct(
     title: "Antique Clock",
     status: "ACTIVE",
     totalInventory: 5,
+    tracksInventory: true,
     onlineStoreUrl: `https://${shopDomain}/products/antique-clock`,
     handle: "antique-clock",
     ...overrides,
@@ -146,7 +150,20 @@ describe("Shopify IDs, locale, currency and domain", () => {
     assert.equal(normalizeShopifyDomain("  "), undefined);
   });
 
-  it("always configures the normalized domain and only known currency/language", () => {
+  it("requires a supported Shopify currency", () => {
+    assert.equal(requireSupportedShopifyCurrency("EUR"), "EUR");
+    assert.equal(requireSupportedShopifyCurrency("JPY"), "JPY");
+    assert.throws(
+      () => requireSupportedShopifyCurrency(undefined),
+      /missing Shopify currency/,
+    );
+    assert.throws(
+      () => requireSupportedShopifyCurrency("SEK"),
+      /Shopify currency: SEK/,
+    );
+  });
+
+  it("always configures the normalized domain and required currency, omitting unknown language", () => {
     assert.deepEqual(
       buildShopifyIngestionConfiguration(
         { primaryLocale: "de-AT", currencyCode: "EUR" },
@@ -156,10 +173,15 @@ describe("Shopify IDs, locale, currency and domain", () => {
     );
     assert.deepEqual(
       buildShopifyIngestionConfiguration(
-        { primaryLocale: "sv-SE", currencyCode: "SEK" },
+        { primaryLocale: "sv-SE", currencyCode: "JPY" },
         shopDomain,
       ),
-      { domain: shopDomain },
+      { domain: shopDomain, currency: "JPY" },
+    );
+    assert.throws(
+      () =>
+        buildShopifyIngestionConfiguration({ currencyCode: "SEK" }, shopDomain),
+      /Shopify currency: SEK/,
     );
   });
 });
@@ -230,7 +252,7 @@ describe("Shopify product transformation", () => {
       shopDomain,
     );
     const untracked = transformProduct(
-      makeProduct({ totalInventory: null }),
+      makeProduct({ totalInventory: 10, tracksInventory: false }),
       [],
       null,
       "en",
@@ -240,6 +262,17 @@ describe("Shopify product transformation", () => {
     assert.equal(available.availability, "IN_STOCK");
     assert.equal(soldOut.availability, "OUT_OF_STOCK");
     assert.equal(untracked.availability, null);
+    assert.equal(
+      transformProduct(
+        makeProduct({ totalInventory: 0, tracksInventory: false }),
+        [],
+        null,
+        "en",
+        "EUR",
+        shopDomain,
+      ).availability,
+      null,
+    );
   });
 
   it("uses the product handle for missing onlineStoreUrl and does not invent a numeric product path", () => {
@@ -315,6 +348,15 @@ describe("Shopify JSONL and KV context", () => {
     assert.equal("apiKey" in context, false);
     await clearBackfillContext(kv as never, shopDomain);
     assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    await storeBackfillContext(
+      kv as never,
+      shopDomain,
+      makeContext({ primaryLocale: undefined }),
+    );
+    assert.equal(
+      (await loadBackfillContext(kv as never, shopDomain))?.primaryLocale,
+      undefined,
+    );
   });
 
   it("returns null for absent or malformed context", async () => {
@@ -329,6 +371,11 @@ describe("Shopify JSONL and KV context", () => {
         listingSourceId: undefined,
         shopId: "550e8400-e29b-41d4-a716-446655440000",
       }),
+    );
+    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    kv.entries.set(
+      `aura-historia:backfill:${shopDomain}`,
+      JSON.stringify(makeContext({ currencyCode: "SEK" as never })),
     );
     assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
   });
@@ -364,6 +411,8 @@ describe("Shopify GraphQL", () => {
         const bulkQuery = variables.query;
         assert.equal(typeof bulkQuery, "string");
         assert.match(bulkQuery as string, /handle/);
+        assert.match(bulkQuery as string, /totalInventory/);
+        assert.match(bulkQuery as string, /tracksInventory/);
         assert.doesNotMatch(bulkQuery as string, /descriptionHtml|description/);
         return {
           data: {
@@ -463,10 +512,13 @@ describe("listing source ingestion configuration", () => {
     });
   }
 
-  it("sends only the required domain for unsupported locale and currency", async () => {
+  it("sends required currency but omits language for unsupported locale", async () => {
     await withFetch(
       (async (input: RequestInfo | URL) => {
-        assert.deepEqual(await asRequest(input).json(), { domain: shopDomain });
+        assert.deepEqual(await asRequest(input).json(), {
+          domain: shopDomain,
+          currency: "JPY",
+        });
         return new Response(null, { status: 204 });
       }) as typeof fetch,
       async () => {
@@ -474,7 +526,7 @@ describe("listing source ingestion configuration", () => {
           apiBaseUrl,
           listingSourceId,
           accessToken,
-          { primaryLocale: "sv", currencyCode: "SEK" },
+          { primaryLocale: "sv", currencyCode: "JPY" },
           shopDomain,
         );
       },
@@ -491,7 +543,7 @@ describe("listing source ingestion configuration", () => {
             apiBaseUrl,
             listingSourceId,
             accessToken,
-            {},
+            { currencyCode: "EUR" },
             shopDomain,
           ),
         );
@@ -880,7 +932,12 @@ describe("processing bulk results", () => {
   });
 });
 
-describe("triggerBackfill", () => {
+describe("configureShopifyListingSource and triggerBackfill", () => {
+  const validatedMetadata: ValidatedShopifyMetadata = {
+    primaryLocale: "de",
+    currencyCode: "EUR",
+  };
+
   function graphqlRequest(): GraphqlRequestFn {
     return mock.fn(async (query: string) =>
       query.includes("shopLocales")
@@ -902,39 +959,28 @@ describe("triggerBackfill", () => {
   }
 
   for (const status of [201, 204]) {
-    it(`stores context and submits bulk work after provider ${status}`, async () => {
+    it(`configures provider ${status} before independently submitting bulk work`, async () => {
       const kv = makeKv();
-      await withFetch(
-        (async () => new Response(null, { status })) as typeof fetch,
-        async () => {
-          assert.equal(
-            await triggerBackfill(
-              graphqlRequest(),
-              kv as never,
-              shopDomain,
-              listingSourceId,
-              accessToken,
-              apiBaseUrl,
-            ),
-            true,
-          );
-        },
-      );
-      const stored = await loadBackfillContext(kv as never, shopDomain);
-      assert.ok(stored);
-      assert.equal(stored.listingSourceId, listingSourceId);
-      assert.equal(stored.accessToken, accessToken);
-      assert.equal(stored.bulkOperationId, bulkOperationId);
-      assert.equal("shopId" in stored, false);
-    });
-  }
-
-  it("does not submit the bulk operation or store context when provider configuration fails", async () => {
-    const kv = makeKv();
-    const graphql = mock.fn(graphqlRequest());
-    await withFetch(
-      (async () => jsonResponse({ error: "Forbidden" }, 403)) as typeof fetch,
-      async () => {
+      const graphql = mock.fn(graphqlRequest());
+      const fetchMock = mock.fn(async (input: RequestInfo | URL) => {
+        assert.deepEqual(await asRequest(input).json(), {
+          domain: shopDomain,
+          currency: "EUR",
+          language: "de",
+        });
+        return new Response(null, { status });
+      });
+      await withFetch(fetchMock as typeof fetch, async () => {
+        const metadata = await configureShopifyListingSource(
+          graphql,
+          apiBaseUrl,
+          listingSourceId,
+          accessToken,
+          shopDomain,
+        );
+        assert.deepEqual(metadata, validatedMetadata);
+        assert.equal(graphql.mock.callCount(), 1);
+        assert.equal(kv.put.mock.callCount(), 0);
         assert.equal(
           await triggerBackfill(
             graphql,
@@ -943,12 +989,131 @@ describe("triggerBackfill", () => {
             listingSourceId,
             accessToken,
             apiBaseUrl,
+            metadata,
           ),
-          false,
+          true,
+        );
+        assert.equal(fetchMock.mock.callCount(), 1);
+      });
+      assert.equal(graphql.mock.callCount(), 2);
+      const stored = await loadBackfillContext(kv as never, shopDomain);
+      assert.ok(stored);
+      assert.equal(stored.listingSourceId, listingSourceId);
+      assert.equal(stored.accessToken, accessToken);
+      assert.equal(stored.bulkOperationId, bulkOperationId);
+      assert.equal(stored.currencyCode, "EUR");
+      assert.equal(stored.primaryLocale, "de");
+      assert.equal("shopId" in stored, false);
+    });
+  }
+
+  it("refuses missing or unsupported currency before provider PUT or bulk submission", async () => {
+    for (const currencyCode of [undefined, "SEK"]) {
+      const kv = makeKv();
+      const graphql = mock.fn(async () => ({
+        data: { shop: { currencyCode } },
+      }));
+      const fetchMock = mock.fn(
+        async () => new Response(null, { status: 204 }),
+      );
+      await withFetch(fetchMock as typeof fetch, async () => {
+        await assert.rejects(
+          () =>
+            configureShopifyListingSource(
+              graphql,
+              apiBaseUrl,
+              listingSourceId,
+              accessToken,
+              shopDomain,
+            ),
+          /Shopify currency/,
+        );
+      });
+      assert.equal(graphql.mock.callCount(), 1);
+      assert.equal(fetchMock.mock.callCount(), 0);
+      assert.equal(kv.put.mock.callCount(), 0);
+    }
+  });
+
+  it("does not submit bulk work when provider configuration fails", async () => {
+    const kv = makeKv();
+    const graphql = mock.fn(graphqlRequest());
+    await withFetch(
+      (async () => jsonResponse({ error: "Forbidden" }, 403)) as typeof fetch,
+      async () => {
+        await assert.rejects(() =>
+          configureShopifyListingSource(
+            graphql,
+            apiBaseUrl,
+            listingSourceId,
+            accessToken,
+            shopDomain,
+          ),
         );
       },
     );
     assert.equal(graphql.mock.callCount(), 1);
+    assert.equal(kv.put.mock.callCount(), 0);
+  });
+
+  it("submits bulk work without metadata fetch or provider PUT and does not invent locale", async () => {
+    const kv = makeKv();
+    const graphql = mock.fn(async (query: string) => {
+      assert.match(query, /bulkOperationRunQuery/);
+      return {
+        data: {
+          bulkOperationRunQuery: {
+            bulkOperation: { id: bulkOperationId },
+            userErrors: [],
+          },
+        },
+      };
+    });
+    const fetchMock = mock.fn(async () => {
+      throw new Error("Provider PUT must not happen");
+    });
+    await withFetch(fetchMock as typeof fetch, async () => {
+      assert.equal(
+        await triggerBackfill(
+          graphql,
+          kv as never,
+          shopDomain,
+          listingSourceId,
+          accessToken,
+          apiBaseUrl,
+          { currencyCode: "JPY" },
+        ),
+        true,
+      );
+    });
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal(graphql.mock.callCount(), 1);
+    const stored = await loadBackfillContext(kv as never, shopDomain);
+    assert.ok(stored);
+    assert.equal(stored.currencyCode, "JPY");
+    assert.equal(stored.primaryLocale, undefined);
+    const raw = kv.entries.get(`aura-historia:backfill:${shopDomain}`);
+    assert.ok(raw);
+    assert.equal("primaryLocale" in JSON.parse(raw), false);
+  });
+
+  it("does not store context if bulk submission fails", async () => {
+    const kv = makeKv();
+    const graphql: GraphqlRequestFn = async () => ({
+      errors: "Already running",
+    });
+    assert.equal(
+      await triggerBackfill(
+        graphql,
+        kv as never,
+        shopDomain,
+        listingSourceId,
+        accessToken,
+        apiBaseUrl,
+        validatedMetadata,
+      ),
+      false,
+    );
     assert.equal(kv.put.mock.callCount(), 0);
   });
 });

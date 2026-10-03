@@ -103,15 +103,16 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("Aura Historia Listing Source ID"));
   });
 
-  it("does not report the callback as connected when initial setup fails", () => {
+  it("keeps the connection after a failed backfill and offers a credential-based retry", () => {
+    assert.match(oauthCallbackRoute, /connectAuraHistoriaShop\(/);
     assert.match(
       oauthCallbackRoute,
-      /const backfill = await persistCredentialsAfterInitialBackfill\([\s\S]*?if \(backfill !== "queued"\) \{\s*return fail\(/,
+      /return adminRedirect\(shopifyStoreName, \{\s*oauth: "connected",\s*backfill/,
     );
-    assert.match(
-      oauthCallbackRoute,
-      /backfill === "missing_shopify_session"[\s\S]*?return adminRedirect\(shopifyStoreName, \{\s*oauth: "connected"/,
-    );
+    assert.match(appIndexRoute, /intent === "retry_backfill"/);
+    assert.match(appIndexRoute, /credentials\.listingSourceId/);
+    assert.match(appIndexRoute, /credentials\.accessToken/);
+    assert.match(appIndexRoute, /name="intent" value="retry_backfill"/);
   });
 
   it("keeps review links and contact details on the success page", () => {

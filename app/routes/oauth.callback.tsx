@@ -1,8 +1,13 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { redirect, useLoaderData } from "react-router";
-import { createAdminGraphqlRequest, triggerBackfill } from "../backfill.server";
+import {
+  configureShopifyListingSource,
+  createAdminGraphqlRequest,
+  triggerBackfill,
+} from "../backfill.server";
 import {
   clearOAuthPendingContext,
+  connectAuraHistoriaShop,
   createShopifyAdminAppUrl,
   decodeOAuthState,
   exchangeOAuthCodeForToken,
@@ -10,9 +15,7 @@ import {
   getAuraHistoriaOAuthConfig,
   getMissingAuraHistoriaOAuthConfig,
   getShopDomainFromStoreName,
-  type InitialBackfillStatus,
   loadOAuthPendingContext,
-  persistCredentialsAfterInitialBackfill,
   summarizeOAuthError,
 } from "../oauth.server";
 import { isValidListingSourceId } from "../shop-credentials.server";
@@ -27,48 +30,6 @@ const legalLinks = [
     label: "Terms & conditions",
   },
 ];
-
-async function queueInitialBackfill({
-  context,
-  shopDomain,
-  listingSourceId,
-  accessToken,
-  apiBaseUrl,
-}: {
-  context: LoaderFunctionArgs["context"];
-  shopDomain: string;
-  listingSourceId: string;
-  accessToken: string;
-  apiBaseUrl: string;
-}): Promise<InitialBackfillStatus> {
-  try {
-    const shopify = getShopify(context);
-    const { admin } = await shopify.unauthenticated.admin(shopDomain);
-    const graphqlRequest = createAdminGraphqlRequest(admin);
-
-    const submitted = await triggerBackfill(
-      graphqlRequest,
-      context.cloudflare.env.KV,
-      shopDomain,
-      listingSourceId,
-      accessToken,
-      apiBaseUrl,
-    );
-
-    return submitted ? "queued" : "not_queued";
-  } catch (error) {
-    if (error instanceof Error && error.name === "SessionNotFoundError") {
-      console.error(
-        `No offline Shopify session found for ${shopDomain}:`,
-        error,
-      );
-      return "missing_shopify_session";
-    }
-
-    console.error(`Failed to queue initial backfill for ${shopDomain}:`, error);
-    return "not_queued";
-  }
-}
 
 function adminRedirect(
   shopifyStoreName: string,
@@ -144,20 +105,21 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     );
   }
 
+  const shopDomain =
+    pending.shopDomain || getShopDomainFromStoreName(shopifyStoreName);
+  const apiBaseUrl =
+    getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
+    new URL(config.tokenUrl).origin;
+  let issuedToken: string | undefined;
   try {
     const token = await exchangeOAuthCodeForToken(
       config,
       code,
       pending.codeVerifier,
     );
+    issuedToken = token.access_token;
 
-    const shopDomain =
-      pending.shopDomain || getShopDomainFromStoreName(shopifyStoreName);
-
-    const apiBaseUrl =
-      getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
-      new URL(config.tokenUrl).origin;
-    const backfill = await persistCredentialsAfterInitialBackfill(
+    const backfill = await connectAuraHistoriaShop(
       context.cloudflare.env.KV,
       shopDomain,
       {
@@ -167,31 +129,62 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
         scope: token.scope,
         shopifyStoreName,
       },
-      () =>
-        queueInitialBackfill({
-          context,
+      config,
+      async () => {
+        const shopify = getShopify(context);
+        let admin: Awaited<
+          ReturnType<typeof shopify.unauthenticated.admin>
+        >["admin"];
+        try {
+          ({ admin } = await shopify.unauthenticated.admin(shopDomain));
+        } catch (error) {
+          if (error instanceof Error && error.name === "SessionNotFoundError") {
+            throw new Error(
+              "No offline Shopify session was available. Reopen the Shopify app to retry.",
+            );
+          }
+          throw error;
+        }
+        const graphqlRequest = createAdminGraphqlRequest(admin);
+        const metadata = await configureShopifyListingSource(
+          graphqlRequest,
+          apiBaseUrl,
+          listingSourceId,
+          token.access_token,
+          shopDomain,
+        );
+        return { graphqlRequest, metadata };
+      },
+      async ({ graphqlRequest, metadata }) =>
+        (await triggerBackfill(
+          graphqlRequest,
+          context.cloudflare.env.KV,
           shopDomain,
           listingSourceId,
-          accessToken: token.access_token,
+          token.access_token,
           apiBaseUrl,
-        }),
+          metadata,
+        ))
+          ? "queued"
+          : "not_queued",
     );
-    if (backfill !== "queued") {
-      return fail(
-        backfill === "missing_shopify_session"
-          ? "No offline Shopify session was available to complete the Aura Historia connection. Reopen the Shopify app to retry."
-          : "Aura Historia setup could not be completed. Reopen the Shopify app to retry.",
-      );
-    }
 
-    await clearOAuthPendingContext(context.cloudflare.env.KV, stateValue);
+    try {
+      await clearOAuthPendingContext(context.cloudflare.env.KV, stateValue);
+    } catch {
+      // The connection is durable; pending state will expire on its own.
+    }
 
     return adminRedirect(shopifyStoreName, {
       oauth: "connected",
       backfill,
     });
   } catch (error) {
-    return fail(error instanceof Error ? error.message : String(error));
+    return fail(
+      issuedToken
+        ? summarizeOAuthError(error).replaceAll(issuedToken, "[redacted]")
+        : summarizeOAuthError(error),
+    );
   }
 };
 

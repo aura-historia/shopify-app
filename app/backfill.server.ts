@@ -33,6 +33,7 @@ const BULK_PRODUCTS_QUERY = `
         handle
         status
         totalInventory
+        tracksInventory
         onlineStoreUrl
         images {
           edges {
@@ -142,8 +143,8 @@ export interface BackfillContext {
   listingSourceId: string;
   accessToken: string;
   apiBaseUrl: string;
-  primaryLocale: string;
-  currencyCode: string;
+  primaryLocale?: string;
+  currencyCode: CurrencyData;
   shopDomain: string;
 
   bulkOperationId: string;
@@ -153,6 +154,11 @@ export interface BackfillContext {
 export interface ShopMetadata {
   primaryLocale?: string;
   currencyCode?: string;
+}
+
+export interface ValidatedShopifyMetadata {
+  primaryLocale?: string;
+  currencyCode: CurrencyData;
 }
 
 interface GraphqlResponse {
@@ -177,7 +183,8 @@ export interface BulkJsonlProduct {
   title: string;
   handle: string;
   status: string;
-  totalInventory: number | null;
+  totalInventory: number;
+  tracksInventory: boolean;
   onlineStoreUrl: string | null;
 }
 
@@ -248,9 +255,10 @@ export function extractShopifyNumericId(gid: string): string {
 }
 
 export function mapShopifyAvailability(
-  totalInventory: number | null,
+  tracksInventory: boolean,
+  totalInventory: number,
 ): ListingAvailabilityData | null {
-  if (totalInventory === null) return null;
+  if (!tracksInventory) return null;
   return totalInventory > 0 ? "IN_STOCK" : "OUT_OF_STOCK";
 }
 
@@ -265,7 +273,7 @@ export function mapShopifyLocaleToLanguage(
   return SHOPIFY_LOCALE_TO_LANGUAGE[base];
 }
 
-export function resolveLanguage(shopifyLocale: string): LanguageData {
+export function resolveLanguage(shopifyLocale?: string): LanguageData {
   return mapShopifyLocaleToLanguage(shopifyLocale) ?? "en";
 }
 
@@ -282,6 +290,18 @@ export function mapShopifyCurrencyCode(
   }
 
   return normalizedCurrencyCode;
+}
+
+export function requireSupportedShopifyCurrency(
+  currencyCode?: string | null,
+): CurrencyData {
+  const currency = mapShopifyCurrencyCode(currencyCode);
+  if (!currency) {
+    throw new Error(
+      `Unsupported or missing Shopify currency: ${currencyCode ?? "missing"}`,
+    );
+  }
+  return currency;
 }
 
 export function normalizeShopifyDomain(
@@ -306,9 +326,7 @@ export function buildShopifyIngestionConfiguration(
   }
   return {
     domain,
-    ...(mapShopifyCurrencyCode(metadata.currencyCode) && {
-      currency: mapShopifyCurrencyCode(metadata.currencyCode),
-    }),
+    currency: requireSupportedShopifyCurrency(metadata.currencyCode),
     ...(mapShopifyLocaleToLanguage(metadata.primaryLocale) && {
       language: mapShopifyLocaleToLanguage(metadata.primaryLocale),
     }),
@@ -336,7 +354,7 @@ export function transformProduct(
   product: BulkJsonlProduct,
   images: string[],
   variantPrice: string | null,
-  locale: string,
+  locale: string | undefined,
   currencyCode: string,
   shopDomain: string,
 ): UpsertProductListingData {
@@ -361,7 +379,10 @@ export function transformProduct(
       currency && amount !== null
         ? { type: "MONETARY", currency, amount }
         : null,
-    availability: mapShopifyAvailability(product.totalInventory),
+    availability: mapShopifyAvailability(
+      product.tracksInventory,
+      product.totalInventory,
+    ),
     url,
     images,
   };
@@ -449,8 +470,9 @@ export async function loadBackfillContext(
       typeof value.apiBaseUrl === "string" &&
       typeof value.shopDomain === "string" &&
       typeof value.bulkOperationId === "string" &&
-      typeof value.primaryLocale === "string" &&
-      typeof value.currencyCode === "string" &&
+      (value.primaryLocale === undefined ||
+        typeof value.primaryLocale === "string") &&
+      mapShopifyCurrencyCode(value.currencyCode) &&
       typeof value.createdAt === "string"
       ? (value as BackfillContext)
       : null;
@@ -694,6 +716,28 @@ export async function sendProductBatch(
   throw new Error("ProductListing admission retry limit reached");
 }
 
+export async function configureShopifyListingSource(
+  graphqlRequest: GraphqlRequestFn,
+  apiBaseUrl: string,
+  listingSourceId: string,
+  accessToken: string,
+  shopDomain: string,
+): Promise<ValidatedShopifyMetadata> {
+  const metadata = await fetchShopMetadata(graphqlRequest);
+  const validatedMetadata: ValidatedShopifyMetadata = {
+    primaryLocale: metadata.primaryLocale,
+    currencyCode: requireSupportedShopifyCurrency(metadata.currencyCode),
+  };
+  await putShopifyIngestionConfiguration(
+    apiBaseUrl,
+    listingSourceId,
+    accessToken,
+    validatedMetadata,
+    shopDomain,
+  );
+  return validatedMetadata;
+}
+
 export async function putShopifyIngestionConfiguration(
   apiBaseUrl: string,
   listingSourceId: string,
@@ -817,24 +861,17 @@ export async function triggerBackfill(
   listingSourceId: string,
   accessToken: string,
   apiBaseUrl: string,
+  validatedMetadata: ValidatedShopifyMetadata,
 ): Promise<boolean> {
   try {
-    const metadata = await fetchShopMetadata(graphqlRequest);
-    await putShopifyIngestionConfiguration(
-      apiBaseUrl,
-      listingSourceId,
-      accessToken,
-      metadata,
-      shopDomain,
-    );
     const bulkOperationId = await submitBulkOperation(graphqlRequest);
 
     await storeBackfillContext(kv, shopDomain, {
       listingSourceId,
       accessToken,
       apiBaseUrl,
-      primaryLocale: metadata.primaryLocale ?? "en",
-      currencyCode: metadata.currencyCode ?? "EUR",
+      primaryLocale: validatedMetadata.primaryLocale,
+      currencyCode: validatedMetadata.currencyCode,
       shopDomain,
       bulkOperationId,
       createdAt: new Date().toISOString(),
@@ -845,7 +882,14 @@ export async function triggerBackfill(
     );
     return true;
   } catch (error) {
-    console.error(`Failed to submit backfill for ${shopDomain}:`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `Failed to submit backfill for ${shopDomain}:`,
+      message
+        .replaceAll(accessToken, "[redacted]")
+        .replace(/\s+/g, " ")
+        .slice(0, 180),
+    );
     return false;
   }
 }

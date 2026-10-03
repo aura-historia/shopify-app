@@ -32,22 +32,49 @@ export interface OAuthPendingContext {
   createdAt: string;
 }
 
-export type InitialBackfillStatus =
-  | "queued"
-  | "missing_shopify_session"
-  | "not_queued";
+export type InitialBackfillStatus = "queued" | "not_queued";
 
-export async function persistCredentialsAfterInitialBackfill(
+export async function connectAuraHistoriaShop<T>(
   kv: KVNamespace,
   shopDomain: string,
   credentials: ShopCredentialsValues,
-  queueInitialBackfill: () => Promise<InitialBackfillStatus>,
+  config: AuraHistoriaOAuthConfig,
+  configureProvider: () => Promise<T>,
+  queueInitialBackfill: (metadata: T) => Promise<InitialBackfillStatus>,
 ): Promise<InitialBackfillStatus> {
-  const status = await queueInitialBackfill();
-  if (status === "queued") {
+  let credentialsSaved = false;
+  try {
+    const metadata = await configureProvider();
     await saveShopCredentials(kv, shopDomain, credentials);
+    credentialsSaved = true;
+    try {
+      return await queueInitialBackfill(metadata);
+    } catch (error) {
+      console.error(
+        "Failed to queue initial backfill:",
+        summarizeOAuthError(error).replaceAll(
+          credentials.accessToken,
+          "[redacted]",
+        ),
+      );
+      return "not_queued";
+    }
+  } catch (error) {
+    if (!credentialsSaved) {
+      try {
+        await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
+      } catch (revokeError) {
+        console.warn(
+          "Failed to revoke token after connection setup failure:",
+          summarizeOAuthError(revokeError).replaceAll(
+            credentials.accessToken,
+            "[redacted]",
+          ),
+        );
+      }
+    }
+    throw error;
   }
-  return status;
 }
 
 export type BuildOAuthAuthorizeUrlResult =
@@ -73,6 +100,11 @@ const OAUTH_SCOPE = "listing-sources:write product-listings:write";
 const OAUTH_PENDING_CONTEXT_KEY_PREFIX = "aura-historia:oauth-pending:";
 const OAUTH_PENDING_CONTEXT_TTL_SECONDS = 10 * 60;
 const SHOPIFY_STORE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const OAUTH_CLIENT_ID_PATTERN = /^oc_[0-7][0-9a-hjkmnp-tv-z]{25}$/;
+
+export function isValidOAuthClientId(value: string) {
+  return OAUTH_CLIENT_ID_PATTERN.test(value);
+}
 
 type StringEnvKey = Exclude<keyof CloudflareShopifyEnv, "KV">;
 
@@ -157,7 +189,7 @@ export function getMissingAuraHistoriaOAuthConfig(
 ) {
   const missing: string[] = [];
 
-  if (!config.clientId) {
+  if (!isValidOAuthClientId(config.clientId)) {
     missing.push("AURA_HISTORIA_OAUTH_CLIENT_ID");
   }
   if (!config.clientSecret) {

@@ -20,9 +20,11 @@
     "SHOPIFY_API_VERSION": "2026-04",
     "SHOPIFY_APP_URL": "https://partner-connect.aura-historia.com",
     "SCOPES": "read_products,read_locales",
-    "AURA_HISTORIA_API_BASE_URL": "https://api.stage.aura-historia.com",
-    "AURA_HISTORIA_OAUTH_ENV": "dev",
+    "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com",
+    "AURA_HISTORIA_OAUTH_ENV": "prod",
     "AURA_HISTORIA_OAUTH_SCOPE": "listing-sources:write product-listings:write",
-    "AURA_HISTORIA_OAUTH_CLIENT_ID": "019eb09e-563a-7ad2-8e71-1ae86f8430ab"
+    // PLACEHOLDER: replace with the registered production oc_... OAuth client ID before deployment.
+    // This intentionally invalid value prevents OAuth from starting until configured.
+    "AURA_HISTORIA_OAUTH_CLIENT_ID": "oc_REPLACE_WITH_PRODUCTION_OAUTH_CLIENT_ID"
   }
 }
