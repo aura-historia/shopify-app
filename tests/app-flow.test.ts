@@ -31,6 +31,10 @@ const appIndexRoute = readFileSync(
   resolve(process.cwd(), "app/routes/app._index.tsx"),
   "utf8",
 );
+const oauthCallbackRoute = readFileSync(
+  resolve(process.cwd(), "app/routes/oauth.callback.tsx"),
+  "utf8",
+);
 
 describe("public install flow", () => {
   it("uses Shopify AppProvider for embedded App Bridge boot", () => {
@@ -83,6 +87,32 @@ describe("public install flow", () => {
     );
     assert.ok(appIndexRoute.includes('"not_connected"'));
     assert.ok(appIndexRoute.includes("Connect Aura Historia"));
+  });
+
+  it("uses the listing source ID throughout the OAuth callback and embedded app", () => {
+    assert.ok(
+      oauthCallbackRoute.includes('searchParams.get("listing_source_id")'),
+    );
+    assert.ok(
+      oauthCallbackRoute.includes("isValidListingSourceId(listingSourceId)"),
+    );
+    assert.ok(oauthCallbackRoute.includes("listingSourceId,"));
+    assert.equal(oauthCallbackRoute.includes("partner_shop_id"), false);
+    assert.ok(appIndexRoute.includes("credentials?.listingSourceId"));
+    assert.equal(appIndexRoute.includes("credentials.shopId"), false);
+    assert.ok(appIndexRoute.includes("Aura Historia Listing Source ID"));
+  });
+
+  it("keeps the connection after a failed backfill and offers a credential-based retry", () => {
+    assert.match(oauthCallbackRoute, /connectAuraHistoriaShop\(/);
+    assert.match(
+      oauthCallbackRoute,
+      /return adminRedirect\(shopifyStoreName, \{\s*oauth: "connected",\s*backfill/,
+    );
+    assert.match(appIndexRoute, /intent === "retry_backfill"/);
+    assert.match(appIndexRoute, /credentials\.listingSourceId/);
+    assert.match(appIndexRoute, /credentials\.accessToken/);
+    assert.match(appIndexRoute, /name="intent" value="retry_backfill"/);
   });
 
   it("keeps review links and contact details on the success page", () => {

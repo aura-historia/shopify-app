@@ -1,14 +1,19 @@
-import {
-  NodeHtmlMarkdown,
-  type NodeHtmlMarkdownOptions,
-} from "node-html-markdown";
 import { createClient } from "./generated/api/client";
+import {
+  deleteAsyncPartnerProductListings,
+  putAsyncPartnerProductListings,
+  putShopifyListingSourceIngestionConfiguration,
+} from "./generated/api/sdk.gen";
 import type {
+  AsyncProductListingBatchReport,
   CurrencyData,
   LanguageData,
-  PatchShopData,
-  PutProductData,
+  ListingAvailabilityData,
+  PutShopifyListingSourceIngestionConfigurationData,
+  UpsertProductListingData,
+  WithdrawProductListingData,
 } from "./generated/api/types.gen";
+import { isValidListingSourceId } from "./shop-credentials.server";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,9 +30,10 @@ const BULK_PRODUCTS_QUERY = `
       node {
         id
         title
-        descriptionHtml
+        handle
         status
         totalInventory
+        tracksInventory
         onlineStoreUrl
         images {
           edges {
@@ -129,32 +135,18 @@ const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
   ar: "ar",
 };
 
-// Keep conversion on the pure-JS parser path for Cloudflare Workers.
-const htmlToMarkdownOptions = {
-  bulletMarker: "-",
-  emDelimiter: "*",
-  preferNativeParser: false,
-  strongDelimiter: "**",
-  useInlineLinks: true,
-} satisfies Partial<NodeHtmlMarkdownOptions>;
-
-const markdownConverter = new NodeHtmlMarkdown(htmlToMarkdownOptions);
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface BackfillContext {
-  shopId: string;
-  accessToken?: string;
-  /** Legacy field kept so in-flight pre-OAuth backfill contexts can still finish. */
-  apiKey?: string;
+  listingSourceId: string;
+  accessToken: string;
   apiBaseUrl: string;
-  primaryLocale: string;
-  currencyCode: string;
+  primaryLocale?: string;
+  currencyCode: CurrencyData;
   shopDomain: string;
-  /** Legacy field from early OAuth backfill contexts; new jobs load the offline session. */
-  shopifyAccessToken?: string;
+
   bulkOperationId: string;
   createdAt: string;
 }
@@ -162,6 +154,11 @@ export interface BackfillContext {
 export interface ShopMetadata {
   primaryLocale?: string;
   currencyCode?: string;
+}
+
+export interface ValidatedShopifyMetadata {
+  primaryLocale?: string;
+  currencyCode: CurrencyData;
 }
 
 interface GraphqlResponse {
@@ -184,9 +181,10 @@ export interface ShopifyAdminGraphqlClient {
 export interface BulkJsonlProduct {
   id: string;
   title: string;
-  descriptionHtml: string;
+  handle: string;
   status: string;
-  totalInventory: number | null;
+  totalInventory: number;
+  tracksInventory: boolean;
   onlineStoreUrl: string | null;
 }
 
@@ -256,23 +254,12 @@ export function extractShopifyNumericId(gid: string): string {
   return parts[parts.length - 1];
 }
 
-export function mapShopifyStatus(
-  status: string,
-  totalInventory: number | null,
-): PutProductData["state"] & string {
-  switch (status) {
-    case "ACTIVE":
-      if (totalInventory !== null && totalInventory <= 0) {
-        return "SOLD";
-      }
-      return "AVAILABLE";
-    case "DRAFT":
-      return "LISTED";
-    case "ARCHIVED":
-      return "REMOVED";
-    default:
-      return "UNKNOWN";
-  }
+export function mapShopifyAvailability(
+  tracksInventory: boolean,
+  totalInventory: number,
+): ListingAvailabilityData | null {
+  if (!tracksInventory) return null;
+  return totalInventory > 0 ? "IN_STOCK" : "OUT_OF_STOCK";
 }
 
 export function mapShopifyLocaleToLanguage(
@@ -286,7 +273,7 @@ export function mapShopifyLocaleToLanguage(
   return SHOPIFY_LOCALE_TO_LANGUAGE[base];
 }
 
-export function resolveLanguage(shopifyLocale: string): LanguageData {
+export function resolveLanguage(shopifyLocale?: string): LanguageData {
   return mapShopifyLocaleToLanguage(shopifyLocale) ?? "en";
 }
 
@@ -305,6 +292,18 @@ export function mapShopifyCurrencyCode(
   return normalizedCurrencyCode;
 }
 
+export function requireSupportedShopifyCurrency(
+  currencyCode?: string | null,
+): CurrencyData {
+  const currency = mapShopifyCurrencyCode(currencyCode);
+  if (!currency) {
+    throw new Error(
+      `Unsupported or missing Shopify currency: ${currencyCode ?? "missing"}`,
+    );
+  }
+  return currency;
+}
+
 export function normalizeShopifyDomain(
   shopDomain?: string | null,
 ): string | undefined {
@@ -317,87 +316,97 @@ export function normalizeShopifyDomain(
   return normalizedShopDomain;
 }
 
-export function buildShopMetadataPatch(
+export function buildShopifyIngestionConfiguration(
   metadata: ShopMetadata,
-  shopDomain?: string | null,
-): PatchShopData | null {
-  const patch: PatchShopData = {};
-  const shopifyLanguage = mapShopifyLocaleToLanguage(metadata.primaryLocale);
-  const shopifyCurrency = mapShopifyCurrencyCode(metadata.currencyCode);
-  const shopifyDomain = normalizeShopifyDomain(shopDomain);
-
-  if (shopifyDomain) {
-    patch.shopifyDomain = shopifyDomain;
+  shopDomain: string,
+): PutShopifyListingSourceIngestionConfigurationData {
+  const domain = normalizeShopifyDomain(shopDomain);
+  if (!domain || !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(domain)) {
+    throw new Error("Invalid Shopify domain for ingestion configuration");
   }
-
-  if (shopifyLanguage) {
-    patch.shopifyLanguage = shopifyLanguage;
-  }
-
-  if (shopifyCurrency) {
-    patch.shopifyCurrency = shopifyCurrency;
-  }
-
-  return Object.keys(patch).length > 0 ? patch : null;
-}
-
-export function htmlToMarkdown(html: string): string {
-  if (!html) {
-    return "";
-  }
-
-  return markdownConverter
-    .translate(html)
-    .replace(/\u00a0/g, " ")
-    .trim();
+  return {
+    domain,
+    currency: requireSupportedShopifyCurrency(metadata.currencyCode),
+    ...(mapShopifyLocaleToLanguage(metadata.primaryLocale) && {
+      language: mapShopifyLocaleToLanguage(metadata.primaryLocale),
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Product transformation
 // ---------------------------------------------------------------------------
 
+// Shopify returns decimal price strings. Convert via integer arithmetic, never float rounding.
+function toMinorUnits(price: string, exponent: number): number | null {
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(price);
+  if (!match) return null;
+  const fraction = match[2] ?? "";
+  if (fraction.length > exponent && /[1-9]/.test(fraction.slice(exponent)))
+    return null;
+  const amount =
+    BigInt(match[1]) * 10n ** BigInt(exponent) +
+    BigInt((fraction.slice(0, exponent) || "").padEnd(exponent, "0") || "0");
+  return amount <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(amount) : null;
+}
+
 export function transformProduct(
   product: BulkJsonlProduct,
   images: string[],
   variantPrice: string | null,
-  locale: string,
+  locale: string | undefined,
   currencyCode: string,
   shopDomain: string,
-): PutProductData {
-  const shopsProductId = extractShopifyNumericId(product.id);
-  const language = resolveLanguage(locale);
+): UpsertProductListingData {
+  const currency = mapShopifyCurrencyCode(currencyCode);
+  const amount =
+    currency && variantPrice !== null
+      ? toMinorUnits(variantPrice, currency === "JPY" ? 0 : 2)
+      : null;
+  const handle = product.handle?.trim();
+  const url =
+    product.onlineStoreUrl ??
+    (handle
+      ? `https://${normalizeShopifyDomain(shopDomain)}/products/${encodeURIComponent(handle)}`
+      : null);
+  if (!url)
+    throw new Error(`Missing storefront URL for Shopify product ${product.id}`);
 
-  const result: PutProductData = {
-    shopsProductId,
-    title: { text: product.title, language },
-    description: {
-      text: htmlToMarkdown(product.descriptionHtml),
-      language,
-    },
-    state: mapShopifyStatus(product.status, product.totalInventory),
-    url:
-      product.onlineStoreUrl ??
-      `https://${shopDomain}/products/${shopsProductId}`,
+  return {
+    sourceListingId: extractShopifyNumericId(product.id),
+    title: { text: product.title, language: resolveLanguage(locale) },
+    price:
+      currency && amount !== null
+        ? { type: "MONETARY", currency, amount }
+        : null,
+    availability: mapShopifyAvailability(
+      product.tracksInventory,
+      product.totalInventory,
+    ),
+    url,
     images,
   };
+}
 
-  if (variantPrice) {
-    const amount = Math.round(Number.parseFloat(variantPrice) * 100);
-    if (
-      !Number.isNaN(amount) &&
-      amount >= 0 &&
-      SUPPORTED_CURRENCIES.has(currencyCode as CurrencyData)
-    ) {
-      result.price = {
-        amount,
-        currency: currencyCode as PutProductData["price"] &
-          object &
-          { currency: string }["currency"],
-      };
-    }
+export function transformWithdrawal(
+  product: BulkJsonlProduct,
+): WithdrawProductListingData {
+  return { sourceListingId: extractShopifyNumericId(product.id) };
+}
+
+type ShopifyBackfillAction = "upsert" | "withdraw" | "ignore";
+
+function classifyShopifyBackfillAction(status: string): ShopifyBackfillAction {
+  switch (status) {
+    case "ACTIVE":
+      return "upsert";
+    case "DRAFT":
+    case "ARCHIVED":
+      return "withdraw";
+    case "UNLISTED":
+    default:
+      return "ignore";
   }
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +476,21 @@ export async function loadBackfillContext(
   const raw = await kv.get(backfillContextKey(shop));
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as BackfillContext;
+    const context: unknown = JSON.parse(raw);
+    if (!context || typeof context !== "object") return null;
+    const value = context as Partial<BackfillContext>;
+    return typeof value.listingSourceId === "string" &&
+      isValidListingSourceId(value.listingSourceId) &&
+      typeof value.accessToken === "string" &&
+      typeof value.apiBaseUrl === "string" &&
+      typeof value.shopDomain === "string" &&
+      typeof value.bulkOperationId === "string" &&
+      (value.primaryLocale === undefined ||
+        typeof value.primaryLocale === "string") &&
+      mapShopifyCurrencyCode(value.currencyCode) &&
+      typeof value.createdAt === "string"
+      ? (value as BackfillContext)
+      : null;
   } catch {
     return null;
   }
@@ -614,61 +637,140 @@ export async function fetchBulkOperationResultUrl(
 // Sending products to external API
 // ---------------------------------------------------------------------------
 
-async function sendProductBatch(
-  products: PutProductData[],
-  apiBaseUrl: string,
-  shopId: string,
-  accessToken: string,
-): Promise<string[]> {
-  const client = createClient({ baseUrl: apiBaseUrl });
-  const { putPartnerProducts } = await import("./generated/api/sdk.gen");
-
-  const result = await putPartnerProducts({
-    client,
-    body: products,
-    path: { shopId },
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (result.error) {
-    const status = result.response?.status ?? "unknown";
-    throw new Error(`API error ${status}: ${JSON.stringify(result.error)}`);
+export function createBackfillIdempotencyKey(
+  bulkOperationId: string,
+  verb: "put" | "delete",
+  batchIndex: number,
+): string {
+  const operationId = /^gid:\/\/shopify\/BulkOperation\/(\d+)$/.exec(
+    bulkOperationId,
+  )?.[1];
+  if (!operationId || !Number.isSafeInteger(batchIndex) || batchIndex < 0) {
+    throw new Error("Invalid bulk operation ID or batch index");
   }
-
-  return (result.data as string[]) ?? [];
+  const key = `shopify-backfill-${operationId}-${verb}-${batchIndex}`;
+  if (key.length > 128)
+    throw new Error("Bulk operation ID exceeds idempotency key limit");
+  return key;
 }
 
-export async function patchShopMetadata(
+function isBatchReport(
+  value: unknown,
+): value is AsyncProductListingBatchReport {
+  if (!value || typeof value !== "object") return false;
+  const report = value as Partial<AsyncProductListingBatchReport>;
+  return (
+    typeof report.submissionId === "string" &&
+    Number.isInteger(report.acceptedCount) &&
+    Array.isArray(report.failures) &&
+    report.failures.every(
+      (failure) =>
+        Number.isInteger(failure.index) &&
+        typeof failure.retryable === "boolean",
+    )
+  );
+}
+
+function reportFailures(
+  report: AsyncProductListingBatchReport,
+  items: Array<UpsertProductListingData | WithdrawProductListingData>,
+): string[] {
+  if (
+    report.acceptedCount + report.failures.length !== items.length ||
+    report.failures.some(({ index }) => index < 0 || index >= items.length)
+  ) {
+    throw new Error("Invalid async ProductListing admission report");
+  }
+  return report.failures.map(({ index }) => items[index].sourceListingId);
+}
+
+export async function sendProductBatch(
+  items: UpsertProductListingData[] | WithdrawProductListingData[],
   apiBaseUrl: string,
-  shopId: string,
+  listingSourceId: string,
+  accessToken: string,
+  verb: "put" | "delete",
+  idempotencyKey: string,
+): Promise<string[]> {
+  if (items.length > BATCH_SIZE)
+    throw new Error("Async batch exceeds 100 items");
+  const client = createClient({ baseUrl: apiBaseUrl });
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    "Idempotency-Key": idempotencyKey,
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result =
+      verb === "put"
+        ? await putAsyncPartnerProductListings({
+            client,
+            body: items as UpsertProductListingData[],
+            path: { listingSourceId },
+            headers,
+          })
+        : await deleteAsyncPartnerProductListings({
+            client,
+            body: items as WithdrawProductListingData[],
+            path: { listingSourceId },
+            headers,
+          });
+    const report: unknown = result.error ?? result.data;
+    if (isBatchReport(report)) {
+      if (report.failures.some((failure) => failure.retryable) && attempt < 2)
+        continue;
+      return reportFailures(report, items);
+    }
+    // A response-less error may be a timeout after queue admission. Retry only
+    // the identical ordered body with the same key; never compact failed entries.
+    if ((!result.response || result.response.status === 503) && attempt < 2)
+      continue;
+    const status = result.response?.status ?? "transport";
+    throw new Error(`ProductListing admission failed (${status})`);
+  }
+  throw new Error("ProductListing admission retry limit reached");
+}
+
+export async function configureShopifyListingSource(
+  graphqlRequest: GraphqlRequestFn,
+  apiBaseUrl: string,
+  listingSourceId: string,
+  accessToken: string,
+  shopDomain: string,
+): Promise<ValidatedShopifyMetadata> {
+  const metadata = await fetchShopMetadata(graphqlRequest);
+  const validatedMetadata: ValidatedShopifyMetadata = {
+    primaryLocale: metadata.primaryLocale,
+    currencyCode: requireSupportedShopifyCurrency(metadata.currencyCode),
+  };
+  await putShopifyIngestionConfiguration(
+    apiBaseUrl,
+    listingSourceId,
+    accessToken,
+    validatedMetadata,
+    shopDomain,
+  );
+  return validatedMetadata;
+}
+
+export async function putShopifyIngestionConfiguration(
+  apiBaseUrl: string,
+  listingSourceId: string,
   accessToken: string,
   metadata: ShopMetadata,
-  shopDomain?: string,
+  shopDomain: string,
 ): Promise<boolean> {
-  const body = buildShopMetadataPatch(metadata, shopDomain);
-
-  if (!body) {
-    return false;
-  }
-
-  const client = createClient({ baseUrl: apiBaseUrl });
-  const { patchShopById } = await import("./generated/api/sdk.gen");
-  const result = await patchShopById({
-    client,
-    body,
-    path: { shopId },
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+  const result = await putShopifyListingSourceIngestionConfiguration({
+    client: createClient({ baseUrl: apiBaseUrl }),
+    body: buildShopifyIngestionConfiguration(metadata, shopDomain),
+    path: { listingSourceId },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-
-  if (result.error) {
-    const status = result.response?.status ?? "unknown";
-    throw new Error(`API error ${status}: ${JSON.stringify(result.error)}`);
+  if (result.response?.status !== 201 && result.response?.status !== 204) {
+    throw new Error(
+      `Shopify ingestion configuration failed (${result.response?.status ?? "transport"})`,
+    );
   }
-
   return true;
 }
 
@@ -692,45 +794,68 @@ export async function processBackfillResults(
     return { total: 0, failures: [] };
   }
 
-  const transformed: PutProductData[] = products.map((product) =>
-    transformProduct(
-      product,
-      images.get(product.id) ?? [],
-      variants.get(product.id) ?? null,
-      context.primaryLocale,
-      context.currencyCode,
-      context.shopDomain,
-    ),
-  );
-
+  const upserts: UpsertProductListingData[] = [];
+  const withdrawals: WithdrawProductListingData[] = [];
   const allFailures: string[] = [];
-  const accessToken = context.accessToken ?? context.apiKey;
-
-  if (!accessToken) {
-    throw new Error("Missing Aura Historia access token for backfill context");
-  }
-
-  for (let i = 0; i < transformed.length; i += BATCH_SIZE) {
-    const batch = transformed.slice(i, i + BATCH_SIZE);
-    try {
-      const failures = await sendProductBatch(
-        batch,
-        context.apiBaseUrl,
-        context.shopId,
-        accessToken,
-      );
-      allFailures.push(...failures);
-    } catch (error) {
-      const ids = batch.map((p) => p.shopsProductId);
-      allFailures.push(...ids);
-      console.error(
-        `Backfill batch [${i}..${i + batch.length - 1}] failed:`,
-        error,
-      );
+  for (const product of products) {
+    const action = classifyShopifyBackfillAction(product.status);
+    if (action === "withdraw") {
+      withdrawals.push(transformWithdrawal(product));
+    } else if (action === "upsert") {
+      try {
+        upserts.push(
+          transformProduct(
+            product,
+            images.get(product.id) ?? [],
+            variants.get(product.id) ?? null,
+            context.primaryLocale,
+            context.currencyCode,
+            context.shopDomain,
+          ),
+        );
+      } catch (error) {
+        allFailures.push(extractShopifyNumericId(product.id));
+        console.error(
+          `Cannot map Shopify product ${product.id} for backfill:`,
+          error,
+        );
+      }
     }
   }
 
-  return { total: transformed.length, failures: allFailures };
+  async function submitBatches(
+    items: UpsertProductListingData[] | WithdrawProductListingData[],
+    verb: "put" | "delete",
+  ) {
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+      try {
+        allFailures.push(
+          ...(await sendProductBatch(
+            batch,
+            context.apiBaseUrl,
+            context.listingSourceId,
+            context.accessToken,
+            verb,
+            createBackfillIdempotencyKey(
+              context.bulkOperationId,
+              verb,
+              i / BATCH_SIZE,
+            ),
+          )),
+        );
+      } catch (error) {
+        allFailures.push(...batch.map((item) => item.sourceListingId));
+        console.error(
+          `Backfill ${verb} batch ${i / BATCH_SIZE} failed:`,
+          error,
+        );
+      }
+    }
+  }
+  await submitBatches(upserts, "put");
+  await submitBatches(withdrawals, "delete");
+  return { total: products.length, failures: allFailures };
 }
 
 // ---------------------------------------------------------------------------
@@ -747,41 +872,20 @@ export async function triggerBackfill(
     ) => Promise<void>;
   },
   shopDomain: string,
-  shopId: string,
+  listingSourceId: string,
   accessToken: string,
   apiBaseUrl: string,
+  validatedMetadata: ValidatedShopifyMetadata,
 ): Promise<boolean> {
-  let patchMetadataPromise: Promise<void> | undefined;
-
   try {
-    const metadata = await fetchShopMetadata(graphqlRequest);
-    patchMetadataPromise = patchShopMetadata(
-      apiBaseUrl,
-      shopId,
-      accessToken,
-      metadata,
-      shopDomain,
-    )
-      .then((patched) => {
-        if (patched) {
-          console.log(`Shop metadata patched for ${shopDomain}`);
-        }
-      })
-      .catch((error) => {
-        console.error(
-          `Failed to patch shop metadata for ${shopDomain}:`,
-          error,
-        );
-      });
-
     const bulkOperationId = await submitBulkOperation(graphqlRequest);
 
     await storeBackfillContext(kv, shopDomain, {
-      shopId,
+      listingSourceId,
       accessToken,
       apiBaseUrl,
-      primaryLocale: metadata.primaryLocale ?? "en",
-      currencyCode: metadata.currencyCode ?? "EUR",
+      primaryLocale: validatedMetadata.primaryLocale,
+      currencyCode: validatedMetadata.currencyCode,
       shopDomain,
       bulkOperationId,
       createdAt: new Date().toISOString(),
@@ -792,9 +896,14 @@ export async function triggerBackfill(
     );
     return true;
   } catch (error) {
-    console.error(`Failed to submit backfill for ${shopDomain}:`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `Failed to submit backfill for ${shopDomain}:`,
+      message
+        .replaceAll(accessToken, "[redacted]")
+        .replace(/\s+/g, " ")
+        .slice(0, 180),
+    );
     return false;
-  } finally {
-    await patchMetadataPromise;
   }
 }

@@ -97,19 +97,20 @@ The default command runs `shopify app dev --use-localhost`.
 Create local runtime configuration for the Aura Historia OAuth client. The app requires:
 
 ```bash
-AURA_HISTORIA_OAUTH_CLIENT_ID=
+# PLACEHOLDER: replace with the canonical oc_... ID registered in the stage backend.
+AURA_HISTORIA_OAUTH_CLIENT_ID=oc_REPLACE_WITH_STAGE_OAUTH_CLIENT_ID
 AURA_HISTORIA_OAUTH_CLIENT_SECRET=
 AURA_HISTORIA_OAUTH_ENV=dev
 ```
 
-These optional variables override the built-in environment defaults when needed:
+These values override the built-in environment defaults when needed. The committed production `wrangler.jsonc` also contains an intentionally invalid placeholder client ID: replace it with the registered production `oc_...` ID before deployment. The stage and production OAuth clients must each allow `listing-sources:write product-listings:write` and their respective Shopify callback redirect URI. OAuth refuses to start with either placeholder. The backend development API base URL is `https://api.stage.aura-historia.com` (production: `https://api.aura-historia.com`). For the Shopify connection, request the Aura Historia OAuth scopes `listing-sources:write product-listings:write` (separate from the Shopify access scopes below). Set `AURA_HISTORIA_API_BASE_URL` and `AURA_HISTORIA_OAUTH_SCOPE` to match the target backend and registered OAuth client:
 
 ```bash
-AURA_HISTORIA_API_BASE_URL=
+AURA_HISTORIA_API_BASE_URL=https://api.stage.aura-historia.com
 AURA_HISTORIA_OAUTH_AUTHORIZE_URL=
 AURA_HISTORIA_OAUTH_TOKEN_URL=
 AURA_HISTORIA_OAUTH_REDIRECT_URI=
-AURA_HISTORIA_OAUTH_SCOPE=
+AURA_HISTORIA_OAUTH_SCOPE=listing-sources:write product-listings:write
 ```
 
 > **Webhook testing:** Shopify localhost mode cannot call your machine directly. Product and compliance events continue to use EventBridge, while `app/uninstalled` remains pinned to the deployed HTTPS app URL. For direct local testing of the backfill completion webhook, use tunnel mode:
