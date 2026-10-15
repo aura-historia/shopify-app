@@ -26,7 +26,7 @@ export interface CloudflareShopifyEnv {
   AURA_HISTORIA_OAUTH_SCOPE?: string;
 }
 
-const apiVersion = ApiVersion.April26;
+const apiVersion = ApiVersion.October26;
 const shopifyCache = new Map<string, ReturnType<typeof shopifyApp>>();
 
 function getEnv(context: AppLoadContext): CloudflareShopifyEnv {
