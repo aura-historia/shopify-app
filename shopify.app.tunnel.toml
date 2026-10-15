@@ -13,7 +13,7 @@ optional_scopes = []
 use_legacy_install_flow = false
 
 [webhooks]
-api_version = "2026-04"
+api_version = "2026-10"
 
   [[webhooks.subscriptions]]
   topics = ["products/create", "products/update", "products/delete"]

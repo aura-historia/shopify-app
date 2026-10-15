@@ -14,8 +14,8 @@ const appConfig = readFileSync(
 
 describe("shopify runtime configuration", () => {
   it("keeps the Shopify API version aligned between runtime and app config", () => {
-    assert.match(appConfig, /api_version = "2026-04"/);
-    assert.match(shopifyServer, /const apiVersion = ApiVersion\.April26;/);
+    assert.match(appConfig, /api_version = "2026-10"/);
+    assert.match(shopifyServer, /const apiVersion = ApiVersion\.October26;/);
   });
 
   it("keeps the auth path prefix on /auth", () => {
