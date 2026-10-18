@@ -19,6 +19,14 @@ api_version = "2026-10"
   uri = "arn:aws:events:eu-central-1::event-source/aws.partner/shopify.com/359227195393/aura-historia-backend-prod"
 
   [[webhooks.subscriptions]]
+  topics = ["profiles/create", "profiles/update", "profiles/delete"]
+  uri = "https://partner-connect.aura-historia.com/webhooks/shipping"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/scopes_update"]
+  uri = "https://partner-connect.aura-historia.com/webhooks/shipping"
+
+  [[webhooks.subscriptions]]
   topics = ["app/uninstalled"]
   uri = "https://partner-connect.aura-historia.com/webhooks/app/uninstalled"
 

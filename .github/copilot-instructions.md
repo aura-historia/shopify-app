@@ -10,7 +10,7 @@
 
 - Keep the app focused on authentication, the embedded app shell, KV session storage, initial catalog backfill, advertised shipping imports, and uninstall cleanup.
 - Product webhooks and compliance webhooks are declared in `shopify.app.toml`.
-- Uninstall and bulk-operation completion webhooks are processed directly by this app. Product and compliance events use EventBridge.
+- Uninstall, bulk-operation completion, shipping profile and scope-change webhooks are processed directly by this app. Product and compliance events use EventBridge.
 - Shipping acquisition, mapping and publication share the implementation in `app/shipping`; per-shop Durable Objects coordinate offline Shopify access for catalog and shipping. Keep provider credentials inside the app's protected sessions.
 - Avoid adding demo pages, sample mutations, placeholder business logic, or unnecessary UI.
 

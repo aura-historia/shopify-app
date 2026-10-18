@@ -1,49 +1,25 @@
 import type { ActionFunctionArgs } from "react-router";
 import { clearBackfillContext } from "../backfill.server";
-import {
-  getAuraHistoriaOAuthConfig,
-  getMissingAuraHistoriaOAuthConfig,
-  revokeAuraHistoriaAccessToken,
-  summarizeOAuthError,
-} from "../oauth.server";
 import { shopCoordinator } from "../shipping/runtime.server";
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
   loadShopCredentials,
 } from "../shop-credentials.server";
-import { getShopify } from "../shopify.server";
+import { getShopifyWebhook } from "../shopify.server";
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
-  const shopify = getShopify(context);
+  const shopify = getShopifyWebhook(context);
   const { shop, topic } = await shopify.authenticate.webhook(request);
   const credentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     shop,
   );
 
-  if (credentials) {
-    const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
-    const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
-
-    if (missingConfig.length === 0) {
-      try {
-        await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
-      } catch (error) {
-        console.warn("Failed to revoke Aura Historia access on uninstall", {
-          shop,
-          error: summarizeOAuthError(error),
-        });
-      }
-    } else {
-      console.warn("Skipped Aura Historia token revocation on uninstall", {
-        shop,
-        missingConfig,
-      });
-    }
-  }
-
-  await shopCoordinator(context, shop).cancel(true);
+  if (topic !== "APP_UNINSTALLED") return new Response(null, { status: 400 });
+  // Fence first and durably admit owned withdrawals. The worker resolves Aura
+  // credentials from protected cleanup storage after Shopify sessions are gone.
+  await shopCoordinator(context, shop).disconnectShipping(shop, true);
   await clearShopCredentials(context.cloudflare.env.KV, shop);
   await clearShopCredentialsDisconnected(context.cloudflare.env.KV, shop);
   await clearBackfillContext(context.cloudflare.env.KV, shop);

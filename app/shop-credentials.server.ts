@@ -10,6 +10,7 @@ export interface ShopCredentialsValues {
 
 export interface ShopCredentialsRecord extends ShopCredentialsValues {
   updatedAt: string;
+  connectionId?: string;
 }
 
 export interface PublicShopCredentialsRecord {
@@ -40,6 +41,8 @@ function isShopCredentialsRecord(
       isValidListingSourceId(value.listingSourceId) &&
       typeof value.accessToken === "string" &&
       typeof value.updatedAt === "string" &&
+      (value.connectionId === undefined ||
+        typeof value.connectionId === "string") &&
       (value.shopifyStoreName === undefined ||
         typeof value.shopifyStoreName === "string") &&
       (value.tokenType === undefined || typeof value.tokenType === "string") &&
@@ -103,6 +106,7 @@ export async function saveShopCredentials(
     ...values,
     tokenType: values.tokenType ?? "BEARER",
     updatedAt: new Date().toISOString(),
+    connectionId: crypto.randomUUID(),
   };
 
   await kv.put(getShopCredentialsStorageKey(shop), JSON.stringify(record));

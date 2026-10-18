@@ -16,6 +16,7 @@ import { profileObjectKey, SHIPPING_LIMITS } from "../app/shipping/model";
 import {
   addConfirmedRemovals,
   beginPublication,
+  beginWithdrawal,
   publishShippingStep,
 } from "../app/shipping/publisher.server";
 import { fixture, fixtureGraphql } from "./helpers/shipping-fixtures";
@@ -357,6 +358,71 @@ describe("Shopify shipping acquisition and canonical mapping", () => {
 });
 
 describe("typed shipping publication", () => {
+  it("requires a valid empty profile list before forgetting an ambiguous create during cleanup", async () => {
+    const objectKey = "shopify:delivery-profile:1";
+    for (const response of [
+      () => Response.json({}),
+      () => Response.json(null),
+      () => Response.json([{}]),
+      () => Response.json([], { status: 202 }),
+      () => new Response(null, { status: 204 }),
+    ]) {
+      const state = beginWithdrawal(
+        {
+          [objectKey]: {
+            id: "",
+            providerId: "gid://shopify/DeliveryProfile/1",
+          },
+        },
+        [],
+        "cleanup",
+        90,
+        fixture.acquiredAt,
+      );
+      state.work = state.work.filter((work) => work.resource.kind === "retire");
+      await publishShippingStep(state, context, 0, async () => response());
+      assert.equal(state.work[0].done, undefined);
+      assert.ok(state.mappings[objectKey]);
+      assert.equal(state.lastError, "AURA_RESPONSE_INVALID");
+      await publishShippingStep(state, context, 60_000, async () =>
+        Response.json([]),
+      );
+      assert.equal(state.work[0].done, true);
+      assert.equal(state.mappings[objectKey], undefined);
+    }
+  });
+
+  it("uses contract-valid owned withdrawals without observing or clearing manual overrides", async () => {
+    const state = beginWithdrawal(
+      {
+        "shopify:delivery-profile:1": {
+          id: profileId,
+          providerId: "gid://shopify/DeliveryProfile/1",
+        },
+      },
+      ["101"],
+      "withdrawal",
+      90,
+      fixture.acquiredAt,
+    );
+    const mock = auraMock();
+    await finish(state, mock);
+    const writes = mock.calls.filter((call) => call.body);
+    assert.equal(writes.length, 4);
+    for (const write of writes) {
+      const schema = write.path.endsWith("delivery")
+        ? "ProductListingDeliveryCommandData"
+        : write.path.endsWith("shipping-default")
+          ? "ClearShippingDefaultData"
+          : "ShippingProfileLifecycleData";
+      matchesContract(schema, write.body);
+      assert.doesNotMatch(write.raw, /"observation"/);
+      if (write.path.endsWith("delivery")) {
+        assert.match(write.raw, /"shipping":\{"state":"UNCHANGED"\}/);
+        assert.match(write.raw, /"collection":\{"state":"UNCHANGED"\}/);
+      }
+    }
+  });
   it("bounds repeated identity conflicts when collection reads cannot resolve the profile", async () => {
     const state = publication();
     state.work = state.work.slice(0, 1);

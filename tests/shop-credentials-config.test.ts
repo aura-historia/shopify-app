@@ -247,7 +247,7 @@ describe("shop OAuth credentials configuration", () => {
 
   it("clears app-owned Aura Historia connection data on uninstall", () => {
     assert.ok(uninstallWebhookRoute.includes("loadShopCredentials"));
-    assert.ok(uninstallWebhookRoute.includes("revokeAuraHistoriaAccessToken"));
+    assert.ok(uninstallWebhookRoute.includes("disconnectShipping(shop, true)"));
     assert.ok(uninstallWebhookRoute.includes("clearShopCredentials"));
     assert.ok(
       uninstallWebhookRoute.includes("clearShopCredentialsDisconnected"),

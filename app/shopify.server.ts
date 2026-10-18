@@ -70,9 +70,16 @@ export function getShopify(context: AppLoadContext) {
   return getShopifyForEnv(getEnv(context));
 }
 
-export function getShopifyForEnv(env: CloudflareShopifyEnv) {
+export function getShopifyWebhook(context: AppLoadContext) {
+  return getShopifyForEnv(getEnv(context), true);
+}
+
+export function getShopifyForEnv(
+  env: CloudflareShopifyEnv,
+  webhookOnly = false,
+) {
   const config = getResolvedConfig(env);
-  const cacheKey = getCacheKey(env);
+  const cacheKey = `${getCacheKey(env)}|${webhookOnly}`;
   let bindingCache = shopifyCache.get(env.KV);
   if (!bindingCache) {
     bindingCache = new Map();
@@ -94,7 +101,10 @@ export function getShopifyForEnv(env: CloudflareShopifyEnv) {
     sessionStorage: new KVSessionStorage(env.KV),
     distribution: AppDistribution.AppStore,
     future: {
-      expiringOfflineAccessTokens: true,
+      // authenticate.webhook normally refreshes expiring offline access too.
+      // HMAC authentication needs only the stored installation. All job token
+      // refresh belongs to the shop coordinator's serialized GraphQL path.
+      expiringOfflineAccessTokens: !webhookOnly,
     },
   });
 

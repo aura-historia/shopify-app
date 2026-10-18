@@ -9,6 +9,55 @@ const appConfig = readFileSync(
 );
 
 describe("shopify.app.toml", () => {
+  it("delivers all profile hints and scope changes to the app in every environment", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "./fixtures/shopify-shipping-webhooks-2026-10.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    for (const name of [
+      "shopify.app.toml",
+      "shopify.app.prod.toml",
+      "shopify.app.tunnel.toml",
+    ]) {
+      const config = readFileSync(resolve(process.cwd(), name), "utf8");
+      assert.match(config, new RegExp(`api_version = "${fixture.apiVersion}"`));
+      const blocks = config.split("[[webhooks.subscriptions]]");
+      for (const topic of [...fixture.topics, "app/scopes_update"]) {
+        const subscriptions = blocks.filter((block) =>
+          block.includes(`"${topic}"`),
+        );
+        assert.equal(subscriptions.length, 1);
+        const destination = name.includes("tunnel")
+          ? "/webhooks/shipping"
+          : "https://partner-connect.aura-historia.com/webhooks/shipping";
+        assert.ok(subscriptions[0].includes(`uri = "${destination}"`));
+      }
+      for (const topic of [
+        "products/create",
+        "products/update",
+        "products/delete",
+        "customers/data_request",
+        "customers/redact",
+        "shop/redact",
+      ]) {
+        const subscription = blocks.find((block) =>
+          block.includes(`"${topic}"`),
+        );
+        assert.ok(subscription);
+        assert.ok(subscription.includes('uri = "arn:aws:events:'));
+        assert.ok(
+          subscription.includes(
+            name.includes("prod") ? "backend-prod" : "backend-dev",
+          ),
+        );
+      }
+    }
+  });
   it("requests shipping access only through optional consent in every environment", () => {
     for (const path of [
       "shopify.app.toml",

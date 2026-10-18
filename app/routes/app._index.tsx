@@ -10,7 +10,6 @@ import {
   getAuraHistoriaApiBaseUrl,
   getAuraHistoriaOAuthConfig,
   getMissingAuraHistoriaOAuthConfig,
-  revokeAuraHistoriaAccessToken,
   summarizeOAuthError,
 } from "../oauth.server";
 import {
@@ -179,9 +178,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const backfill = url.searchParams.get("backfill");
 
   return {
-    shipping: credentials
-      ? await shopCoordinator(context, session.shop).status()
-      : null,
+    shipping: await shopCoordinator(context, session.shop).status(),
     credentials: credentials
       ? toPublicShopCredentialsRecord(credentials)
       : null,
@@ -283,28 +280,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     return redirect(`/app?${redirectParams.toString()}`);
   }
 
-  const credentials = await loadShopCredentials(
-    context.cloudflare.env.KV,
-    session.shop,
-  );
-
-  if (credentials) {
-    const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
-    const missingConfig = getMissingAuraHistoriaOAuthConfig(config);
-
-    if (missingConfig.length === 0) {
-      try {
-        await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
-      } catch (error) {
-        console.warn("Failed to revoke Aura Historia access on disconnect", {
-          shop: session.shop,
-          error: summarizeOAuthError(error),
-        });
-      }
-    }
-  }
-
-  await shopCoordinator(context, session.shop).cancel();
+  await shopCoordinator(context, session.shop).disconnectShipping(session.shop);
   await clearShopCredentials(context.cloudflare.env.KV, session.shop);
   await markShopCredentialsDisconnected(
     context.cloudflare.env.KV,
@@ -422,8 +398,9 @@ export default function AppIndex() {
           )}
           <p className={styles.cardBody}>
             Shipping access is optional. Grant read-only shipping access, then
-            import your current settings. Product synchronization continues
-            independently.
+            import your current settings. Profile changes refresh automatically;
+            periodic checks repair missed changes. Product synchronization
+            continues independently.
           </p>
           <div className={styles.buttonRow}>
             {integration.shippingQueueError && (
@@ -464,6 +441,24 @@ export default function AppIndex() {
           </div>
         </section>
       )}
+
+      {shipping?.cleanup && (
+        <p className={styles.cardBody}>
+          {shipping.cleanup === "pending"
+            ? "Shipping synchronization has stopped for the previous connection. Removal of its imported assertions is pending."
+            : shipping.cleanup === "committed"
+              ? "Removal of the previous connection's owned shipping assertions committed. Manual edits were preserved."
+              : "Shipping synchronization has stopped for the previous connection. Removal could not be confirmed. Prior imported terms may still be available; reconnect and import again or contact support to resolve them."}
+        </p>
+      )}
+      {!isConnected &&
+        shipping?.cleanup === "committed" &&
+        !shipping.tokenRevoked && (
+          <p className={styles.cardBody}>
+            Aura Historia authorization revocation could not be confirmed.
+            Contact support to review the remaining access.
+          </p>
+        )}
 
       <section className={isConnected ? styles.panel : styles.panelMuted}>
         <h2 className={styles.cardTitle}>Aura Historia sales channel status</h2>
