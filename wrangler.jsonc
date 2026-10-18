@@ -6,6 +6,14 @@
     "enabled": true
   },
   "main": "workers/app.ts",
+  "durable_objects": {
+    "bindings": [
+      { "name": "SHOP_COORDINATOR", "class_name": "ShopCoordinator" }
+    ]
+  },
+  "migrations": [
+    { "tag": "shop-coordinator-v1", "new_sqlite_classes": ["ShopCoordinator"] }
+  ],
   "assets": {
     "directory": "build/client"
   },
@@ -22,7 +30,7 @@
     "SCOPES": "read_products,read_locales",
     "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com",
     "AURA_HISTORIA_OAUTH_ENV": "prod",
-    "AURA_HISTORIA_OAUTH_SCOPE": "listing-sources:write product-listings:write",
+    "AURA_HISTORIA_OAUTH_SCOPE": "listing-sources:read listing-sources:write product-listings:read product-listings:write",
     // PLACEHOLDER: replace with the registered production oc_... OAuth client ID before deployment.
     // This intentionally invalid value prevents OAuth from starting until configured.
     "AURA_HISTORIA_OAUTH_CLIENT_ID": "oc_REPLACE_WITH_PRODUCTION_OAUTH_CLIENT_ID"

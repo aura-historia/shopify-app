@@ -24,7 +24,7 @@
 
 **Aura Historia Partner Connect** is a public, embedded Shopify sales-channel app. It lets approved merchants connect their shops to Aura Historia, makes product discovery possible on Aura Historia, and returns shoppers to the merchant’s Shopify store for checkout.
 
-The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, and uninstall cleanup. Amazon EventBridge routing and downstream catalog consumers are maintained separately.
+The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, advertised shipping imports, and uninstall cleanup. Amazon EventBridge routing and downstream catalog consumers are maintained separately.
 
 | Shopify | Aura Historia |
 | --- | --- |
@@ -56,6 +56,8 @@ flowchart LR
 - Shopify authentication, Aura Historia OAuth, and connection state
 - Cloudflare Worker deployment and Cloudflare KV session storage
 - Initial product backfill orchestration
+- Server-side shipping acquisition, typed mapping and resumable publication
+- A per-shop Durable Object coordinating offline Shopify access and shipping jobs
 - Shopify sales-channel configuration in `extensions/channel-config`
 - Uninstall cleanup at `app/routes/webhooks.app.uninstalled.tsx`
 
@@ -103,14 +105,14 @@ AURA_HISTORIA_OAUTH_CLIENT_SECRET=
 AURA_HISTORIA_OAUTH_ENV=dev
 ```
 
-These values override the built-in environment defaults when needed. The committed production `wrangler.jsonc` also contains an intentionally invalid placeholder client ID: replace it with the registered production `oc_...` ID before deployment. The stage and production OAuth clients must each allow `listing-sources:write product-listings:write` and their respective Shopify callback redirect URI. OAuth refuses to start with either placeholder. The backend development API base URL is `https://api.stage.aura-historia.com` (production: `https://api.aura-historia.com`). For the Shopify connection, request the Aura Historia OAuth scopes `listing-sources:write product-listings:write` (separate from the Shopify access scopes below). Set `AURA_HISTORIA_API_BASE_URL` and `AURA_HISTORIA_OAUTH_SCOPE` to match the target backend and registered OAuth client:
+These values override the built-in environment defaults when needed. The committed production `wrangler.jsonc` also contains an intentionally invalid placeholder client ID: replace it with the registered production `oc_...` ID before deployment. The stage and production OAuth clients must each allow `listing-sources:read listing-sources:write product-listings:read product-listings:write` and their respective Shopify callback redirect URI. OAuth refuses to start with either placeholder. The backend development API base URL is `https://api.stage.aura-historia.com` (production: `https://api.aura-historia.com`). For the Shopify connection, request the Aura Historia OAuth scopes `listing-sources:read listing-sources:write product-listings:read product-listings:write` (separate from the Shopify access scopes below). Set `AURA_HISTORIA_API_BASE_URL` and `AURA_HISTORIA_OAUTH_SCOPE` to match the target backend and registered OAuth client:
 
 ```bash
 AURA_HISTORIA_API_BASE_URL=https://api.stage.aura-historia.com
 AURA_HISTORIA_OAUTH_AUTHORIZE_URL=
 AURA_HISTORIA_OAUTH_TOKEN_URL=
 AURA_HISTORIA_OAUTH_REDIRECT_URI=
-AURA_HISTORIA_OAUTH_SCOPE=listing-sources:write product-listings:write
+AURA_HISTORIA_OAUTH_SCOPE=listing-sources:read listing-sources:write product-listings:read product-listings:write
 ```
 
 > **Webhook testing:** Shopify localhost mode cannot call your machine directly. Product and compliance events continue to use EventBridge, while `app/uninstalled` remains pinned to the deployed HTTPS app URL. For direct local testing of the backfill completion webhook, use tunnel mode:
@@ -129,7 +131,104 @@ The repository uses separate Shopify configuration files to keep stage-specific 
 | `shopify.app.prod.toml` | Production configuration using the production EventBridge partner source |
 | `shopify.app.tunnel.toml` | Development tunnel mode; exposes the backfill completion endpoint through the active tunnel |
 
-The app requests only `read_products` and `read_locales`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
+The required Shopify scopes are `read_products` and `read_locales`; `read_shipping` is optional and requested from the embedded app for advertised shipping imports. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
+
+## Advertised shipping imports
+
+Initial Aura connection queues a shipping import independently of the catalog backfill.
+The embedded app offers **Grant shipping access** (renewed optional consent) and
+**Import shipping settings** (new acquisition or resume). Existing Aura connections
+need reconnection with the additional `listing-sources:read` and `product-listings:read`
+OAuth permissions. Register those permissions on both OAuth clients before rollout.
+
+Shipping runs in app-owned Durable Object alarms without an open browser. The
+`SHOP_COORDINATOR` binding and `shop-coordinator-v1` SQLite migration are required.
+Catalog and shipping use its serialized offline GraphQL path, which delegates token
+refresh to the existing Shopify SDK and KV sessions. The backend never calls this
+worker, reads its sessions, or receives Shopify credentials.
+
+`app/shipping/acquisition.server.ts`, `mapper.ts`, and `publisher.server.ts` are the
+common S01/S02 implementation. Future profile notifications should call the same
+`requestShipping(shop)` RPC through the authenticated app; they must not publish
+their own snapshots. Work is ordered by the current shop/source binding and an
+increasing durable sequence. Concurrent requests coalesce into a subsequent read.
+Conflicts trigger bounded reacquisition; pending uncertain writes retain their body,
+request key, sequence and original acquisition time across worker restarts. Missing
+catalog listings are retried independently without creating products. Partner-owned
+assertions and explicit clears are protected by backend import ownership checks.
+Reconciliation resolves other uncertain requests before replacing an acquisition.
+Publication stops retrying each record after eight failures; acquisition pauses after
+eight consecutive failures on a page. Exhausted work remains saved. **Import shipping settings**
+resumes those exact pending requests before acquiring the latest settings. GraphQL
+and Aura API calls have a 20-second timeout, and applied status requires a valid
+committed response.
+
+Reads are bounded to 50 records per connection page, 100 profiles, 5,000 products,
+4,000 requests and 4 MB of acquisition state. Every page has a persisted checkpoint.
+The importer traverses all profile items, assigned variants, product variants, zones
+and methods. A final profile/version traversal and product modification checks detect
+observed changes and restart affected acquisition; this is not an atomic Shopify
+snapshot. Failed/incomplete traversals never retire unseen objects. Only a complete
+read can explicitly retire previously mapped, confirmed missing profiles.
+
+The pinned Admin API is **2026-10**. Its published `DeliveryMethodDefinition` schema
+exposes `rateProvider` and `methodConditions`. The [shipping option changelog](https://shopify.dev/changelog/posts/new-apis-to-read-and-write-shipping-options-in-delivery-profile)
+documents the legacy read expansion of every tier and free condition into separate
+methods; all method pages are consumed. A preflight checks the required schema and
+granted scope. `read_assigned_shipping` cannot read the complete shop profile/item
+membership, so it is insufficient. No shipping write, order, customer or checkout
+scope is requested. Any Shopify approval required for `read_shipping` must be
+completed in the Partner Dashboard before enabling consent; denial is reported in
+shipping status and does not fail catalog sync. S02 profile webhook subscriptions
+belong to this app and use the same shipping read permission.
+
+The supported subset is a profile with one origin group, no unrated origins or
+selling-plan applicability, explicit country zones, static rates, minimum
+seller-order value conditions and external carrier/app prices. Money is parsed as
+decimal strings into exact safe minor units; unsupported currencies/precision stop
+publication. All variants must agree before a listing selects one profile. Shopify's
+shop-wide profile applies only to variants explicitly marked as requiring shipping;
+this flag alone does not establish profile membership or shipping eligibility. Mixed,
+incomplete and unsupported membership explicitly suppresses default inheritance.
+Profiles with multiple origin groups or selling plans remain unasserted. Province
+subsets/rest-of-world zones remain unresolved; weight and upper basket constraints
+have no Aura representation and leave the affected service conditional without a
+fixed rate. Shopify's cart/profile/location charge groups have no exact Aura charge
+basis, so static amounts retain a null basis and a capability notice instead of
+claiming a per-item, order or physical-shipment price. Coverage stays partial, and
+external prices stay externally calculated.
+`ShopFeatures.marketDrivenShipping` is detected and reported as a capability gap;
+the legacy profiles do not describe that model. None of these limitations is filled
+with inferred locations, eligibility, taxes, packing, duties or checkout prices.
+
+Status distinguishes queued work, acquisition, publication, partial progress,
+protected partner edits and applied operations. Applied means Aura committed the
+typed write; discovery indexing remains eventual and no shipping quote is promised.
+Use the manual import action to reconcile after resolving permissions, capabilities
+or a bounded failure. S02 ongoing notifications and recovery are tracked separately.
+
+The official generated Aura client is pinned in `openapi-ts.config.ts` to backend
+commit `8f39fcd549ebc49608bb2722bb219e623c6742e2` (B05, PR #2146).
+Run `npm run openapi:generate` to reproduce it; review later contract changes
+explicitly. `tests/fixtures/shipping-contract.json` is the executable contract
+fixture from the same commit. Ordinary typed shipping writes carry `import` metadata
+with `observation: {}` for successful acquisitions, and no expiry/freshness fields.
+Returned assertion evidence uses `verifiedAt`.
+
+### External services and privacy
+
+With merchant consent, Shopify provides shipping profile names/IDs, location-group
+identities, destination areas, advertised methods/conditions/prices and complete
+product/variant membership. Cloudflare stores bounded private job checkpoints,
+resource mappings and immutable pending typed requests. Aura Historia receives only
+the canonical terms, source-scoped membership and acquisition metadata through its
+authorized API. Shipping requests contain no provider domain, token, session, raw
+provider payload, customer data or precise fulfillment address. The separate catalog
+ingestion domain configuration remains necessary for existing EventBridge ingestion.
+Errors exposed by shipping status contain categories, never provider response bodies
+or credentials. Disconnect cancels jobs; uninstall erases shipping state and sessions.
+The linked Aura privacy policy and App Store access disclosure must reflect this
+optional processing when the feature is released.
 
 ## Quality checks
 

@@ -3,7 +3,6 @@ import { Form, redirect, useLoaderData } from "react-router";
 
 import {
   configureShopifyListingSource,
-  createAdminGraphqlRequest,
   triggerBackfill,
 } from "../backfill.server";
 import {
@@ -14,6 +13,16 @@ import {
   revokeAuraHistoriaAccessToken,
   summarizeOAuthError,
 } from "../oauth.server";
+import {
+  offlineGraphql,
+  queueShipping,
+  shopCoordinator,
+} from "../shipping/runtime.server";
+import {
+  SHIPPING_PHASE_LABELS,
+  shippingIssueMessage,
+  shippingLimitationMessage,
+} from "../shipping/status";
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
@@ -30,6 +39,18 @@ import {
 import styles from "../styles/app-home.module.css";
 
 const accessSections = [
+  {
+    title: "Advertised shipping (optional)",
+    description:
+      "Read shipping settings and product membership to publish supported advertised terms to Aura Historia. Cloudflare stores private import progress; precise fulfillment addresses and customer data are not read. Shipping prices are determined at merchant checkout.",
+    items: [
+      {
+        name: "read_shipping",
+        description:
+          "Optional merchant consent. Shipping profiles, destinations, rates and variant membership are translated by this app and sent to Aura Historia.",
+      },
+    ],
+  },
   {
     title: "Products",
     description:
@@ -158,6 +179,9 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const backfill = url.searchParams.get("backfill");
 
   return {
+    shipping: credentials
+      ? await shopCoordinator(context, session.shop).status()
+      : null,
     credentials: credentials
       ? toPublicShopCredentialsRecord(credentials)
       : null,
@@ -173,6 +197,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
       disconnectError: url.searchParams.get("disconnect_error"),
       disconnected: disconnectedByAction,
       backfill,
+      shippingQueueError: url.searchParams.get("shipping") === "not_queued",
       missingConfig,
     },
   };
@@ -180,7 +205,8 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
   const url = new URL(request.url);
-  const { session } = await getShopify(context).authenticate.admin(request);
+  const { session, scopes: scopeManager } =
+    await getShopify(context).authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
   const redirectParams = new URLSearchParams(url.searchParams);
@@ -189,6 +215,22 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   redirectParams.delete("oauth");
   redirectParams.delete("oauth_error");
   redirectParams.delete("backfill");
+  redirectParams.delete("shipping");
+
+  if (intent === "shipping_consent") {
+    await scopeManager.request(["read_shipping"]);
+    return redirect(`/app?${redirectParams.toString()}`);
+  }
+
+  if (intent === "import_shipping") {
+    if (!(await queueShipping(context, session.shop)))
+      redirectParams.set("shipping", "not_queued");
+    return redirect(`/app?${redirectParams.toString()}`);
+  }
+
+  if (intent === "shipping_status") {
+    return redirect(`/app?${redirectParams.toString()}`);
+  }
 
   if (intent === "retry_backfill") {
     const credentials = await loadShopCredentials(
@@ -205,10 +247,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
       const apiBaseUrl =
         getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
         new URL(config.tokenUrl).origin;
-      const { admin } = await getShopify(context).unauthenticated.admin(
-        session.shop,
-      );
-      const graphqlRequest = createAdminGraphqlRequest(admin);
+      const graphqlRequest = offlineGraphql(context, session.shop);
       const metadata = await configureShopifyListingSource(
         graphqlRequest,
         apiBaseUrl,
@@ -265,6 +304,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     }
   }
 
+  await shopCoordinator(context, session.shop).cancel();
   await clearShopCredentials(context.cloudflare.env.KV, session.shop);
   await markShopCredentialsDisconnected(
     context.cloudflare.env.KV,
@@ -278,7 +318,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
 };
 
 export default function AppIndex() {
-  const { credentials, integration, shop, scopes } =
+  const { credentials, integration, shop, scopes, shipping } =
     useLoaderData<typeof loader>();
   const isConnected = integration.status === "connected";
   const isDisconnected = integration.status === "disconnected";
@@ -354,6 +394,76 @@ export default function AppIndex() {
           </section>
         </aside>
       </section>
+
+      {isConnected && (
+        <section className={styles.panel} aria-label="Advertised shipping">
+          <h2 className={styles.cardTitle}>Advertised shipping</h2>
+          <p className={styles.cardBody}>
+            {SHIPPING_PHASE_LABELS[shipping?.phase ?? "idle"]}:{" "}
+            {shipping?.committed ?? 0} operations applied,{" "}
+            {shipping?.pending ?? 0} pending, {shipping?.protected ?? 0} partner
+            edits preserved, {shipping?.failures ?? 0} failed. Applied changes
+            can take time to appear in search. These are advertised terms;
+            checkout determines the shipping quote.
+          </p>
+          {shipping?.error && (
+            <p className={styles.cardBody}>
+              {shippingIssueMessage(shipping.error)}
+            </p>
+          )}
+          {!!shipping?.limitations.length && (
+            <ul className={styles.topicList}>
+              {shipping.limitations.map((code) => (
+                <li key={code} className={styles.cardBody}>
+                  {shippingLimitationMessage(code)}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className={styles.cardBody}>
+            Shipping access is optional. Grant read-only shipping access, then
+            import your current settings. Product synchronization continues
+            independently.
+          </p>
+          <div className={styles.buttonRow}>
+            {integration.shippingQueueError && (
+              <p className={styles.cardBody}>
+                The shipping import could not be queued. Try again.
+              </p>
+            )}
+            <Form method="post">
+              <button
+                className={styles.secondaryButton}
+                type="submit"
+                name="intent"
+                value="shipping_consent"
+              >
+                Grant shipping access
+              </button>
+            </Form>
+            <Form method="post">
+              <button
+                className={styles.secondaryButton}
+                type="submit"
+                name="intent"
+                value="import_shipping"
+              >
+                Import shipping settings
+              </button>
+            </Form>
+            <Form method="post">
+              <button
+                className={styles.secondaryButton}
+                type="submit"
+                name="intent"
+                value="shipping_status"
+              >
+                Refresh shipping status
+              </button>
+            </Form>
+          </div>
+        </section>
+      )}
 
       <section className={isConnected ? styles.panel : styles.panelMuted}>
         <h2 className={styles.cardTitle}>Aura Historia sales channel status</h2>

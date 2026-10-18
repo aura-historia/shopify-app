@@ -9,6 +9,18 @@ const appConfig = readFileSync(
 );
 
 describe("shopify.app.toml", () => {
+  it("requests shipping access only through optional consent in every environment", () => {
+    for (const path of [
+      "shopify.app.toml",
+      "shopify.app.prod.toml",
+      "shopify.app.tunnel.toml",
+    ]) {
+      const config = readFileSync(resolve(process.cwd(), path), "utf8");
+      assert.match(config, /^scopes = "read_products,read_locales"$/m);
+      assert.match(config, /^optional_scopes = \["read_shipping"\]$/m);
+    }
+  });
+
   it("uses the review-facing Aura Historia app name", () => {
     assert.match(appConfig, /name = "Aura Historia Partner Connect"/);
   });

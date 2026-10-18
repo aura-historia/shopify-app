@@ -1,6 +1,8 @@
 import { createRequestHandler } from "react-router";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
 
+export { ShopCoordinator } from "./shop-coordinator";
+
 declare module "react-router" {
   export interface AppLoadContext {
     cloudflare: {
