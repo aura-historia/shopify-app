@@ -15,6 +15,7 @@ export const SHIPPING_LIMITS = {
   products: 5000,
   variants: 64,
   bytes: 4_000_000,
+  retries: 8,
 } as const;
 
 export class ShippingReadError extends Error {
@@ -79,6 +80,8 @@ export interface Product {
   id: string;
   updatedAt: string;
   variants: string[];
+  // Only positive provider facts may satisfy coversAllItems' shippable subset.
+  shippableVariants?: string[];
 }
 export interface Acquisition {
   profiles: Record<string, Profile>;

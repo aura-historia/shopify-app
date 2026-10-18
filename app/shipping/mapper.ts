@@ -240,7 +240,9 @@ export function mapShipping(acquisition: Acquisition): Mapping {
       product.variants.length <= SHIPPING_LIMITS.variants;
     for (const variant of product.variants) {
       const candidates = universal.length
-        ? universal
+        ? product.shippableVariants?.includes(variant)
+          ? universal
+          : []
         : Object.values(acquisition.profiles).filter((profile) =>
             profile.memberships[product.id]?.includes(variant),
           );

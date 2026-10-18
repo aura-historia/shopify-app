@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { describe, it } from "node:test";
+import { mapShipping } from "../app/shipping/mapper";
+import { SHIPPING_LIMITS } from "../app/shipping/model";
+import {
+  beginPublication,
+  type Publication,
+  publishShippingStep,
+} from "../app/shipping/publisher.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
-import { fixtureGraphql } from "./helpers/shipping-fixtures";
+import { fixture, fixtureGraphql } from "./helpers/shipping-fixtures";
 
 // Run the actual coordinator against isolated storage and the platform base
 // class shim. No live Shopify installation, Cloudflare binding or Aura source.
@@ -25,6 +33,16 @@ const credentials = {
   listingSourceId: "ls_01h455vb4pex5vy7enb1p677v1",
   accessToken: "aura-private-token",
   updatedAt: "2026-10-18T08:00:00Z",
+};
+const contract = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/shipping-contract.json", import.meta.url),
+    "utf8",
+  ),
+);
+const auraContext = {
+  ...credentials,
+  apiBaseUrl: "https://aura.invalid",
 };
 
 class MemoryStorage {
@@ -98,7 +116,181 @@ function isolatedRuntime() {
   };
 }
 
+async function seedPublication(
+  runtime: ReturnType<typeof isolatedRuntime>,
+  publication: Publication,
+) {
+  await runtime.storage.put({
+    chunks: 1,
+    "state:0": JSON.stringify({
+      sequence: publication.sequence,
+      source: credentials.listingSourceId,
+      mappings: publication.mappings,
+      job: {
+        shop,
+        listingSourceId: credentials.listingSourceId,
+        credentialVersion: credentials.updatedAt,
+        sequence: publication.sequence,
+        runId: publication.runId,
+        publication,
+        refreshRequested: false,
+        attempts: 0,
+      },
+      status: {
+        phase: "publishing",
+        committed: 0,
+        pending: publication.work.length,
+        protected: 0,
+        failures: 0,
+        limitations: [],
+      },
+    }),
+  });
+}
+
 describe("server-side shipping coordinator", () => {
+  it("resolves another uncertain write before reacquiring after a revision conflict", async () => {
+    const runtime = isolatedRuntime();
+    const publication = beginPublication(
+      mapShipping(fixture),
+      "lost-and-conflict",
+      1,
+      fixture.acquiredAt,
+      {},
+    );
+    const prepare: typeof fetch = async () => Response.json([]);
+    await publishShippingStep(publication, auraContext, 0, prepare);
+    const original = structuredClone(publication.work[0].pending);
+    assert.ok(original);
+    await publishShippingStep(publication, auraContext, 0, async () => {
+      throw new Error("lost response");
+    });
+    await publishShippingStep(publication, auraContext, 1, prepare);
+    await seedPublication(runtime, publication);
+
+    const provider = fixtureGraphql();
+    class FixtureCoordinator extends ShopCoordinator {
+      protected override providerGraphql(
+        _shop: string,
+        query: string,
+        variables: Record<string, unknown> = {},
+      ) {
+        return provider.request(query, variables);
+      }
+    }
+    let coordinator = runtime.create(FixtureCoordinator);
+    const originalFetch = globalThis.fetch;
+    const sent: unknown[] = [];
+    try {
+      globalThis.fetch = async (input) => {
+        sent.push(await (input as Request).json());
+        return Response.json(
+          { error: "SHIPPING_IMPORT_AUTHORITY_STALE" },
+          { status: 409 },
+        );
+      };
+      // Keep the uncertain first request delayed while the second conflicts.
+      publication.work[0].dueAt = Date.now() + 60_000;
+      await seedPublication(runtime, publication);
+      await coordinator.alarm();
+      assert.equal(provider.calls.length, 0);
+      assert.equal(sent.length, 1);
+      // Eviction must retain both the conflict and the first exact request.
+      coordinator = runtime.create(FixtureCoordinator);
+      const realNow = Date.now;
+      Date.now = () => realNow() + 120_000;
+      try {
+        globalThis.fetch = async (input) => {
+          sent.push(await (input as Request).json());
+          return Response.json(contract.committedProfile, { status: 201 });
+        };
+        await coordinator.alarm();
+        assert.deepEqual(sent[1], original.body);
+        assert.equal(provider.calls.length, 0);
+        await coordinator.alarm();
+        assert.equal(provider.calls[0].name, "ShippingPreflight");
+      } finally {
+        Date.now = realNow;
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("pauses exhausted publication and manually resumes the exact persisted request", async () => {
+    const runtime = isolatedRuntime();
+    const publication = beginPublication(
+      mapShipping(fixture),
+      "paused",
+      1,
+      fixture.acquiredAt,
+      {},
+    );
+    publication.work = publication.work.slice(0, 1);
+    await publishShippingStep(publication, auraContext, 0, async () =>
+      Response.json([]),
+    );
+    const original = structuredClone(publication.work[0].pending);
+    assert.ok(original);
+    publication.work[0].attempts = SHIPPING_LIMITS.retries - 1;
+    await seedPublication(runtime, publication);
+    let coordinator = runtime.create(ShopCoordinator);
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () =>
+        Response.json({ error: "temporary" }, { status: 503 });
+      await coordinator.alarm();
+      assert.equal((await coordinator.status()).phase, "blocked");
+      assert.equal(
+        (await coordinator.status()).error,
+        "SHIPPING_RETRY_LIMIT_REACHED",
+      );
+      assert.equal(runtime.storage.alarm, null);
+      coordinator = runtime.create(ShopCoordinator);
+      let sent: unknown;
+      globalThis.fetch = async (input) => {
+        sent = await (input as Request).json();
+        return Response.json(contract.committedProfile, { status: 201 });
+      };
+      await coordinator.requestShipping(shop);
+      await coordinator.alarm();
+      assert.deepEqual(sent, original.body);
+      assert.equal((await coordinator.status()).committed, 1);
+      assert.ok(Number.isFinite(runtime.storage.alarm));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("bounds consecutive acquisition failures and allows a new manual acquisition", async () => {
+    const runtime = isolatedRuntime();
+    const provider = fixtureGraphql();
+    let failing = true;
+    class FixtureCoordinator extends ShopCoordinator {
+      protected override providerGraphql(
+        _shop: string,
+        query: string,
+        variables: Record<string, unknown> = {},
+      ) {
+        if (failing) throw new Error("provider unavailable");
+        return provider.request(query, variables);
+      }
+    }
+    const coordinator = runtime.create(FixtureCoordinator);
+    await coordinator.requestShipping(shop);
+    for (let i = 0; i < SHIPPING_LIMITS.retries; i++) await coordinator.alarm();
+    assert.equal(
+      (await coordinator.status()).error,
+      "SHIPPING_RETRY_LIMIT_REACHED",
+    );
+    assert.equal(runtime.storage.alarm, null);
+    failing = false;
+    await coordinator.requestShipping(shop);
+    await coordinator.alarm();
+    assert.equal((await coordinator.status()).phase, "acquiring");
+    assert.equal((await coordinator.status()).error, undefined);
+  });
+
   it("supersedes an older acquisition through the same ordered refresh entry point", async () => {
     const runtime = isolatedRuntime();
     const provider = fixtureGraphql();

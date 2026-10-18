@@ -25,6 +25,7 @@ import {
   type MappedMembership,
   type MappedProfile,
   type Mapping,
+  SHIPPING_LIMITS,
   SHOPIFY_SHIPPING_INTEGRATION,
 } from "./model";
 
@@ -58,6 +59,7 @@ export interface PublishWork {
   preservedProfile?: boolean;
   attempts: number;
   dueAt: number;
+  exhausted?: boolean;
 }
 export interface Publication {
   runId: string;
@@ -160,19 +162,73 @@ function metadata(
   };
 }
 
+const PUBLIC_ERROR_CODES = new Set([
+  "SHIPPING_IMPORT_OWNERSHIP_CONFLICT",
+  "SHIPPING_IMPORT_IDENTITY_EXISTS",
+  "SHIPPING_IMPORT_DEPENDENCY_MISSING",
+  "SHIPPING_IMPORT_AUTHORITY_STALE",
+  "SHIPPING_IMPORT_REQUEST_CONFLICT",
+  "SHIPPING_IMPORT_OUT_OF_ORDER",
+  "AURA_RESPONSE_INVALID",
+  "FORBIDDEN",
+]);
+
 function errorCode(result: { error?: unknown; response?: Response }) {
   const error = result.error;
-  return error &&
+  const code =
+    error &&
     typeof error === "object" &&
     "error" in error &&
     typeof error.error === "string"
-    ? error.error
-    : error &&
-        typeof error === "object" &&
-        "code" in error &&
-        typeof error.code === "string"
-      ? error.code
-      : `AURA_HTTP_${result.response?.status ?? "TRANSPORT"}`;
+      ? error.error
+      : error &&
+          typeof error === "object" &&
+          "code" in error &&
+          typeof error.code === "string"
+        ? error.code
+        : undefined;
+  // Response bodies are untrusted and may contain private diagnostics. Only
+  // documented categories may enter durable state or the loader response.
+  return code && PUBLIC_ERROR_CODES.has(code)
+    ? code
+    : `AURA_HTTP_${result.response?.status ?? "TRANSPORT"}`;
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function revision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function validProfile(value: unknown) {
+  return (
+    record(value) &&
+    typeof value.shippingProfileId === "string" &&
+    value.shippingProfileId.length > 0 &&
+    revision(value.managementRevision) &&
+    (value.lifecycle === "ACTIVE" || value.lifecycle === "RETIRED")
+  );
+}
+
+function validWriteResponse(pending: PendingWrite, data: unknown) {
+  if (!record(data)) return false;
+  if (pending.kind === "membership") {
+    return (
+      typeof data.productListingId === "string" &&
+      revision(data.expectedVersion) &&
+      (data.outcome === "CHANGED" || data.outcome === "UNCHANGED")
+    );
+  }
+  if (pending.kind === "default" || pending.kind === "clearDefault") {
+    return (
+      revision(data.revision) &&
+      (data.shippingProfileId === null ||
+        typeof data.shippingProfileId === "string")
+    );
+  }
+  return validProfile(data);
 }
 
 function fail(
@@ -193,6 +249,11 @@ function fail(
     // No fresh expected revision or new acquisition timestamp on old content.
     // Reacquire the provider configuration through the common entry point.
     publication.reconcile = true;
+    // This operation was rejected. Other persisted requests may already have
+    // committed and must be resolved before replacing this acquisition.
+    work.done = true;
+    work.failed = true;
+    work.pending = undefined;
   } else if (
     result.response?.status === 401 ||
     result.response?.status === 403 ||
@@ -203,6 +264,7 @@ function fail(
     publication.failures++;
   } else {
     work.attempts++;
+    work.exhausted = work.attempts >= SHIPPING_LIMITS.retries;
     work.dueAt =
       now + Math.min(3600_000, 1000 * 2 ** Math.min(work.attempts, 12));
   }
@@ -210,7 +272,8 @@ function fail(
 
 export function readyPublicationWork(publication: Publication) {
   return publication.work.filter((work) => {
-    if (work.done) return false;
+    if (work.done || work.exhausted) return false;
+    if (publication.reconcile && !work.pending) return false;
     const resource = work.resource;
     const dependency =
       resource.kind === "membership"
@@ -239,6 +302,7 @@ export async function publishShippingStep(
   const common = {
     client,
     headers: { Authorization: `Bearer ${context.accessToken}` },
+    signal: AbortSignal.timeout(20_000),
   };
   const sourcePath = { listing_source_id: context.listingSourceId };
   const availableProfile = (objectKey: string | null) => {
@@ -310,6 +374,18 @@ export async function publishShippingStep(
         result.response?.status === 201 ||
         result.response?.status === 204)
     ) {
+      if (!validWriteResponse(pending, result.data)) {
+        fail(
+          publication,
+          work,
+          {
+            response: result.response,
+            error: { code: "AURA_RESPONSE_INVALID" },
+          },
+          now,
+        );
+        return;
+      }
       if (work.resource.kind === "profile") {
         const data = result.data;
         if (data && "shippingProfileId" in data && data.shippingProfileId)
@@ -333,6 +409,14 @@ export async function publishShippingStep(
     ) {
       // An earlier create committed. Resolve the stable object key next time.
       work.pending = undefined;
+      fail(
+        publication,
+        work,
+        {
+          error: { code: "SHIPPING_IMPORT_IDENTITY_EXISTS" },
+        },
+        now,
+      );
     } else fail(publication, work, result, now);
     return;
   }
@@ -349,6 +433,18 @@ export async function publishShippingStep(
     });
     if (!result.data) {
       fail(publication, work, result, now);
+      return;
+    }
+    if (
+      !Array.isArray(result.data) ||
+      result.data.some((profile) => !validProfile(profile))
+    ) {
+      fail(
+        publication,
+        work,
+        { response: result.response, error: { code: "AURA_RESPONSE_INVALID" } },
+        now,
+      );
       return;
     }
     const existing = result.data[0];
@@ -394,7 +490,7 @@ export async function publishShippingStep(
     }
   } else if (resource.kind === "default") {
     const result = await getShippingDefault({ ...common, path: sourcePath });
-    if (!result.data) {
+    if (!result.data || !revision(result.data.revision)) {
       fail(publication, work, result, now);
       return;
     }
@@ -428,7 +524,7 @@ export async function publishShippingStep(
         source_listing_id: resource.value.sourceListingId,
       },
     });
-    if (!result.data) {
+    if (!result.data || !revision(result.data.expectedVersion)) {
       fail(publication, work, result, now);
       return;
     }
@@ -465,7 +561,7 @@ export async function publishShippingStep(
       ...common,
       path: { ...sourcePath, shipping_profile_id: resource.id },
     });
-    if (!result.data) {
+    if (!result.data || !validProfile(result.data)) {
       fail(publication, work, result, now);
       return;
     }

@@ -207,7 +207,11 @@ export async function acquireShippingStep(
     for (const product of nextPage(data.products, task, state)) {
       if (state.snapshot.products[product.id])
         throw new ShippingReadError("DUPLICATE_PROVIDER_OBJECT");
-      state.snapshot.products[product.id] = { ...product, variants: [] };
+      state.snapshot.products[product.id] = {
+        ...product,
+        variants: [],
+        shippableVariants: [],
+      };
       state.tasks.push({ kind: "variants", product: product.id });
     }
     if (Object.keys(state.snapshot.products).length > SHIPPING_LIMITS.products)
@@ -217,12 +221,15 @@ export async function acquireShippingStep(
       product: {
         id: string;
         updatedAt: string;
-        variants?: Connection<{ id: string }>;
+        variants?: Connection<{
+          id: string;
+          inventoryItem: { requiresShipping: boolean };
+        }>;
       } | null;
     }>(
       graphql,
       task.kind === "variants"
-        ? `query ShippingVariants($id: ID!, $first: Int!, $after: String) { product(id: $id) { id updatedAt variants(first: $first, after: $after) { nodes { id } ${PAGE} } } }`
+        ? `query ShippingVariants($id: ID!, $first: Int!, $after: String) { product(id: $id) { id updatedAt variants(first: $first, after: $after) { nodes { id inventoryItem { requiresShipping } } ${PAGE} } } }`
         : `query ShippingVerifyProduct($id: ID!) { product(id: $id) { id updatedAt } }`,
       { ...variables, id: task.product },
     );
@@ -230,12 +237,17 @@ export async function acquireShippingStep(
     if (!data.product || data.product.updatedAt !== product.updatedAt)
       throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
     if (task.kind === "variants") {
-      product.variants.push(
-        ...nextPage(
-          data.product.variants as Connection<{ id: string }>,
-          task,
-          state,
-        ).map((v) => v.id),
+      const variants = nextPage(
+        data.product.variants as NonNullable<typeof data.product.variants>,
+        task,
+        state,
+      );
+      product.variants.push(...variants.map((v) => v.id));
+      product.shippableVariants ??= [];
+      product.shippableVariants.push(
+        ...variants
+          .filter((v) => v.inventoryItem?.requiresShipping === true)
+          .map((v) => v.id),
       );
       if (new Set(product.variants).size !== product.variants.length)
         throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
@@ -379,6 +391,9 @@ export async function acquireShippingStep(
   ) {
     throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
   }
-  if (JSON.stringify(state).length > SHIPPING_LIMITS.bytes)
+  if (
+    new TextEncoder().encode(JSON.stringify(state)).byteLength >
+    SHIPPING_LIMITS.bytes
+  )
     throw new ShippingReadError("ACQUISITION_LIMIT_EXCEEDED");
 }

@@ -25,6 +25,8 @@ export function shippingIssueMessage(code: string) {
       return "Reconnect Aura Historia to grant shipping read and write permissions, then import again.";
     case "SHIPPING_IMPORT_DEPENDENCY_MISSING":
       return "Some catalog listings are not available yet. Their shipping assignments will be retried automatically.";
+    case "SHIPPING_RETRY_LIMIT_REACHED":
+      return "Automatic retries have paused. Import again to resume pending work after resolving the connection or catalog issue.";
     case "SHOPIFY_CHANGED_DURING_READ":
     case "RECONCILIATION_REQUIRED":
       return "Shipping settings changed during import. Import again to read the current configuration.";

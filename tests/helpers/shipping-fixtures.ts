@@ -80,7 +80,13 @@ export function fixtureGraphql(snapshot = structuredClone(fixture)) {
             ? {
                 ...product,
                 variants: page(
-                  product.variants.map((id) => ({ id })),
+                  product.variants.map((id) => ({
+                    id,
+                    inventoryItem: {
+                      requiresShipping:
+                        product.shippableVariants?.includes(id) === true,
+                    },
+                  })),
                   variables.after,
                 ),
               }

@@ -156,6 +156,12 @@ Conflicts trigger bounded reacquisition; pending uncertain writes retain their b
 request key, sequence and original acquisition time across worker restarts. Missing
 catalog listings are retried independently without creating products. Partner-owned
 assertions and explicit clears are protected by backend import ownership checks.
+Reconciliation resolves other uncertain requests before replacing an acquisition.
+Publication stops retrying each record after eight failures; acquisition pauses after
+eight consecutive failures on a page. Exhausted work remains saved. **Import shipping settings**
+resumes those exact pending requests before acquiring the latest settings. GraphQL
+and Aura API calls have a 20-second timeout, and applied status requires a valid
+committed response.
 
 Reads are bounded to 50 records per connection page, 100 profiles, 5,000 products,
 4,000 requests and 4 MB of acquisition state. Every page has a persisted checkpoint.
@@ -180,7 +186,9 @@ The supported subset is a profile with one origin group, no unrated origins or
 selling-plan applicability, explicit country zones, static rates, minimum
 seller-order value conditions and external carrier/app prices. Money is parsed as
 decimal strings into exact safe minor units; unsupported currencies/precision stop
-publication. All variants must agree before a listing selects one profile. Mixed,
+publication. All variants must agree before a listing selects one profile. Shopify's
+shop-wide profile applies only to variants explicitly marked as requiring shipping;
+this flag alone does not establish profile membership or shipping eligibility. Mixed,
 incomplete and unsupported membership explicitly suppresses default inheritance.
 Profiles with multiple origin groups or selling plans remain unasserted. Province
 subsets/rest-of-world zones remain unresolved; weight and upper basket constraints

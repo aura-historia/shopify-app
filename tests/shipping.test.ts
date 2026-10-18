@@ -12,7 +12,7 @@ import {
   beginAcquisition,
 } from "../app/shipping/acquisition.server";
 import { exactMoney, mapShipping } from "../app/shipping/mapper";
-import { profileObjectKey } from "../app/shipping/model";
+import { profileObjectKey, SHIPPING_LIMITS } from "../app/shipping/model";
 import {
   addConfirmedRemovals,
   beginPublication,
@@ -326,9 +326,98 @@ describe("Shopify shipping acquisition and canonical mapping", () => {
     assert.equal(policy.coverage.completeness, "PARTIAL");
     assert.equal(policy.coverage.dispatch_origin, null);
   });
+
+  it("limits a coversAllItems profile to known shippable variants", async () => {
+    const mock = fixtureGraphql();
+    const profile = Object.values(mock.snapshot.profiles)[0];
+    profile.coversAllItems = true;
+    const products = Object.values(mock.snapshot.products);
+    products[0].shippableVariants = [...products[0].variants];
+    // A mixed physical/digital product cannot select a universal policy.
+    products[1].shippableVariants = products[1].variants.slice(0, 1);
+    const mapping = mapShipping(await acquire(mock.request));
+    assert.equal(
+      mapping.memberships[0].profileObjectKey,
+      profileObjectKey(profile.id),
+    );
+    assert.equal(mapping.memberships[1].profileObjectKey, null);
+    delete products[0].shippableVariants;
+    assert.equal(
+      mapShipping(mock.snapshot).memberships[0].profileObjectKey,
+      null,
+    );
+    profile.coversAllItems = false;
+    profile.memberships = {};
+    products[0].shippableVariants = [...products[0].variants];
+    assert.equal(
+      mapShipping(mock.snapshot).memberships[0].profileObjectKey,
+      null,
+    );
+  });
 });
 
 describe("typed shipping publication", () => {
+  it("bounds repeated identity conflicts when collection reads cannot resolve the profile", async () => {
+    const state = publication();
+    state.work = state.work.slice(0, 1);
+    const unresolved: typeof fetch = async (input) =>
+      (input as Request).method === "GET"
+        ? Response.json([])
+        : Response.json(
+            { error: "SHIPPING_IMPORT_IDENTITY_EXISTS" },
+            { status: 409 },
+          );
+    for (let i = 0; i < SHIPPING_LIMITS.retries * 2; i++)
+      await publishShippingStep(state, context, i * 3600_000, unresolved);
+    assert.equal(state.work[0].exhausted, true);
+    assert.equal(state.committed, 0);
+    assert.equal(state.reconcile, false);
+  });
+
+  it("retains exact requests for empty or structurally invalid success responses", async () => {
+    for (const response of [
+      () => Response.json({}),
+      () => Response.json({ shippingProfileId: profileId }),
+      () => new Response(null, { status: 204 }),
+    ]) {
+      const state = publication();
+      const mock = auraMock();
+      await publishShippingStep(state, context, 0, mock.fetcher);
+      const pending = structuredClone(state.work[0].pending);
+      await publishShippingStep(state, context, 0, async () => response());
+      assert.deepEqual(state.work[0].pending, pending);
+      assert.equal(state.work[0].done, undefined);
+      assert.equal(state.committed, 0);
+      assert.equal(state.lastError, "AURA_RESPONSE_INVALID");
+      await publishShippingStep(state, context, 60_000, mock.fetcher);
+      assert.equal(state.work[0].done, true);
+    }
+  });
+
+  it("bounds record retries while preserving pending identity and independent progress", async () => {
+    const state = publication();
+    const mock = auraMock();
+    await publishShippingStep(state, context, 0, mock.fetcher);
+    const pending = structuredClone(state.work[0].pending);
+    const fail: typeof fetch = async () =>
+      Response.json(
+        { error: "private provider diagnostics including a credential" },
+        { status: 503 },
+      );
+    for (let i = 0; i < SHIPPING_LIMITS.retries; i++) {
+      await publishShippingStep(state, context, i * 3600_000, fail);
+    }
+    assert.equal(state.work[0].exhausted, true);
+    assert.equal(state.work[0].done, undefined);
+    assert.deepEqual(state.work[0].pending, pending);
+    assert.equal(state.lastError, "AURA_HTTP_503");
+    for (let i = 0; i < 10; i++)
+      await publishShippingStep(state, context, 86_400_000, mock.fetcher);
+    assert.ok(state.committed > 0);
+    assert.equal(state.work[0].attempts, SHIPPING_LIMITS.retries);
+    assert.doesNotMatch(JSON.stringify(state), /private provider diagnostics/);
+  });
+
   it("restores the stable retired identity before replacing it with a later sequence", async () => {
     const state = publication();
     const writes: { path: string; body: Record<string, unknown> }[] = [];

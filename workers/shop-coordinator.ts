@@ -12,6 +12,7 @@ import { mapShipping } from "../app/shipping/mapper";
 import {
   profileObjectKey,
   SHIPPING_API_VERSION,
+  SHIPPING_LIMITS,
   ShippingReadError,
 } from "../app/shipping/model";
 import {
@@ -55,6 +56,8 @@ interface Job {
   publication?: Publication;
   refreshRequested: boolean;
   attempts: number;
+  failures?: number;
+  paused?: boolean;
 }
 interface CoordinatorState {
   sequence: number;
@@ -139,7 +142,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       const { admin } = await getShopifyForEnv(this.env).unauthenticated.admin(
         shop,
       );
-      const response = await admin.graphql(query, { variables });
+      const response = await admin.graphql(query, {
+        variables,
+        signal: AbortSignal.timeout(20_000),
+      });
       // The React Router SDK serializes API headers into the response body;
       // its synthetic Response has none of Shopify's upstream headers.
       const body = (await response.json()) as Awaited<
@@ -191,6 +197,18 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         state.job.credentialVersion === credentials.updatedAt
       ) {
         state.job.refreshRequested = true;
+        state.job.paused = false;
+        state.job.attempts = 0;
+        state.job.failures = 0;
+        for (const work of state.job.publication?.work ?? []) {
+          if (!work.done) {
+            work.attempts = 0;
+            work.exhausted = false;
+            work.dueAt = 0;
+          }
+        }
+        state.status.phase = "queued";
+        state.status.error = undefined;
       } else {
         if (state.source !== credentials.listingSourceId) state.mappings = {};
         state.source = credentials.listingSourceId;
@@ -232,6 +250,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       const state = await this.load();
       const job = state.job;
       if (!job) return;
+      if (job.paused) {
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
       // Persistent watchdog precedes external I/O. Retry even after a hard stop.
       await this.ctx.storage.setAlarm(Date.now() + 60_000);
       const credentials = await loadShopCredentials(this.env.KV, job.shop);
@@ -251,7 +273,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         return;
       }
       let delay = 1000;
-      if (job.refreshRequested) {
+      if (job.refreshRequested || job.publication?.reconcile) {
         const pendingPublication = job.publication;
         const uncertain =
           pendingPublication?.work.filter(
@@ -264,12 +286,20 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             (work) => work.done || work.pending,
           );
         } else {
+          if (pendingPublication?.reconcile && ++job.attempts > 3) {
+            job.paused = true;
+            state.status.phase = "blocked";
+            state.status.error = "RECONCILIATION_REQUIRED";
+            await this.save(state);
+            await this.ctx.storage.deleteAlarm();
+            return;
+          }
           job.refreshRequested = false;
           job.acquisition = beginAcquisition(new Date().toISOString());
           job.publication = undefined;
           job.runId = crypto.randomUUID();
           job.sequence = nextSequence(state);
-          job.attempts = 0;
+          job.failures = 0;
           state.status = { ...idle(), phase: "queued" };
         }
       }
@@ -282,6 +312,8 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             this.providerGraphql(job.shop, query, variables, true),
           );
           job.acquisition = next;
+          job.failures = 0;
+          state.status.error = undefined;
           if (next.tasks.length === 0) {
             const mapping = mapShipping(next.snapshot);
             state.status.limitations = mapping.limitations;
@@ -298,6 +330,8 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
               Object.keys(next.snapshot.profiles).map(profileObjectKey),
             );
             job.acquisition = undefined;
+            state.status.phase = "publishing";
+            state.status.pending = job.publication.work.length;
           }
         } else if (job.publication) {
           const publication = job.publication;
@@ -321,25 +355,30 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             pending: remaining.length,
             error: publication.lastError,
           };
-          if (publication.reconcile) {
-            if (++job.attempts > 3)
-              throw new ShippingReadError("RECONCILIATION_REQUIRED");
-            job.acquisition = beginAcquisition(new Date().toISOString());
-            job.publication = undefined;
-            job.runId = crypto.randomUUID();
-            job.sequence = nextSequence(state);
-          } else if (!remaining.length) {
+          if (
+            !remaining.length &&
+            !publication.reconcile &&
+            !job.refreshRequested
+          ) {
             state.status.phase =
               publication.failures || state.status.limitations.length
                 ? "partial"
                 : "applied";
             state.job = undefined;
             if (!publication.failures) state.status.error = undefined;
-          } else {
-            const earliest = Math.min(
-              ...readyPublicationWork(publication).map((work) => work.dueAt),
-            );
-            if (earliest > Date.now()) {
+          } else if (
+            remaining.length &&
+            (!publication.reconcile || remaining.some((work) => work.pending))
+          ) {
+            const ready = readyPublicationWork(publication);
+            const earliest = Math.min(...ready.map((work) => work.dueAt));
+            if (!ready.length) {
+              // Keep immutable requests and independent failed records for a
+              // manual resume. Do not keep waking the object indefinitely.
+              job.paused = true;
+              state.status.phase = "blocked";
+              state.status.error = "SHIPPING_RETRY_LIMIT_REACHED";
+            } else if (earliest > Date.now()) {
               state.status.phase = "partial";
               delay = Math.max(1000, earliest - Date.now());
             }
@@ -355,29 +394,28 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
           job.acquisition = beginAcquisition(new Date().toISOString());
           job.runId = crypto.randomUUID();
           job.sequence = nextSequence(state);
+          job.failures = 0;
         } else if (
           code === "SHOPIFY_READ_FAILED" ||
           code === "SHIPPING_REQUEST_FAILED"
         ) {
-          state.status.phase = "partial";
-          delay = Math.min(3600_000, 1000 * 2 ** Math.min(++job.attempts, 12));
+          job.failures = (job.failures ?? 0) + 1;
+          if (job.failures >= SHIPPING_LIMITS.retries) {
+            job.paused = true;
+            state.status.phase = "blocked";
+            state.status.error = "SHIPPING_RETRY_LIMIT_REACHED";
+          } else {
+            state.status.phase = "partial";
+            delay = Math.min(3600_000, 1000 * 2 ** job.failures);
+          }
         } else {
           state.status.phase = "blocked";
-          state.job = undefined;
+          job.paused = true;
         }
       }
-      const refresh = !state.job && job.refreshRequested;
-      if (refresh) {
-        job.refreshRequested = false;
-        job.acquisition = beginAcquisition(new Date().toISOString());
-        job.publication = undefined;
-        job.runId = crypto.randomUUID();
-        job.sequence = nextSequence(state);
-        job.attempts = 0;
-        state.job = job;
-      }
       await this.save(state);
-      if (state.job) await this.ctx.storage.setAlarm(Date.now() + delay);
+      if (state.job && !state.job.paused)
+        await this.ctx.storage.setAlarm(Date.now() + delay);
       else await this.ctx.storage.deleteAlarm();
     });
   }
