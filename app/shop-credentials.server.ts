@@ -1,4 +1,4 @@
-import type { KVNamespace } from "@cloudflare/workers-types";
+type KVNamespace = CloudflareBindings["KV"];
 
 export interface ShopCredentialsValues {
   listingSourceId: string;

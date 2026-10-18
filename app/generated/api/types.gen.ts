@@ -4,6 +4,665 @@ export type ClientOptions = {
     baseUrl: 'https://api.stage.aura-historia.com' | 'https://api.aura-historia.com' | (string & {});
 };
 
+export type DeliveryAssessmentGeography = {
+    referenceRelease: 'iso-codes-4.20.1';
+    country: string | null;
+    subdivision: string | null;
+    postalCode: string | null;
+};
+
+export type DeliveryAssessmentAttribution = {
+    provider: string;
+    attributionUrl: string;
+};
+
+/**
+ * Last successful assertion observation. Terms remain valid until updated, withdrawn, or their source loses authority. Observation age alone never withdraws terms. Failed recrawls, unrelated edits, evidence-only corrections and lifecycle commands do not advance this time.
+ */
+export type DeliveryAssertionEvidence = {
+    verifiedAt: string;
+};
+
+export type DeliveryAssessmentProfileBasis = {
+    shippingProfileId: string;
+    termsRevision: number;
+    managementRevision: number;
+    lifecycle: 'ACTIVE' | 'RETIRED';
+    evidence: DeliveryAssertionEvidence;
+};
+
+/**
+ * MISSING_INPUT includes input, plus scope for QUALIFYING_AMOUNT. EARLIER_ZONE_UNDETERMINED includes index. Other codes include no additional fields or private dependency text.
+ */
+export type DeliveryAssessmentReason = {
+    code: 'MISSING_INPUT' | 'NO_SOURCE_DEFAULT' | 'PROFILE_ABSENT' | 'PROFILE_RETIRED' | 'SOURCE_MISMATCH' | 'AMBIGUOUS_DEPENDENCY' | 'LOCATION_ABSENT' | 'LOCATION_RETIRED' | 'REFERENCE_RELEASE_MISMATCH' | 'UNRESOLVED_AREA' | 'UNSUPPORTED_POSTAL_SHAPE' | 'COUNTRY_MISMATCH' | 'SUBDIVISION_MISMATCH' | 'POSTAL_MISMATCH' | 'CLASS_MISMATCH' | 'INCOMPLETE_CLASS_MEMBERSHIP' | 'VARIANT_MISMATCH' | 'VARIANT_UNAVAILABLE' | 'MIXED_VARIANT_APPLICABILITY' | 'QUANTITY_OUTSIDE_RANGE' | 'QUALIFYING_THRESHOLD_NOT_MET' | 'CURRENCY_MISMATCH' | 'EXCLUDED' | 'EARLIER_ZONE_UNDETERMINED' | 'INCOMPLETE_COVERAGE' | 'OUTSIDE_COMPLETE_COVERAGE' | 'NO_APPLICABLE_SERVICE' | 'NO_SHIPPING_ASSERTION' | 'NO_COLLECTION_ASSERTION' | 'NO_ELIGIBILITY_ASSERTION' | 'SUPPRESSED_INHERITANCE' | 'ASSERTION_CLEARED' | 'SHIPPING_PROHIBITED' | 'SHIPPING_DEPENDENCY_REPLACED' | 'SHIPPING_DEPENDENCY_UNDETERMINED' | 'UNKNOWN_CHARGE_BASIS' | 'NO_CURRENCY_ASSERTION' | 'PRICE_ON_REQUEST' | 'EXTERNALLY_CALCULATED_PRICE' | 'ARITHMETIC_OVERFLOW';
+    input?: 'DESTINATION' | 'DESTINATION_COUNTRY' | 'DESTINATION_SUBDIVISION' | 'POSTAL_CODE' | 'ORIGIN_COUNTRY' | 'QUANTITY' | 'LOTS' | 'SHIPMENTS' | 'SELLER_ORDERS' | 'VARIANT' | 'CLASS_MEMBERSHIP' | 'QUALIFYING_AMOUNT';
+    scope?: 'ITEM' | 'LOT' | 'SHIPMENT' | 'SELLER_ORDER';
+    index?: number;
+};
+
+/**
+ * Arithmetic advertised charge for its explicit basis and count; never a quote or landed cost. Null when unavailable, inapplicable or necessary count/currency/basis is absent.
+ */
+export type DeliveryAssessmentCharge = ShippingPriceDataFixed | ShippingPriceDataFrom | ShippingPriceDataEstimatedRange;
+
+/**
+ * Eligibility and calculated charge for a service in the selected advertised zone. Service identity, advertised price/basis/components and durations remain in item.shipping.terms.
+ */
+export type DeliveryAssessmentOption = {
+    /**
+     * Zero-based service index within the selected zone of item.shipping.terms.
+     */
+    serviceIndex: number;
+    applicability: 'MATCH' | 'NO_MATCH' | 'UNDETERMINED';
+    eligibility: 'OFFERED' | 'NOT_OFFERED' | 'SUBJECT_TO_CONFIRMATION' | null;
+    charge: DeliveryAssessmentCharge | null;
+    reasons: Array<DeliveryAssessmentReason>;
+};
+
+/**
+ * Independent collection can remain offered when shipping is prohibited. Arrangement/windows are in terms.collection; site is always null pending explicit permitted disclosure.
+ */
+export type DeliveryAssessmentCollection = {
+    eligibility: 'OFFERED' | 'NOT_OFFERED' | 'SUBJECT_TO_CONFIRMATION' | null;
+    applicability: 'MATCH' | 'NO_MATCH' | 'UNDETERMINED';
+    reasons: Array<DeliveryAssessmentReason>;
+};
+
+/**
+ * Converted current effective advertised rates. Source terms retain their original amounts/currencies. HalfUp rounding uses currency minor-unit exponents. FROM and ESTIMATED_RANGE retain uncertainty; FREE with known currency remains zero. Unknown-currency free, external, on-request and absent rates have no entry. Conversion supplies no quantity, applicability, binding quote or complete landed cost.
+ */
+export type ShippingDisplayData = {
+    currency: CurrencyData;
+    /**
+     * Immutable persisted browsing FX snapshot, pinned for search continuation.
+     */
+    fxRateId: string;
+    capturedAt: string;
+    rates: Array<{
+        /**
+         * Zero-based zone index in effective terms.
+         */
+        zoneIndex: number;
+        /**
+         * Zero-based service index within that zone.
+         */
+        serviceIndex: number;
+        price: ShippingPriceDataFree | ShippingPriceDataFixed | ShippingPriceDataFrom | ShippingPriceDataEstimatedRange;
+        basis: 'PER_ITEM' | 'PER_LOT' | 'PER_SHIPMENT' | 'PER_SELLER_ORDER' | null;
+    }>;
+};
+
+/**
+ * Immutable shipping FX evaluation basis, separate from historical sale/asking-price valuation. Later captures, destination edits and filter edits do not rewrite it.
+ */
+export type ShippingMatchValuationData = {
+    interpretation: 'WHOLE_COUNTRY_PER_ITEM_FX_V1';
+    fxRateId: string;
+    capturedAt: string;
+    maximumPerItem: {
+        amount: number;
+        currency: CurrencyData;
+    };
+};
+
+/**
+ * Effective advertised shipping and collection terms, shared by every viewer. Source defaults and listing overrides are resolved from current PostgreSQL state. Dispatch origins and collection sites are always null. Invalid shipping dependencies return 500 SHIPPING_STORAGE_ERROR; unavailable shipping reads return 503 SHIPPING_TEMPORARILY_UNAVAILABLE. Missing or withdrawn listings and hidden entries have shipping null. Clients render these terms generically without a destination. Display conversion uses persisted browsing FX, never historical sale-observation FX. Missing snapshot/unavailable FX reads return 503; invalid snapshot, missing required quote or overflow return 500. Shared listing FX resolution retains endpoint errors; shipping enrichment uses SHIPPING_TEMPORARILY_UNAVAILABLE or SHIPPING_STORAGE_ERROR. No provider is called. Currency and query predicates isolate anonymous caches; credential-bearing responses and errors remain private, no-store.
+ */
+export type AdvertisedListingShippingData = {
+    display: ShippingDisplayData | null;
+    terms: AdvertisedDeliveryTermsData;
+    listingRevision: number;
+    sourceRevision: number;
+    defaultRevision: number | null;
+    profile: DeliveryAssessmentProfileBasis | null;
+    listingEvidence: DeliveryAssertionEvidence | null;
+    evaluatedAt: string;
+    shippingReasons: Array<DeliveryAssessmentReason>;
+    collectionReasons: Array<DeliveryAssessmentReason>;
+    notices: Array<'ASSIGNMENT_UNRESOLVED' | 'INTEGRATION_MISMATCH' | 'PROFILE_INTEGRATION_MISMATCH'>;
+};
+
+/**
+ * Evaluation for the authenticated owner's selected browsing destination. Omitted when no destination is selected or the listing is hidden/withdrawn. A saved address or explicit country/postal preference can supply the destination; owning addresses alone selects none. Destination facts include submitted assertions and compatible permitted unexpired derived evidence. No street, coordinates or address identity is returned. Delegated personalization requires users:read; credentials without it receive generic terms. Browsing infers no quantity, variant, shipment/order count or qualifying amount. Missing inputs retain uncertainty and explained null charges. This enrichment does not filter or reorder results. Authenticated responses are never cached.
+ */
+export type PersonalizedListingShippingData = {
+    destination: DeliveryAssessmentGeography;
+    attribution: DeliveryAssessmentAttribution | null;
+    evaluatedAt: string;
+    eligibility: 'OFFERED' | 'NOT_OFFERED' | 'SUBJECT_TO_CONFIRMATION' | null;
+    /**
+     * Zero-based zone index in item.shipping.terms.shipping.coverage.zones.
+     */
+    selectedZone: number | null;
+    options: Array<DeliveryAssessmentOption>;
+    reasons: Array<DeliveryAssessmentReason>;
+    collection: DeliveryAssessmentCollection;
+    bindingQuote: false;
+    completeLandedCost: false;
+};
+
+export type ProductListingDeliveryCommandData = {
+    import?: ShippingImportWriteData;
+    expectedVersion: number;
+    delivery: ListingDeliveryEmptyPatchData | {
+        state: 'SET';
+        value: ListingDeliveryPatchData;
+    };
+};
+
+export type ListingDeliveryEmptyPatchData = {
+    state: 'UNCHANGED' | 'CLEAR';
+};
+
+export type ListingDeliveryIntegrationData = {
+    kind: 'SOURCE';
+} | {
+    kind: 'PROVIDER';
+    method: 'SHOPIFY' | 'WOOCOMMERCE';
+};
+
+export type ListingDeliverySelectionData = {
+    kind: 'INHERIT_SOURCE_DEFAULT' | 'SUPPRESS_INHERITANCE';
+} | {
+    kind: 'EXPLICIT';
+    profile_id: string;
+} | {
+    kind: 'INLINE';
+    terms: AdvertisedDeliveryTermsData;
+};
+
+export type ListingDeliveryRateInputsData = {
+    classes: {
+        codes: Array<string>;
+        completeness: 'PARTIAL' | 'COMPLETE';
+    } | null;
+    variants: Array<string> | null;
+};
+
+export type ListingDeliveryInheritOrClearData = {
+    kind: 'INHERIT' | 'CLEAR';
+};
+
+export type ListingDeliveryConfigurationData = {
+    schema: 'LISTING_DELIVERY_V1';
+    source_id: string;
+    integration: ListingDeliveryIntegrationData;
+    selection: ListingDeliverySelectionData | null;
+    rate_inputs: ListingDeliveryRateInputsData;
+    shipping: ListingDeliveryShippingOverrideData;
+    collection: ListingDeliveryCollectionOverrideData;
+};
+
+export type ProductListingDeliveryViewData = {
+    productListingId: string;
+    expectedVersion: number;
+    delivery: ListingDeliveryConfigurationData | null;
+};
+
+export type ProductListingDeliveryResultData = {
+    productListingId: string;
+    expectedVersion: number;
+    /**
+     * Canonical listing change; UNCHANGED can still commit an explicit observation or manual ownership handoff.
+     */
+    outcome: 'CHANGED' | 'UNCHANGED';
+};
+
+export type ProductListingDeliveryHistoryChangeData = {
+    type: 'DELIVERY_CHANGED';
+};
+
+export type ListingDeliveryShippingOverrideData = ListingDeliveryInheritOrClearData | {
+    kind: 'REPLACE';
+    value: ShippingPolicyData;
+};
+
+export type ListingDeliveryCollectionOverrideData = ListingDeliveryInheritOrClearData | {
+    kind: 'REPLACE';
+    value: ShippingCollectionData;
+};
+
+export type ListingDeliveryPatchData = {
+    integration: ListingDeliveryIntegrationData;
+    selection: ListingDeliveryEmptyPatchData | {
+        state: 'SET';
+        value: ListingDeliverySelectionData;
+    };
+    rateInputs: ListingDeliveryEmptyPatchData | {
+        state: 'SET';
+        value: ListingDeliveryRateInputsData;
+    };
+    shipping: ListingDeliveryEmptyPatchData | {
+        state: 'SET';
+        value: ListingDeliveryShippingOverrideData;
+    };
+    collection: ListingDeliveryEmptyPatchData | {
+        state: 'SET';
+        value: ListingDeliveryCollectionOverrideData;
+    };
+};
+
+/**
+ * Explicit successful new acquisition marker (empty object). Uses the parent acquiredAt, which cannot be in the future. Shipping assertions have no freshness or expiry deadline. Replays and ordinary writes without observation never advance observation time. Evidence-only corrections and lifecycle/removal commands cannot supply observation.
+ */
+export type ShippingImportObservationData = {
+    [key: string]: never;
+};
+
+/**
+ * Optional import semantics on existing commands. objectKey is required only on profile creation; it identifies a stable source/producer/integration object independently of requestKey. sequence increases per touched component within the current source lifecycle; it is producer acquisition order, never receive time. Omitted observation does not renew observation time. Creation, changed normalized profile terms, changed default assignment and changed listing assertions and first claims of equal implicit selections require observation; explicit owned-component removals do not renew observation time. Acquisition ordering uses microsecond precision. Equal terms with observation explicitly refresh acquisition evidence without semantic revision changes. Exact requestKey replay returns current committed state without effects for 90 days; changed reuse conflicts permanently. Current source/grant/integration authority is rechecked even on replay. Imports cannot modify manually owned components. 409 codes: SHIPPING_IMPORT_AUTHORITY_STALE, SHIPPING_IMPORT_OWNERSHIP_CONFLICT, SHIPPING_IMPORT_REQUEST_CONFLICT, SHIPPING_IMPORT_OUT_OF_ORDER, SHIPPING_IMPORT_IDENTITY_EXISTS. Refetch and reconcile conflicts; never rebase an old payload onto the newest revision. Missing catalog listing is retryable 404 SHIPPING_IMPORT_DEPENDENCY_MISSING; retain the record until catalog creation commits. No shipping write creates or restores catalog products.
+ */
+export type ShippingImportWriteData = {
+    /**
+     * Successful acquisition time for every command, including removal/correction; must follow the latest source/integration authority change.
+     */
+    acquiredAt: string;
+    integration: ListingDeliveryIntegrationData;
+    sequence: number;
+    requestKey: string;
+    objectKey?: string | null;
+    observation?: ShippingImportObservationData | null;
+};
+
+export type ShippingCurrencyCode = 'EUR' | 'GBP' | 'USD' | 'AUD' | 'CAD' | 'NZD' | 'CNY' | 'BRL' | 'PLN' | 'TRY' | 'JPY' | 'CZK' | 'RUB' | 'AED' | 'SAR' | 'HKD' | 'SGD' | 'CHF' | 'ZAR' | 'SEK' | 'DKK' | 'NOK' | 'KRW' | 'INR' | 'TWD' | 'HUF' | 'RON' | 'MXN' | 'THB';
+
+/**
+ * Advertised amount in currency minor units; never an authorized quote or checkout total.
+ */
+export type ShippingMoneyData = {
+    amount_minor: number;
+    currency: ShippingCurrencyCode;
+};
+
+/**
+ * Ordered inclusive bounds.
+ */
+export type ShippingQuantityData = {
+    minimum: number;
+    maximum: number;
+};
+
+export type ShippingThresholdData = {
+    minimum: ShippingMoneyData;
+    scope: 'ITEM' | 'LOT' | 'SHIPMENT' | 'SELLER_ORDER';
+};
+
+/**
+ * Class and variant codes are scoped to the path ListingSource; absence must be explicit null.
+ */
+export type ShippingApplicabilityData = {
+    class: string | null;
+    variants: Array<string> | null;
+    quantity: ShippingQuantityData | null;
+    threshold: ShippingThresholdData | null;
+};
+
+/**
+ * Ordered duration bounds; handling, transit and total are independent assertions.
+ */
+export type ShippingTimeData = {
+    minimum: number;
+    maximum: number;
+    unit: 'HOURS' | 'DAYS' | 'WEEKS';
+    basis: 'CALENDAR' | 'BUSINESS' | null;
+    trigger: 'ORDER' | 'ORDER_CONFIRMATION' | 'PAYMENT' | 'DISPATCH' | 'READY_FOR_COLLECTION' | null;
+};
+
+export type ShippingLeadTimesData = {
+    handling: ShippingTimeData | null;
+    transit: ShippingTimeData | null;
+    total: ShippingTimeData | null;
+};
+
+export type ShippingActorDataListingSource = {
+    kind: 'LISTING_SOURCE';
+};
+
+export type ShippingActorDataBuyer = {
+    kind: 'BUYER';
+};
+
+export type ShippingActorDataParty = {
+    kind: 'PARTY';
+    party_id: string;
+};
+
+export type ShippingActorData = ({
+    kind: 'LISTING_SOURCE';
+} & ShippingActorDataListingSource) | ({
+    kind: 'BUYER';
+} & ShippingActorDataBuyer) | ({
+    kind: 'PARTY';
+} & ShippingActorDataParty);
+
+export type ShippingPriceDataFree = {
+    kind: 'FREE';
+    currency: ShippingCurrencyCode | null;
+};
+
+export type ShippingPriceDataFixed = {
+    kind: 'FIXED';
+    amount: ShippingMoneyData;
+};
+
+export type ShippingPriceDataFrom = {
+    kind: 'FROM';
+    amount: ShippingMoneyData;
+};
+
+export type ShippingPriceDataEstimatedRange = {
+    kind: 'ESTIMATED_RANGE';
+    minimum: ShippingMoneyData;
+    maximum: ShippingMoneyData;
+};
+
+export type ShippingPriceDataExternallyCalculated = {
+    kind: 'EXTERNALLY_CALCULATED';
+    currency: ShippingCurrencyCode | null;
+};
+
+export type ShippingPriceDataOnRequest = {
+    kind: 'ON_REQUEST';
+    currency: ShippingCurrencyCode | null;
+};
+
+export type ShippingPriceData = ({
+    kind: 'FREE';
+} & ShippingPriceDataFree) | ({
+    kind: 'FIXED';
+} & ShippingPriceDataFixed) | ({
+    kind: 'FROM';
+} & ShippingPriceDataFrom) | ({
+    kind: 'ESTIMATED_RANGE';
+} & ShippingPriceDataEstimatedRange) | ({
+    kind: 'EXTERNALLY_CALCULATED';
+} & ShippingPriceDataExternallyCalculated) | ({
+    kind: 'ON_REQUEST';
+} & ShippingPriceDataOnRequest);
+
+export type ShippingRateData = {
+    price: ShippingPriceData;
+    basis: 'PER_ITEM' | 'PER_LOT' | 'PER_SHIPMENT' | 'PER_SELLER_ORDER' | null;
+    qualifying_scope: 'ITEM' | 'LOT' | 'SHIPMENT' | 'SELLER_ORDER' | null;
+    /**
+     * Keys: TRANSPORT, PACKING, INSURANCE, HANDLING, INSTALLATION, IMPORT_DUTY, TAX. Unknown keys are rejected.
+     */
+    components: {
+        [key: string]: 'INCLUDED' | 'EXCLUDED';
+    };
+};
+
+export type ShippingServiceData = {
+    code: string;
+    applicability: ShippingApplicabilityData;
+    eligibility: 'OFFERED' | 'NOT_OFFERED' | 'SUBJECT_TO_CONFIRMATION' | null;
+    rate: ShippingRateData | null;
+    lead_times: ShippingLeadTimesData;
+    features: Array<'TRACKING' | 'INSURED' | 'WHITE_GLOVE' | 'INSTALLATION' | 'PACKING'>;
+    arranger: ShippingActorData | null;
+    performer: ShippingActorData | null;
+};
+
+export type ShippingPostalFormDataExact = {
+    kind: 'EXACT';
+    code: string;
+};
+
+export type ShippingPostalFormDataGermanPrefix = {
+    kind: 'GERMAN_PREFIX';
+    prefix: string;
+};
+
+export type ShippingPostalFormDataGermanRange = {
+    kind: 'GERMAN_RANGE';
+    first: string;
+    last: string;
+};
+
+export type ShippingPostalFormData = ({
+    kind: 'EXACT';
+} & ShippingPostalFormDataExact) | ({
+    kind: 'GERMAN_PREFIX';
+} & ShippingPostalFormDataGermanPrefix) | ({
+    kind: 'GERMAN_RANGE';
+} & ShippingPostalFormDataGermanRange);
+
+export type ShippingAreaDataAnywhere = {
+    kind: 'ANYWHERE';
+};
+
+export type ShippingAreaDataDomestic = {
+    kind: 'DOMESTIC';
+};
+
+export type ShippingAreaDataCountry = {
+    kind: 'COUNTRY';
+    code: string;
+    reference_release: 'iso-codes-4.20.1';
+};
+
+export type ShippingAreaDataSubdivision = {
+    kind: 'SUBDIVISION';
+    code: string;
+    reference_release: 'iso-codes-4.20.1';
+};
+
+export type ShippingAreaDataPostal = {
+    kind: 'POSTAL';
+    version: 'POSTAL_RULE_V1';
+    country: string;
+    reference_release: 'iso-codes-4.20.1';
+    form: ShippingPostalFormData;
+};
+
+export type ShippingAreaDataUnresolved = {
+    kind: 'UNRESOLVED';
+    assertion: string;
+};
+
+export type ShippingAreaData = ({
+    kind: 'ANYWHERE';
+} & ShippingAreaDataAnywhere) | ({
+    kind: 'DOMESTIC';
+} & ShippingAreaDataDomestic) | ({
+    kind: 'COUNTRY';
+} & ShippingAreaDataCountry) | ({
+    kind: 'SUBDIVISION';
+} & ShippingAreaDataSubdivision) | ({
+    kind: 'POSTAL';
+} & ShippingAreaDataPostal) | ({
+    kind: 'UNRESOLVED';
+} & ShippingAreaDataUnresolved);
+
+/**
+ * One whole advertised site assertion. ISO geography constructors validate codes, release and compatibility. Confidential assertions are protected management data.
+ */
+export type ShippingSiteGeographyData = {
+    reference_release: 'iso-codes-4.20.1';
+    address_text: string | null;
+    country: string | null;
+    subdivision: string | null;
+    postal_code: string | null;
+};
+
+export type ShippingSitePointData = {
+    latitude_degrees: number;
+    longitude_degrees: number;
+};
+
+export type ShippingSitePositionData = {
+    point: ShippingSitePointData;
+    precision: 'PREMISES' | 'STREET' | 'LOCALITY' | 'REPRESENTATIVE';
+    accuracy_metres: number | null;
+};
+
+export type ShippingSiteDataPartyLocation = {
+    kind: 'PARTY_LOCATION';
+    party_location_id: string;
+};
+
+export type ShippingSiteDataAsserted = {
+    kind: 'ASSERTED';
+    geography: ShippingSiteGeographyData | null;
+    position: ShippingSitePositionData | null;
+};
+
+export type ShippingSiteData = ({
+    kind: 'PARTY_LOCATION';
+} & ShippingSiteDataPartyLocation) | ({
+    kind: 'ASSERTED';
+} & ShippingSiteDataAsserted);
+
+/**
+ * Zones are ordered; service codes are unique within each zone.
+ */
+export type ShippingZoneData = {
+    areas: Array<ShippingAreaData>;
+    applicability: ShippingApplicabilityData;
+    services: Array<ShippingServiceData>;
+};
+
+export type ShippingCoverageData = {
+    reference_release: 'iso-codes-4.20.1';
+    completeness: 'PARTIAL' | 'COMPLETE';
+    applicability: ShippingApplicabilityData;
+    exclusions: Array<ShippingAreaData>;
+    zones: Array<ShippingZoneData>;
+    dispatch_origin: ShippingSiteData | null;
+};
+
+export type ShippingPolicyDataProhibited = {
+    kind: 'PROHIBITED';
+};
+
+export type ShippingPolicyDataCoverage = {
+    kind: 'COVERAGE';
+    coverage: ShippingCoverageData;
+};
+
+export type ShippingPolicyData = ({
+    kind: 'PROHIBITED';
+} & ShippingPolicyDataProhibited) | ({
+    kind: 'COVERAGE';
+} & ShippingPolicyDataCoverage);
+
+export type ShippingCollectionArrangementDataByAppointment = {
+    kind: 'BY_APPOINTMENT';
+};
+
+export type ShippingCollectionArrangementDataContactToArrange = {
+    kind: 'CONTACT_TO_ARRANGE';
+};
+
+export type ShippingCollectionArrangementDataWindow = {
+    kind: 'WINDOW';
+    duration: ShippingTimeData;
+};
+
+export type ShippingCollectionArrangementData = ({
+    kind: 'BY_APPOINTMENT';
+} & ShippingCollectionArrangementDataByAppointment) | ({
+    kind: 'CONTACT_TO_ARRANGE';
+} & ShippingCollectionArrangementDataContactToArrange) | ({
+    kind: 'WINDOW';
+} & ShippingCollectionArrangementDataWindow);
+
+export type ShippingCollectionData = {
+    applicability: ShippingApplicabilityData;
+    dependency: 'INDEPENDENT' | 'SHIPPING';
+    eligibility: 'OFFERED' | 'NOT_OFFERED' | 'SUBJECT_TO_CONFIRMATION' | null;
+    site: ShippingSiteData | null;
+    arrangement: ShippingCollectionArrangementData | null;
+};
+
+/**
+ * Strict versioned advertised terms. All fields, including nullable fields, are required; unknown fields/codes are rejected. Absence, explicit prohibition and retirement have different meanings. This contract supplies no quote.
+ */
+export type AdvertisedDeliveryTermsData = {
+    schema: 'SHIP_TERMS_V1';
+    shipping: ShippingPolicyData | null;
+    collection: ShippingCollectionData | null;
+};
+
+export type ShippingProfileContentData = {
+    name: string;
+    attributedPartyId: string | null;
+    terms: AdvertisedDeliveryTermsData;
+};
+
+/**
+ * Protected provenance link; never fetched during writes, never grants authority. No buyer addresses. Excluded from responses, public indexes, signals and logs.
+ */
+export type ShippingEvidenceInputData = {
+    reference: string;
+    assertion: string;
+};
+
+export type CreateShippingProfileData = {
+    import?: ShippingImportWriteData;
+    creationKey: string;
+    content: ShippingProfileContentData;
+    evidence: Array<ShippingEvidenceInputData>;
+};
+
+/**
+ * Complete explicit replacement. Empty evidence corrects the current evidence set; prior protected evidence remains in history. Retired profiles require restoration before content or evidence correction.
+ */
+export type ReplaceShippingProfileData = {
+    import?: ShippingImportWriteData;
+    expectedRevision: number;
+    content: ShippingProfileContentData;
+    evidence: Array<ShippingEvidenceInputData>;
+};
+
+export type ShippingProfileLifecycleData = {
+    import?: ShippingImportWriteData;
+    expectedRevision: number;
+};
+
+export type AssignShippingDefaultData = {
+    import?: ShippingImportWriteData;
+    expectedRevision: number;
+    shippingProfileId: string;
+};
+
+export type ClearShippingDefaultData = {
+    import?: ShippingImportWriteData;
+    expectedRevision: number;
+};
+
+export type ShippingProfileSummaryData = {
+    shippingProfileId: string;
+    listingSourceId: string;
+    name: string;
+    managementRevision: number;
+    termsRevision: number;
+    lifecycle: 'ACTIVE' | 'RETIRED';
+};
+
+/**
+ * Protected management detail; retains retired references and site assertions, excludes evidence. Never expose this DTO as public collection addresses.
+ */
+export type ShippingProfileData = {
+    shippingProfileId: string;
+    listingSourceId: string;
+    managementRevision: number;
+    termsRevision: number;
+    lifecycle: 'ACTIVE' | 'RETIRED';
+    content: ShippingProfileContentData;
+};
+
+/**
+ * Initial absent state has revision 1. Clear retains an advancing revision tombstone; retirement retains the selected identity and ineligible status. No implicit fallback.
+ */
+export type ShippingDefaultData = {
+    listingSourceId: string;
+    revision: number;
+    shippingProfileId: string | null;
+    eligibility: 'ACTIVE' | 'RETIRED' | 'MISSING' | null;
+};
+
 /**
  * Audit actor encoded as a plain string.
  * Values are either the literal `SYSTEM` or the User ID of the acting user.
@@ -11,10 +670,125 @@ export type ClientOptions = {
  */
 export type ActorData = 'SYSTEM' | string;
 
+export type AdminProductListingVersion = {
+    expectedVersion: number;
+};
+
+/**
+ * Omission preserves. Monetary amounts are nonnegative minor units, at most 9223372036854775807. Null clears price, each estimate and availability. URL/images/whole auction cannot be null. Title/description and every field outside this whitelist are read-only.
+ */
+export type UpdateAdminProductListing = {
+    expectedVersion: number;
+    price?: AdminProductListingPrice | null;
+    priceEstimateMin?: AdminProductListingMonetaryPrice | null;
+    priceEstimateMax?: AdminProductListingMonetaryPrice | null;
+    availability?: ListingAvailabilityData | null;
+    /**
+     * Value replaces; null rejected.
+     */
+    url?: string;
+    /**
+     * Ordered replacement using existing normalized URL identity; empty array empties it. Null rejected.
+     */
+    images?: Array<string>;
+    auction?: AdminProductListingAuctionPatch;
+};
+
+export type AdminProductListingPrice = {
+    type: 'MONETARY';
+    currency: CurrencyData;
+    amount: number;
+} | {
+    type: 'ON_REQUEST';
+};
+
+export type AdminProductListingMonetaryPrice = {
+    currency: CurrencyData;
+    amount: number;
+};
+
+/**
+ * Merge omitted lot facts. Null auctionId detaches membership only; an all-empty result normalizes to absence. Whole auction null is rejected. Auction must exist for this ListingSource.
+ */
+export type AdminProductListingAuctionPatch = {
+    auctionId?: string | null;
+    /**
+     * Nonblank and NUL-free after outer whitespace trimming; bounded to 128 UTF-8 bytes.
+     */
+    lotNumber?: string | null;
+    cataloguePosition?: number | null;
+    /**
+     * Omitted/null container preserves every instant; clear optional instants individually.
+     */
+    timing?: {
+        biddingOpens?: string | null;
+        scheduledCloses?: string | null;
+        reportedClosedAt?: string | null;
+    } | null;
+};
+
+export type AdminProductListingMutation = {
+    productListingId: string;
+    expectedVersion: number;
+    outcome: 'CHANGED' | 'UNCHANGED';
+};
+
+export type AdminProductListingSummary = {
+    productListingId: string;
+    readonly productListingTitleSlugId: string;
+    source: ProductListingSourceData;
+    readonly sourceListingId: string;
+    title: LocalizedTextData | null;
+    price: ProductListingPriceData | null;
+    priceEstimateMin: PriceData | null;
+    priceEstimateMax: PriceData | null;
+    availability: ListingAvailabilityData | null;
+    lifecycle: ListingLifecycleData;
+    auctionId: string | null;
+    expectedVersion: number;
+    readonly created: string;
+    readonly updated: string;
+};
+
+export type AdminProductListingDetails = AdminProductListingSummary & {
+    description: LocalizedTextData | null;
+    url: string;
+    /**
+     * Privileged canonical URLs. Preview respects sensitive/unassessed status; public visibility is unchanged.
+     */
+    images: Array<string>;
+    auction: AdminProductListingAuction | null;
+    readonly saleObservation: {
+        observedAt: string;
+        fxRateId: string;
+    } | null;
+};
+
+export type AdminProductListingAuction = {
+    auctionId: string | null;
+    lotNumber: string | null;
+    cataloguePosition: number | null;
+    timing: {
+        biddingOpens: string | null;
+        scheduledCloses: string | null;
+        reportedClosedAt: string | null;
+    };
+};
+
+export type AdminProductListingPage = {
+    items: Array<AdminProductListingSummary>;
+    size: number;
+    /**
+     * Omitted on the final page.
+     */
+    searchAfter?: string;
+};
+
 /**
  * Lightweight ProductListing summary for search and similar-listing results.
  */
 export type ProductListingSummaryData = {
+    shipping: AdvertisedListingShippingData | null;
     productListingId: string;
     /**
      * Immutable Aura-owned public locator. Omitted when the listing is redacted as hidden.
@@ -37,6 +811,10 @@ export type ProductListingSummaryData = {
     images: Array<ProductListingImageData>;
     contentPolicy?: ContentPolicyData | null;
     updated: string;
+    /**
+     * Advertised inventory geography on geographic search summaries; selected by the backend from eligible source evidence.
+     */
+    geography?: ListingGeographyData;
 };
 
 export type ProductListingSummaryPriceValuationData = {
@@ -53,6 +831,7 @@ export type ProductListingSummaryPriceValuationData = {
  * Canonical ProductListing detail inside a personalized response wrapper.
  */
 export type ProductListingDetailsData = {
+    shipping: AdvertisedListingShippingData | null;
     productListingId: string;
     /**
      * Immutable Aura-owned public locator. Omitted when the listing is redacted as hidden.
@@ -61,6 +840,9 @@ export type ProductListingDetailsData = {
     eventId: string;
     source: ProductListingSourceData;
     sourceListingId: string;
+    /**
+     * Original normalized title. Truncation ellipses remain stable; legacy constructor trailing whitespace is presented trimmed.
+     */
     productTitle?: LocalizedTextData | null;
     productDescription?: LocalizedTextData | null;
     title?: LocalizedTextData | null;
@@ -175,6 +957,7 @@ export type ProductListingSearchCursorData = {
  * User-specific state information for a product
  */
 export type ProductListingUserStateData = {
+    shipping?: PersonalizedListingShippingData;
     watchlist: WatchlistUserStateData;
     contentVisibility: ContentVisibilityUserStateData;
     notification: NotificationUserStateData;
@@ -218,7 +1001,7 @@ export type NotificationUserStateData = {
 /**
  * User's saved-search-filter match state for a product.
  * When `matched` is `true`, at least one of the user's saved search filters matched this product.
- * `userSearchFilterId`, `userSearchFilterName`, `matchReason`, and `matchFeedback` are only
+ * `userSearchFilterId`, `userSearchFilterName`, and `matchFeedback` are only
  * present when `matched` is `true`.
  * Defaults to `matched: false` when the user has no saved search filters or none of them matched.
  * When `hidden` is `true`, the match exceeds the user's monthly search-filter match quota and the
@@ -228,6 +1011,10 @@ export type NotificationUserStateData = {
  *
  */
 export type SearchFilterUserStateData = {
+    /**
+     * Present on saved-filter match listing responses when the match used an explicit FX shipping maximum.
+     */
+    shippingMatchValuation?: ShippingMatchValuationData;
     /**
      * Whether any of the user's saved search filters matched this product. Defaults to `false`.
      */
@@ -253,13 +1040,6 @@ export type SearchFilterUserStateData = {
      *
      */
     userSearchFilterName?: string;
-    /**
-     * A human-readable explanation of why the saved search filter matched this product.
-     * Only set for AI-enhanced filters (i.e. those with `search.enhancedSearchDescription`).
-     * Present only when `matched` is `true` and an enhanced match reason exists; omitted otherwise.
-     *
-     */
-    matchReason?: string;
     /**
      * Optional feedback previously recorded by the authenticated user for this saved-search match.
      * Present only when `matched` is `true` and feedback has been explicitly stored for the match.
@@ -297,6 +1077,45 @@ export type ProductListingPriceData = {
     amount: number;
 } | {
     type: 'ON_REQUEST';
+};
+
+/**
+ * HalfUp display amount in requested currency minor units (JPY/KRW 0 decimals, others 2). Omitted when the snapshot or a required quote is unavailable, including in a complete legacy 19-currency snapshot.
+ */
+export type ProductListingHistoryPriceDisplayData = PriceData & {
+    /**
+     * Immutable FX snapshot selected at or before the entry timestamp.
+     */
+    fxRateId: string;
+    /**
+     * Capture time of that snapshot, never after the history entry timestamp.
+     */
+    capturedAt: string;
+};
+
+/**
+ * Unchanged source estimate with optional historical display projection.
+ */
+export type ProductListingHistoryEstimateData = PriceData & {
+    display?: ProductListingHistoryPriceDisplayData;
+};
+
+/**
+ * Unchanged source main price; only monetary values can have historical display projections.
+ */
+export type ProductListingHistoryMainPriceData = {
+    type: 'MONETARY';
+    currency: CurrencyData;
+    amount: number;
+    display?: ProductListingHistoryPriceDisplayData;
+} | {
+    type: 'ON_REQUEST';
+};
+
+export type ProductListingHistoryPricingData = {
+    price?: ProductListingHistoryMainPriceData | null;
+    priceEstimateMin?: ProductListingHistoryEstimateData | null;
+    priceEstimateMax?: ProductListingHistoryEstimateData | null;
 };
 
 /**
@@ -364,9 +1183,21 @@ export type LanguageData = 'de' | 'en' | 'fr' | 'es' | 'it' | 'zh' | 'pt' | 'pl'
  * - HKD: Hong Kong Dollar
  * - SGD: Singapore Dollar
  * - CHF: Swiss Franc
+ * - ZAR: South African Rand
+ * - SEK: Swedish Krona
+ * - DKK: Danish Krone
+ * - NOK: Norwegian Krone
+ * - KRW: South Korean Won
+ * - INR: Indian Rupee
+ * - TWD: New Taiwan Dollar
+ * - HUF: Hungarian Forint
+ * - RON: Romanian Leu
+ * - MXN: Mexican Peso
+ * - THB: Thai Baht
+ * - ARS: Argentine Peso (2 minor-unit decimal places)
  *
  */
-export type CurrencyData = 'EUR' | 'GBP' | 'USD' | 'AUD' | 'CAD' | 'NZD' | 'CNY' | 'BRL' | 'PLN' | 'TRY' | 'JPY' | 'CZK' | 'RUB' | 'AED' | 'SAR' | 'HKD' | 'SGD' | 'CHF';
+export type CurrencyData = 'EUR' | 'GBP' | 'USD' | 'AUD' | 'CAD' | 'NZD' | 'CNY' | 'BRL' | 'PLN' | 'TRY' | 'JPY' | 'CZK' | 'RUB' | 'AED' | 'SAR' | 'HKD' | 'SGD' | 'CHF' | 'ZAR' | 'SEK' | 'DKK' | 'NOK' | 'KRW' | 'INR' | 'TWD' | 'HUF' | 'RON' | 'MXN' | 'THB' | 'ARS';
 
 /**
  * User preference for distance/size presentation:
@@ -521,9 +1352,12 @@ export type ProductListingHistoryPayloadData = ProductListingDiscoveryHistoryPay
 export type ProductListingDiscoveryHistoryPayloadData = {
     listingSourceId: string;
     sourceListingId: string;
+    /**
+     * Normalized discovery title, with legacy constructor trailing whitespace presented trimmed without rewriting the stored event.
+     */
     title?: LocalizedTextData;
     description?: LocalizedTextData;
-    pricing: ProductListingPricingData;
+    pricing: ProductListingHistoryPricingData;
     availability: ListingAvailabilityData | null;
     url: string;
     imageCount: number;
@@ -532,7 +1366,7 @@ export type ProductListingDiscoveryHistoryPayloadData = {
 
 export type ProductListingChangedHistoryPayloadData = {
     /**
-     * Deterministic semantic-change order: main price, minimum estimate, maximum estimate, availability, URL, images, auction, lifecycle, sale observation.
+     * Deterministic semantic-change order: main price, minimum estimate, maximum estimate, availability, URL, images, auction, lifecycle, sale observation, delivery.
      */
     changes: Array<ProductListingHistoryChangeData>;
 };
@@ -540,18 +1374,18 @@ export type ProductListingChangedHistoryPayloadData = {
 /**
  * Typed semantic change.
  */
-export type ProductListingHistoryChangeData = ProductListingMainPriceHistoryChangeData | ProductListingPriceHistoryChangeData | ProductListingAvailabilityHistoryChangeData | ProductListingUrlHistoryChangeData | ProductListingImagesHistoryChangeData | ProductListingAuctionHistoryChangeData | ProductListingWithdrawalHistoryChangeData | ProductListingRestorationHistoryChangeData | ProductListingSaleObservationHistoryChangeData;
+export type ProductListingHistoryChangeData = ProductListingDeliveryHistoryChangeData | ProductListingMainPriceHistoryChangeData | ProductListingPriceHistoryChangeData | ProductListingAvailabilityHistoryChangeData | ProductListingUrlHistoryChangeData | ProductListingImagesHistoryChangeData | ProductListingAuctionHistoryChangeData | ProductListingWithdrawalHistoryChangeData | ProductListingRestorationHistoryChangeData | ProductListingSaleObservationHistoryChangeData;
 
 export type ProductListingMainPriceHistoryChangeData = {
     type: 'MAIN_PRICE_CHANGED';
-    previous: ProductListingPriceData | null;
-    current: ProductListingPriceData | null;
+    previous: ProductListingHistoryMainPriceData | null;
+    current: ProductListingHistoryMainPriceData | null;
 };
 
 export type ProductListingPriceHistoryChangeData = {
     type: 'MINIMUM_ESTIMATE_CHANGED' | 'MAXIMUM_ESTIMATE_CHANGED';
-    previous: PriceData | null;
-    current: PriceData | null;
+    previous: ProductListingHistoryEstimateData | null;
+    current: ProductListingHistoryEstimateData | null;
 };
 
 export type ProductListingAvailabilityHistoryChangeData = {
@@ -636,6 +1470,10 @@ export type ApiErrorSource = {
  * ProductListing search criteria used by saved search filters.
  */
 export type ProductListingSearchData = {
+    /**
+     * Complete shipping predicate. Omit to leave unchanged in PATCH; null clears it. Saved country values pin their reference release and interpretation independently of browsing preferences.
+     */
+    shipping?: ShippingSearchData | null;
     language?: LanguageData;
     currency?: CurrencyData;
     productQuery?: Array<string>;
@@ -664,12 +1502,14 @@ export type ProductListingSearchData = {
     updated?: RangeQueryDateTime | null;
     lotBiddingOpens?: RangeQueryDateTime | null;
     lotScheduledCloses?: RangeQueryDateTime | null;
+    geography?: GeographicSearchData;
 };
 
 /**
  * Request body for creating a new search filter
  */
 export type PostUserSearchFilterData = {
+    acceptShippingDestination?: AcceptShippingDestinationData;
     /**
      * User-defined name for the search filter (max 255 characters, will be truncated if longer)
      */
@@ -684,6 +1524,7 @@ export type PostUserSearchFilterData = {
  *
  */
 export type PatchUserSearchFilterData = {
+    acceptShippingDestination?: AcceptShippingDestinationData;
     /**
      * User-defined name for the search filter (max 255 characters, will be truncated if longer)
      */
@@ -728,6 +1569,10 @@ export type PatchUserSearchFilterMatchData = {
  * Partial ProductListing search criteria. Omitted fields are unchanged. `enhancedSearchDescription`, `auctionId`, price, date ranges, and the availability query may be cleared with `null`; availability, orderability, and includeUnspecifiedAvailability` must be supplied together or all be `null`.
  */
 export type PatchProductListingSearchData = {
+    /**
+     * Complete shipping predicate. Omit to leave unchanged in PATCH; null clears it. Saved country values pin their reference release and interpretation independently of browsing preferences.
+     */
+    shipping?: ShippingSearchData | null;
     language?: LanguageData;
     currency?: CurrencyData;
     productQuery?: Array<string> | null;
@@ -752,6 +1597,10 @@ export type PatchProductListingSearchData = {
     updated?: RangeQueryDateTime | null;
     lotBiddingOpens?: RangeQueryDateTime | null;
     lotScheduledCloses?: RangeQueryDateTime | null;
+    /**
+     * Omitted leaves the private snapshot unchanged; null clears; an object replaces the complete geography predicate.
+     */
+    geography?: GeographicSearchData | null;
 };
 
 /**
@@ -813,6 +1662,7 @@ export type PatchResourceStateData = 'ACTIVE' | 'INACTIVE_BY_USER';
  * Persisted match record for one of a user's saved search filters.
  */
 export type SearchFilterProductMatchData = {
+    shippingMatchValuation?: ShippingMatchValuationData;
     /**
      * Unique identifier of the user who owns the matched search filter.
      */
@@ -833,10 +1683,6 @@ export type SearchFilterProductMatchData = {
      * Product event that produced this match.
      */
     originEventId: string;
-    /**
-     * Enhanced-match explanation, when matching supplied one.
-     */
-    enhancedMatchReason?: string;
     /**
      * Optional feedback recorded by the user for this saved-search match.
      */
@@ -906,7 +1752,7 @@ export type UserSearchFilterCollectionData = {
  * The value is one of the capabilities supported by the canonical access-token and OAuth flows.
  *
  */
-export type AccessTokenScopeData = 'product-listings:write' | 'listing-sources:write' | 'users:read' | 'users:write' | 'access-tokens:read' | 'access-tokens:write' | 'search-filters:write' | 'watchlist:read' | 'watchlist:write';
+export type AccessTokenScopeData = 'auctions:read' | 'auctions:write' | 'listing-sources:read' | 'parties:read' | 'parties:write' | 'partnership-applications:read' | 'partnership-applications:write' | 'partnerships:read' | 'partnerships:write' | 'admin-overview:read' | 'search-filters:read' | 'notifications:read' | 'notifications:write' | 'product-listings:read' | 'product-listings:write' | 'listing-sources:write' | 'users:read' | 'users:write' | 'access-tokens:read' | 'access-tokens:write' | 'search-filters:write' | 'watchlist:read' | 'watchlist:write';
 
 /**
  * Token type returned for Aura Historia access tokens.
@@ -972,12 +1818,15 @@ export type AdminAccessTokenData = {
 };
 
 /**
- * Access-token read model.
- * `POST /api/v1/me/access-tokens` returns the plaintext bearer token once;
- * list/get/update endpoints return the masked display value instead.
+ * Secret-free metadata for an access token owned by the authenticated user.
+ * List, get, and update responses omit the bearer token entirely; the plaintext is only returned by the create operation.
  *
  */
-export type GetAccessTokenData = {
+export type OwnAccessTokenData = {
+    /**
+     * User who owns the access token.
+     */
+    userId: string;
     /**
      * Unique identifier of the access token.
      */
@@ -987,38 +1836,43 @@ export type GetAccessTokenData = {
      */
     name: string;
     /**
-     * Granted access-token scopes. Omitted when the token has no scopes.
+     * Granted access-token scopes. An empty scope set is returned as an empty array.
      */
-    scope?: Array<AccessTokenScopeData>;
+    scopes: Array<AccessTokenScopeData>;
     /**
-     * Plaintext or masked bearer token value.
-     * Create responses return the full token once; subsequent reads return a masked value such as `aurahistoria_abcdefghijk_****`.
-     *
+     * Origin recorded by the access-token model.
      */
-    token: string;
-    tokenType: AccessTokenTypeData;
+    origin: string;
     /**
-     * Optional absolute expiration timestamp in RFC 3339 format.
+     * Optional RFC3339 expiration timestamp; omitted when the token does not expire and returned for expired and current tokens.
      */
-    expiresAt?: string | null;
-    /**
-     * Optional non-negative number of seconds remaining until expiry.
-     */
-    expiresIn?: number | null;
-    createdBy: ActorData;
-    updatedBy: ActorData;
-    /**
-     * Timestamp when the access token was created.
-     */
-    created: string;
-    /**
-     * Timestamp when the access token metadata was last updated.
-     */
-    updated: string;
+    expires?: string;
 };
 
 /**
- * Request body for creating an Aura Historia access token.
+ * Minimal access-token creation result. The plaintext bearer token is returned only once.
+ * Subsequent list, get, and update operations return secret-free metadata without any token value.
+ *
+ */
+export type CreatedAccessTokenData = {
+    /**
+     * User who owns the access token.
+     */
+    userId: string;
+    /**
+     * Unique identifier of the created access token.
+     */
+    accessTokenId: string;
+    /**
+     * Plaintext bearer token. Store it securely; it cannot be retrieved again.
+     */
+    accessToken: string;
+};
+
+/**
+ * Request body for creating an Aura Historia access token. `scopes` is required, including
+ * when the requested scope set is empty. `expires` is optional.
+ *
  */
 export type PostAccessTokenData = {
     /**
@@ -1026,13 +1880,13 @@ export type PostAccessTokenData = {
      */
     name: string;
     /**
-     * Optional scopes granted to the access token. Defaults to an empty set.
+     * Required scopes granted to the access token. Send an empty array for no scopes.
      */
-    scope?: Array<AccessTokenScopeData>;
+    scopes: Array<AccessTokenScopeData>;
     /**
-     * Optional expiration timestamp in RFC 3339 format.
+     * Optional RFC3339 expiration timestamp.
      */
-    expiresAt?: string | null;
+    expires?: string | null;
 };
 
 /**
@@ -1675,6 +2529,10 @@ export type OwnUserAccountData = {
      * Stored preference for showing unassessed or sensitive content.
      */
     showUnassessedOrSensitiveContent: boolean;
+    /**
+     * Whether the current account email has an active grant for email marketing.
+     */
+    readonly marketingEmailConsent: boolean;
     tier: UserTierData;
     role: UserRoleData;
     /**
@@ -1683,9 +2541,7 @@ export type OwnUserAccountData = {
     stripeCustomerId?: string | null;
 };
 
-export type AdminUserAccountData = OwnUserAccountData & {
-    [key: string]: unknown;
-};
+export type AdminUserAccountData = OwnUserAccountData;
 
 /**
  * Required administrator-supplied explanation for suspending a user.
@@ -1722,20 +2578,16 @@ export type UnsuspendUserResponseData = {
 /**
  * Partial admin-only user update payload.
  * All fields are optional. Omitted fields remain unchanged.
- * Only one logical change category may be sent per request: profile/preferences fields, `role`, or `tier`.
+ * Only one logical change category may be sent per request: profile/preferences fields, `role`, or `tier`. `marketingEmailConsent` is read-only and cannot be changed through this payload. The canonical account email is read-only.
  *
  */
 export type PatchAdminUserData = {
     /**
-     * New email address. Null is invalid.
-     */
-    email?: string;
-    /**
-     * New first name.
+     * New first name (truncated to 64 Unicode characters).
      */
     firstName?: string | null;
     /**
-     * New last name.
+     * New last name (truncated to 64 Unicode characters).
      */
     lastName?: string | null;
     /**
@@ -1766,16 +2618,16 @@ export type PatchAdminUserData = {
 
 /**
  * Partial user account update data.
- * All fields are optional - only provided fields will be updated.
+ * All fields are optional - only provided fields will be updated. `marketingEmailConsent` is read-only and cannot be changed through this payload. The canonical account email is read-only.
  *
  */
 export type PatchUserAccountData = {
     /**
-     * New first name (max 64 characters)
+     * New first name (truncated to 64 Unicode characters)
      */
     firstName?: string | null;
     /**
-     * New last name (max 64 characters)
+     * New last name (truncated to 64 Unicode characters)
      */
     lastName?: string | null;
     /**
@@ -1825,8 +2677,8 @@ export type BillingSessionUrlData = {
 };
 
 /**
- * Request body for creating or updating a newsletter subscription.
- * `email` is required; all other fields are optional and may be omitted or set to `null`.
+ * Request body for requesting double opt-in confirmation for a newsletter subscription.
+ * `email` is required; `firstName`, `lastName`, `language`, and `currency` are optional and may be omitted or set to `null`.
  *
  */
 export type PutNewsletterSubscriptionData = {
@@ -1850,6 +2702,13 @@ export type PutNewsletterSubscriptionData = {
      * Optional preferred currency to sync with the subscription
      */
     currency?: CurrencyData | null;
+};
+
+export type ConfirmNewsletterSubscriptionData = {
+    /**
+     * Opaque confirmation capability returned only in the confirmation email fragment.
+     */
+    token: string;
 };
 
 /**
@@ -2842,9 +3701,25 @@ export type PublicAuctionSourceData = {
     slugId: string;
 };
 
+export type AdminAuctionSearchCollectionData = {
+    items: Array<AuctionAdminData>;
+    /**
+     * Number of items returned on this page.
+     */
+    size: number;
+    /**
+     * Opaque cursor, omitted on the terminal page.
+     */
+    searchAfter?: string;
+};
+
 export type PublicAuctionDirectoryCursorData = {
     created: string;
     auctionId: string;
+    /**
+     * Present for scheduled sorting; null if the selected role instant is missing. Omitted for created sorting.
+     */
+    scheduled?: string | null;
     scope: PublicAuctionDirectoryCursorScopeData;
 };
 
@@ -2853,6 +3728,14 @@ export type PublicAuctionDirectoryCursorScopeData = {
     format: AuctionFormatData | null;
     reportedStatus: AuctionReportedStatusData | null;
     timeRole: 'BIDDING_OPENS' | 'LIVE_STARTS' | 'LOTS_BEGIN_CLOSING' | 'SCHEDULED_END';
+    /**
+     * Omitted for the default created ordering.
+     */
+    sort?: 'scheduled';
+    /**
+     * Omitted for the default created/descending ordering.
+     */
+    order?: 'asc' | 'desc';
     from: string | null;
     to: string | null;
 };
@@ -2943,6 +3826,526 @@ export type ProductListingSourceData = {
     name: string;
     slugId: string;
 };
+
+/**
+ * Strict server-generated UUIDv7 UserAddress TypeID, returned on creation. No bare UUID or owner input.
+ */
+export type UserAddressId = string;
+
+/**
+ * Nonblank private label, at most 128 UTF-8 bytes, without control characters.
+ */
+export type UserAddressLabel = string;
+
+/**
+ * Verbatim free-text geographic assertions. addressText is required and non-null; no parsed street or PlaceId. Provider-derived values remain separate.
+ */
+export type UserAddressGeography = PartyLocationGeography & {
+    addressText: string;
+};
+
+export type CreateUserAddress = {
+    label: UserAddressLabel;
+    geography: UserAddressGeography;
+};
+
+export type UpdateUserAddress = {
+    expectedVersion: number;
+    label: UserAddressLabel;
+    geography: UserAddressGeography;
+};
+
+export type UserAddressExpectedVersion = {
+    expectedVersion: number;
+};
+
+export type UserAddress = {
+    addressId: UserAddressId;
+    label: UserAddressLabel;
+    geography: UserAddressGeography;
+    inputRevision: number;
+    version: number;
+    preferred: boolean;
+    resolution: UserAddressResolution;
+};
+
+export type UserAddressPage = {
+    items: Array<UserAddress>;
+    next: UserAddressId | null;
+};
+
+/**
+ * Exclusive browsing selector. An ADDRESS reference must belong to the current user. No shipping, billing or residence assertion.
+ */
+export type BrowsingDestination = {
+    kind: 'NONE';
+} | {
+    kind: 'ADDRESS';
+    addressId: UserAddressId;
+} | {
+    kind: 'COUNTRY_POSTAL';
+    /**
+     * Current ISO alpha-2 assertion; never inferred from language/currency/IP.
+     */
+    country: string;
+    /**
+     * Optional verbatim postal assertion, at most 64 UTF-8 bytes.
+     */
+    postalCode?: string | null;
+};
+
+export type BrowsingDestinationView = {
+    version: number;
+    destination: BrowsingDestination;
+};
+
+export type SetBrowsingDestination = {
+    expectedVersion: number;
+    destination: BrowsingDestination;
+};
+
+export type UserAddressDerivedGeography = {
+    geography: PartyLocationGeography | null;
+    position: PartyLocationPosition | null;
+};
+
+/**
+ * Current backend geocoding state, returned with address CRUD/list reads. A unique compatible premises result can supply a point automatically. Coarse results can supply administrative geography only. Expired or revoked evidence is UNAVAILABLE and suppressed. This is browsing enrichment, not address or delivery verification.
+ */
+export type UserAddressResolution = {
+    status: 'PENDING' | 'ACCEPTED' | 'AMBIGUOUS' | 'NO_MATCH' | 'FAILED' | 'BLOCKED' | 'UNAVAILABLE';
+    derived: UserAddressDerivedGeography | null;
+    attribution: UserAddressAttribution | null;
+};
+
+/**
+ * Display the attribution when showing accepted provider-derived geography.
+ */
+export type UserAddressAttribution = {
+    provider: string;
+    attributionUrl: string;
+};
+
+export type SourceLocationDefaultEvidence = {
+    /**
+     * Nonblank opaque source-scoped observation, at most 2048 UTF-8 bytes, without control or line-separator characters. Never fetched.
+     */
+    reference: string;
+    scope: 'ASSOCIATED_BUSINESS' | 'ADVERTISED_INVENTORY';
+};
+
+export type SourceLocationDefaultAssignment = {
+    partyLocationId: PartyLocationId;
+    /**
+     * Explicit associated-business evidence; scope must be ASSOCIATED_BUSINESS.
+     */
+    businessAssociation?: SourceLocationDefaultEvidence | null;
+    /**
+     * Explicit inventory evidence; scope must be ADVERTISED_INVENTORY. Business, legal or correspondence evidence alone never establishes this meaning.
+     */
+    advertisedInventory?: SourceLocationDefaultEvidence | null;
+};
+
+export type SourceLocationDefaultData = {
+    listingSourceId: string;
+    /**
+     * Expected source-default revision; an untouched source has revision 1. Stale writes conflict, including no-ops.
+     */
+    revision: number;
+    assignment: SourceLocationDefaultAssignment | null;
+    /**
+     * Current eligibility of the retained reference, null if no assignment. Retirement preserves the reference but disables inherited geography.
+     */
+    eligibility: 'ACTIVE' | 'RETIRED';
+};
+
+/**
+ * Replaces the one reference and both applicability meanings atomically. Omitted/null evidence means absent, including on replacement. No automatic location selection.
+ */
+export type AssignSourceLocationDefaultData = {
+    /**
+     * Expected source-default revision; an untouched source has revision 1. Stale writes conflict, including no-ops.
+     */
+    expectedRevision: number;
+    partyLocationId: PartyLocationId;
+    /**
+     * Explicit associated-business evidence; scope must be ASSOCIATED_BUSINESS.
+     */
+    businessAssociation?: SourceLocationDefaultEvidence | null;
+    /**
+     * Explicit inventory evidence; scope must be ADVERTISED_INVENTORY. Business, legal or correspondence evidence alone never establishes this meaning.
+     */
+    advertisedInventory?: SourceLocationDefaultEvidence | null;
+};
+
+/**
+ * Changes applicability on the existing, active reference without changing its location ID.
+ */
+export type ChangeSourceLocationDefaultApplicabilityData = {
+    /**
+     * Expected source-default revision; an untouched source has revision 1. Stale writes conflict, including no-ops.
+     */
+    expectedRevision: number;
+    /**
+     * Omitted retains the assertion; null removes it; set requires ASSOCIATED_BUSINESS scope.
+     */
+    businessAssociation?: SourceLocationDefaultEvidence | null;
+    /**
+     * Omitted retains the assertion; null removes it; set requires ADVERTISED_INVENTORY scope.
+     */
+    advertisedInventory?: SourceLocationDefaultEvidence | null;
+};
+
+export type ClearSourceLocationDefaultData = {
+    /**
+     * Expected source-default revision; an untouched source has revision 1. Stale writes conflict, including no-ops.
+     */
+    expectedRevision: number;
+};
+
+/**
+ * Strict UUIDv7 PartyLocation TypeID; bare UUIDs and foreign prefixes are rejected.
+ */
+export type PartyLocationId = string;
+
+/**
+ * Partial caller assertions. At least one geographic field must be present and nonblank. Coordinates are separate. No synchronous geocoding.
+ */
+export type PartyLocationGeography = {
+    referenceRelease: 'iso-codes-4.20.1';
+    /**
+     * Verbatim free-text assertion; at most 4096 UTF-8 bytes. No geocoding or postal inference.
+     */
+    addressText?: string | null;
+    /**
+     * Exact current ISO alpha-2 country in the named immutable release.
+     */
+    country?: string | null;
+    /**
+     * Complete ISO 3166-2 code in the named release; must agree with country when supplied.
+     */
+    subdivision?: string | null;
+    /**
+     * Single-line verbatim postal assertion, at most 64 UTF-8 bytes.
+     */
+    postalCode?: string | null;
+};
+
+/**
+ * Finite caller-asserted WGS84 coordinates with explicit precision. Not geocoder-derived evidence; (0,0) is valid.
+ */
+export type PartyLocationPosition = {
+    latitudeDegrees: number;
+    longitudeDegrees: number;
+    precision: 'PREMISES' | 'STREET' | 'LOCALITY' | 'REPRESENTATIVE';
+    accuracyMetres?: number | null;
+};
+
+export type PartyLocationEvidence = {
+    /**
+     * Opaque nonblank single-line evidence/source reference; never fetched. At most 2048 UTF-8 bytes.
+     */
+    reference: string;
+    observedAt?: string | null;
+    /**
+     * Declared assertion scope; never caller identity, authorization or trust.
+     */
+    scope: 'SITE_DESCRIPTION' | 'REGISTERED_ADDRESS' | 'CORRESPONDENCE_ADDRESS';
+};
+
+export type ExpectedPartyLocation = {
+    id: PartyLocationId;
+    revision: number;
+};
+
+/**
+ * Create an independently identified site with exact public geography. Optional relocates creates a new identity and retires the referenced active site atomically; its Party and revision must match.
+ */
+export type CreatePartyLocationData = {
+    /**
+     * Trimmed nonblank single-line label, at most 255 UTF-8 bytes. Never establishes site identity.
+     */
+    label: string;
+    /**
+     * Business use of a site. No assertion about listing stock, dispatch or pickup.
+     */
+    roles?: Array<'BUSINESS_PREMISES' | 'WAREHOUSE' | 'REGISTERED_ADDRESS' | 'CORRESPONDENCE'>;
+    geography?: PartyLocationGeography | null;
+    position?: PartyLocationPosition | null;
+    evidence?: PartyLocationEvidence | null;
+    relocates?: ExpectedPartyLocation | null;
+};
+
+/**
+ * Same physical site correction only. Omitted members remain unchanged. Geography/position/evidence null clears; non-null geographic objects replace the complete partial assertion. Label and roles reject null. Roles [] clears the set. No-op at the current revision emits no change signal. Relocation uses create with relocates.
+ */
+export type CorrectPartyLocationData = {
+    /**
+     * Trimmed nonblank single-line label, at most 255 UTF-8 bytes. Never establishes site identity.
+     */
+    label?: string;
+    /**
+     * Business use of a site. No assertion about listing stock, dispatch or pickup.
+     */
+    roles?: Array<'BUSINESS_PREMISES' | 'WAREHOUSE' | 'REGISTERED_ADDRESS' | 'CORRESPONDENCE'>;
+    geography?: PartyLocationGeography | null;
+    position?: PartyLocationPosition | null;
+    evidence?: PartyLocationEvidence | null;
+    expectedRevision: number;
+    correction: 'SAME_SITE';
+};
+
+/**
+ * Explicit retirement (RETIRED) or restore (ACTIVE), with CAS. Retains references/history and never auto-selects replacements.
+ */
+export type SetPartyLocationLifecycleData = {
+    expectedRevision: number;
+    lifecycle: 'ACTIVE' | 'RETIRED';
+};
+
+export type PartyLocationData = {
+    id: PartyLocationId;
+    partyId: string;
+    /**
+     * Trimmed nonblank single-line label, at most 255 UTF-8 bytes. Never establishes site identity.
+     */
+    label: string;
+    /**
+     * Business use of a site. No assertion about listing stock, dispatch or pickup.
+     */
+    roles: Array<'BUSINESS_PREMISES' | 'WAREHOUSE' | 'REGISTERED_ADDRESS' | 'CORRESPONDENCE'>;
+    geography?: PartyLocationGeography;
+    position?: PartyLocationPosition;
+    lifecycle: 'ACTIVE' | 'RETIRED';
+    revision: number;
+    inputRevision: number;
+    evidence?: PartyLocationEvidence;
+};
+
+export type PartyLocationsPage = {
+    items: Array<PartyLocationData>;
+    /**
+     * Last returned ID when another row exists; supply as after. Null when exhausted.
+     */
+    next: PartyLocationId | null;
+};
+
+export type PartyLocationManagersPage = {
+    items: Array<PartyLocationManagerData>;
+    /**
+     * Number of returned users.
+     */
+    size: number;
+    /**
+     * Last returned User TypeID, omitted on the terminal page.
+     */
+    searchAfter?: string;
+};
+
+export type PartyLocationManagerData = {
+    userId: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    /**
+     * Independent reasons, EXPLICIT before PARTNERSHIP when both exist.
+     */
+    access: Array<PartyLocationManagerExplicitAccess | PartyLocationManagerPartnershipAccess>;
+};
+
+export type PartyLocationManagerExplicitAccess = {
+    type: 'EXPLICIT';
+};
+
+export type PartyLocationManagerPartnershipAccess = {
+    type: 'PARTNERSHIP';
+    /**
+     * Active Partnerships for this Party, ordered by underlying UUID ascending.
+     */
+    partnershipIds: Array<string>;
+};
+
+export type PartyLocationManagementGrantData = {
+    /**
+     * true grants explicit management/private reads; false removes only the explicit grant. Active partnership membership independently authorizes access. Same-state commands are no-ops.
+     */
+    granted: boolean;
+};
+
+/**
+ * Explicit finite numeric WGS 84 coordinates in degrees; no text, address or preference resolution.
+ */
+export type GeographicOriginData = {
+    latitude: number;
+    longitude: number;
+};
+
+/**
+ * Finite positive radius in the supplied unit, equivalent to at most 20000 kilometres. The supplied amount and unit are preserved in private saved-filter snapshots.
+ */
+export type GeographicRadiusData = {
+    amount: number;
+    unit: 'KILOMETERS' | 'MILES' | 'METERS' | 'YARDS' | 'FEET' | 'INCHES' | 'CENTIMETERS' | 'MILLIMETERS' | 'NAUTICAL_MILES';
+};
+
+/**
+ * AND predicates over the supported definite whole-country projection. Country, service, currency and per-item amount must belong to one offer. Fixed and explicitly denominated free PER_ITEM rates support an inclusive maximum; free is zero. FROM, estimated, external, requested, absent and differently based prices cannot satisfy a maximum. Postal/variant/cart uncertainty cannot become a definite country match. Missing offers do not mean unavailable or collection-only. No query changes the browsing preference; returned shipping still uses current PostgreSQL authority. Omitted destination selects no country. NONE alone disables shipping filtering (clears it in PATCH); otherwise a country or collectionOffered=true is required. Service and maximum require a country. Shipping observation age imposes no expiry.
+ */
+export type ShippingSearchData = {
+    destination?: {
+        kind: 'COUNTRY';
+        /**
+         * Current ISO 3166-1 alpha-2 country in the pinned release.
+         */
+        country: string;
+    } | {
+        kind: 'NONE';
+    };
+    referenceRelease?: 'iso-codes-4.20.1';
+    /**
+     * Default compares advertised source currency. FX_V1 requires maximumPerItem and compares HalfUp converted amounts in its target currency using the persisted browsing snapshot, pinned across continuation.
+     */
+    interpretation?: 'WHOLE_COUNTRY_PER_ITEM_V1' | 'WHOLE_COUNTRY_PER_ITEM_FX_V1';
+    /**
+     * Exact advertised service code; requires a destination country.
+     */
+    service?: string;
+    /**
+     * Inclusive per-item charge in minor units. Currency is the advertised source currency by default, or the explicit target under FX_V1, independently of browsing display currency. Only fixed/known-currency free per-item offers match. No purchase quantity or complete landed cost is implied.
+     */
+    maximumPerItem?: {
+        /**
+         * Inclusive maximum in minor units.
+         */
+        amount: number;
+        currency: CurrencyData;
+    };
+    /**
+     * True requires independently definite offered collection. False adds no collection constraint.
+     */
+    collectionOffered?: boolean;
+};
+
+/**
+ * Explicit create/PATCH acceptance guard. The authored search.shipping destination country must equal the authorized owned address or selected preference's submitted country (or subdivision country). No selection, missing asserted country or mismatch is BAD_BODY_VALUE. Ownership/current-account rules apply; delegated callers additionally require users:read. Only the country value/reference/interpretation is saved; postal, street, provider evidence and mutable references are discarded. Later address/preference edits or deletion never move a saved predicate. Omission accepts the authored country directly. No preference is changed.
+ */
+export type AcceptShippingDestinationData = {
+    kind: 'ADDRESS';
+    addressId: UserAddressId;
+} | {
+    kind: 'PREFERENCE';
+};
+
+/**
+ * At least one country, subdivision, radius or distance order is required. Sets are OR; distinct geographic predicates are AND. Subdivisions must belong to a supplied country when countries is nonempty. Absence excludes a result. Radius and ordering require an explicit numeric origin; an origin or approximate mode without proximity is invalid. Strict proximity admits PREMISES only; approximate also admits STREET, LOCALITY and REPRESENTATIVE. Distance ordering is incompatible with the existing sort. Saved filters retain a private immutable snapshot until replaced.
+ */
+export type GeographicSearchData = {
+    countries?: Array<string>;
+    subdivisions?: Array<string>;
+    origin?: GeographicOriginData;
+    radius?: GeographicRadiusData;
+    mode?: 'STRICT' | 'APPROXIMATE';
+    distanceOrder?: 'ASC' | 'DESC';
+};
+
+/**
+ * Public advertised-inventory geography selected by the backend. Distance is to recorded evidence, not verified object position or journey distance. Display is rounded to 0.1 km for premises, 1 km for street and 10 km for locality/representative evidence.
+ */
+export type ListingGeographyData = {
+    locationId: string;
+    basis: 'SOURCE_DEFAULT_DERIVED';
+    referenceRelease: string;
+    country?: string;
+    subdivision?: string;
+    point?: GeographicOriginData;
+    precision?: 'PREMISES' | 'STREET' | 'LOCALITY' | 'REPRESENTATIVE';
+    distanceKm?: number;
+};
+
+/**
+ * Repeat with the same query. distanceKm is required exactly when ordering by distance; it is an unrounded continuation value.
+ */
+export type PartyLocationDiscoveryCursorData = {
+    locationId: string;
+    distanceKm?: number;
+};
+
+export type PublicPartyLocationData = {
+    partyId: string;
+    partyName: string;
+    locationId: string;
+    label: string;
+    basis: 'CALLER_ASSERTED' | 'ACCEPTED_DERIVED' | 'MIXED_ASSERTED_AND_DERIVED';
+    country?: string;
+    subdivision?: string;
+    point?: GeographicOriginData;
+    precision?: 'PREMISES' | 'STREET' | 'LOCALITY' | 'REPRESENTATIVE';
+    /**
+     * Rounded display distance following evidence precision.
+     */
+    distanceKm?: number;
+};
+
+export type AdminProductListingSummaryWritable = {
+    productListingId: string;
+    source: ProductListingSourceData;
+    price: ProductListingPriceData | null;
+    priceEstimateMin: PriceData | null;
+    priceEstimateMax: PriceData | null;
+    availability: ListingAvailabilityData | null;
+    lifecycle: ListingLifecycleData;
+    auctionId: string | null;
+    expectedVersion: number;
+};
+
+export type AdminProductListingDetailsWritable = AdminProductListingSummaryWritable & {
+    url: string;
+    /**
+     * Privileged canonical URLs. Preview respects sensitive/unassessed status; public visibility is unchanged.
+     */
+    images: Array<string>;
+    auction: AdminProductListingAuction | null;
+};
+
+export type AdminProductListingPageWritable = {
+    items: Array<AdminProductListingSummaryWritable>;
+    size: number;
+    /**
+     * Omitted on the final page.
+     */
+    searchAfter?: string;
+};
+
+/**
+ * User-owned account information for `/api/v1/me/account`. Role, tier, and Stripe customer ID are read-only here.
+ */
+export type OwnUserAccountDataWritable = {
+    /**
+     * Unique identifier for the user.
+     */
+    userId: string;
+    /**
+     * User's email address.
+     */
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    language?: LanguageData | null;
+    currency?: CurrencyData | null;
+    measurementUnit?: MeasurementUnitData | null;
+    /**
+     * Stored preference for showing unassessed or sensitive content.
+     */
+    showUnassessedOrSensitiveContent: boolean;
+    tier: UserTierData;
+    role: UserRoleData;
+    /**
+     * Persisted Stripe customer identifier, omitted when absent.
+     */
+    stripeCustomerId?: string | null;
+};
+
+export type AdminUserAccountDataWritable = OwnUserAccountDataWritable;
 
 export type PutWoocommerceListingSourceIngestionConfigurationDataWritable = {
     /**
@@ -3084,9 +4487,17 @@ export type ListAuctionsData = {
         timeRole?: 'BIDDING_OPENS' | 'LIVE_STARTS' | 'LOTS_BEGIN_CLOSING' | 'SCHEDULED_END';
         from?: string;
         to?: string;
+        /**
+         * `created` sorts by creation time; `scheduled` requires `timeRole` and sorts on that role's instant, with missing instants last when no window is specified.
+         */
+        sort?: 'created' | 'scheduled';
+        /**
+         * Defaults to `desc` for created and `asc` for scheduled.
+         */
+        order?: 'asc' | 'desc';
         pageSize?: number;
         /**
-         * Complete returned JSON cursor. Its scope must exactly match the source, format, reported-status, and exact-time filters of this request.
+         * Complete returned JSON cursor. Its scope must match the source, format, reported-status, exact-time filters, sort and order of this request.
          */
         searchAfter?: string;
     };
@@ -3102,7 +4513,7 @@ export type ListAuctionsErrors = {
 
 export type ListAuctionsResponses = {
     /**
-     * Bounded newest-first Auction directory. Anonymous successful 200 responses without Authorization use `public, max-age=0, s-maxage=60, stale-if-error=0`; requests with any Authorization header and all non-200 responses use `private, no-store`.
+     * Bounded Auction directory, newest-created-first by default. Scheduled order uses the chosen role instant, with Auction ID as the final tie-breaker. Anonymous successful 200 responses without Authorization use `public, max-age=0, s-maxage=60, stale-if-error=0`; requests with any Authorization header and all non-200 responses use `private, no-store`.
      */
     200: PublicAuctionDirectoryData;
 };
@@ -3164,10 +4575,28 @@ export type GetAuctionCatalogueErrors = {
      */
     400: unknown;
     /**
+     * Supplied bearer credentials are invalid (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * The current authenticated user is suspended, deleted or not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
      * Auction missing (`AUCTION_NOT_FOUND`).
      */
     404: unknown;
+    /**
+     * Invalid persisted shipping dependencies (SHIPPING_STORAGE_ERROR) or listing read failure.
+     */
+    500: ApiError;
+    /**
+     * Shipping storage/transaction or permitted destination reads are temporarily unavailable.
+     */
+    503: ApiError;
 };
+
+export type GetAuctionCatalogueError = GetAuctionCatalogueErrors[keyof GetAuctionCatalogueErrors];
 
 export type GetAuctionCatalogueResponses = {
     /**
@@ -3177,6 +4606,353 @@ export type GetAuctionCatalogueResponses = {
 };
 
 export type GetAuctionCatalogueResponse = GetAuctionCatalogueResponses[keyof GetAuctionCatalogueResponses];
+
+export type SearchAdminProductListingsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Strict ListingSource TypeID.
+         */
+        listingSourceId?: string;
+        /**
+         * Exact case-sensitive source-local identity after outer whitespace trimming.
+         */
+        sourceListingId?: string;
+        lifecycle?: ListingLifecycleData;
+        availability?: ListingAvailabilityData;
+        /**
+         * Strict Auction TypeID.
+         */
+        auctionId?: string;
+        /**
+         * At most 512 UTF-8 bytes and NUL-free; outer whitespace and case normalized. Percent/underscore are literal.
+         */
+        query?: string;
+        sort?: 'created' | 'updated';
+        order?: 'asc' | 'desc';
+        /**
+         * Clamped to 1–100.
+         */
+        size?: number;
+        /**
+         * Opaque cursor returned by this normalized filter/sort scope.
+         */
+        searchAfter?: string;
+    };
+    url: '/api/v1/admin/product-listings';
+};
+
+export type SearchAdminProductListingsErrors = {
+    /**
+     * Invalid ID, directory query or scoped cursor (`BAD_QUERY_PARAMETER_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Persisted administrator authority or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type SearchAdminProductListingsError = SearchAdminProductListingsErrors[keyof SearchAdminProductListingsErrors];
+
+export type SearchAdminProductListingsResponses = {
+    /**
+     * Lightweight summary page; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingPage;
+};
+
+export type SearchAdminProductListingsResponse = SearchAdminProductListingsResponses[keyof SearchAdminProductListingsResponses];
+
+export type WithdrawAdminProductListingData = {
+    body?: never;
+    path: {
+        /**
+         * Strict `pl_` UUIDv7 ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query: {
+        expectedVersion: number;
+    };
+    url: '/api/v1/admin/product-listings/{productListingId}';
+};
+
+export type WithdrawAdminProductListingErrors = {
+    /**
+     * Invalid ID or missing/invalid expectedVersion query parameter (`BAD_QUERY_PARAMETER_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Persisted administrator authority or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not found (`PRODUCT_LISTING_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Stale expectedVersion or racing write (`PRODUCT_LISTING_CONCURRENCY_CONFLICT`).
+     */
+    409: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type WithdrawAdminProductListingError = WithdrawAdminProductListingErrors[keyof WithdrawAdminProductListingErrors];
+
+export type WithdrawAdminProductListingResponses = {
+    /**
+     * Withdrawal committed or unchanged; Cache-Control is private, no-store.
+     */
+    204: void;
+};
+
+export type WithdrawAdminProductListingResponse = WithdrawAdminProductListingResponses[keyof WithdrawAdminProductListingResponses];
+
+export type GetAdminProductListingData = {
+    body?: never;
+    path: {
+        /**
+         * Strict `pl_` UUIDv7 ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-listings/{productListingId}';
+};
+
+export type GetAdminProductListingErrors = {
+    /**
+     * Invalid ProductListing ID (`INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Persisted administrator authority or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not found (`PRODUCT_LISTING_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type GetAdminProductListingError = GetAdminProductListingErrors[keyof GetAdminProductListingErrors];
+
+export type GetAdminProductListingResponses = {
+    /**
+     * Original retained listing facts and expectedVersion; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingDetails;
+};
+
+export type GetAdminProductListingResponse = GetAdminProductListingResponses[keyof GetAdminProductListingResponses];
+
+export type UpdateAdminProductListingData = {
+    body: UpdateAdminProductListing;
+    path: {
+        /**
+         * Strict `pl_` UUIDv7 ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-listings/{productListingId}';
+};
+
+export type UpdateAdminProductListingErrors = {
+    /**
+     * Invalid ID, JSON, expectedVersion, unknown/read-only field or invalid field/null value (`BAD_BODY_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Persisted administrator authority or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing or referenced Auction not found (`PRODUCT_LISTING_NOT_FOUND`, `AUCTION_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Stale expectedVersion/racing write (`PRODUCT_LISTING_CONCURRENCY_CONFLICT`), PATCH of withdrawn listing (`PRODUCT_LISTING_WITHDRAWN`), or cross-source Auction reference (`CONFLICT`).
+     */
+    409: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type UpdateAdminProductListingError = UpdateAdminProductListingErrors[keyof UpdateAdminProductListingErrors];
+
+export type UpdateAdminProductListingResponses = {
+    /**
+     * Committed resulting/current version and CHANGED or UNCHANGED; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingMutation;
+};
+
+export type UpdateAdminProductListingResponse = UpdateAdminProductListingResponses[keyof UpdateAdminProductListingResponses];
+
+export type RestoreAdminProductListingData = {
+    body: AdminProductListingVersion;
+    path: {
+        /**
+         * Strict `pl_` UUIDv7 ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/product-listings/{productListingId}/restore';
+};
+
+export type RestoreAdminProductListingErrors = {
+    /**
+     * Invalid ID, JSON or missing/invalid expectedVersion; unknown fields are rejected (`BAD_BODY_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Persisted administrator authority or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not found (`PRODUCT_LISTING_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Stale expectedVersion or racing write (`PRODUCT_LISTING_CONCURRENCY_CONFLICT`).
+     */
+    409: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type RestoreAdminProductListingError = RestoreAdminProductListingErrors[keyof RestoreAdminProductListingErrors];
+
+export type RestoreAdminProductListingResponses = {
+    /**
+     * Committed resulting/current version and CHANGED or UNCHANGED; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingMutation;
+};
+
+export type RestoreAdminProductListingResponse = RestoreAdminProductListingResponses[keyof RestoreAdminProductListingResponses];
+
+export type AdminSearchAuctionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * NUL-free, case-insensitive literal substring of the localized Auction name or sourceAuctionId.
+         */
+        query?: string;
+        listingSourceId?: string;
+        /**
+         * Exact source-scoped Auction key, trimmed as on create. Combine with listingSourceId to locate a create conflict.
+         */
+        sourceAuctionId?: string;
+        format?: AuctionFormatData;
+        reportedStatus?: AuctionReportedStatusData;
+        /**
+         * Supply both sort and order to override the default updated/descending ordering.
+         */
+        sort?: 'name' | 'created' | 'updated';
+        /**
+         * Supply both sort and order to override the default updated/descending ordering.
+         */
+        order?: 'asc' | 'desc';
+        /**
+         * Requested page limit, clamped to 1–100.
+         */
+        size?: number;
+        /**
+         * Opaque cursor from the preceding page. Filters, sort and order must match the request that issued it.
+         */
+        searchAfter?: string;
+    };
+    url: '/api/v1/admin/auctions';
+};
+
+export type AdminSearchAuctionsErrors = {
+    /**
+     * Invalid filter, sort, or cursor (`BAD_QUERY_PARAMETER_VALUE`, `BAD_SORT_VALUE`, or `INVALID_OBJECT_ID`).
+     */
+    400: unknown;
+    /**
+     * Missing or invalid credentials (`INVALID_CREDENTIALS`).
+     */
+    401: unknown;
+    /**
+     * Administrator authority and delegated `auctions:read` capability required (`FORBIDDEN`).
+     */
+    403: unknown;
+    /**
+     * Auction search temporarily unavailable (`AUCTION_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: unknown;
+};
+
+export type AdminSearchAuctionsResponses = {
+    /**
+     * All matching Auctions, regardless of status or visible listing count. Always `Cache-Control: no-store`.
+     */
+    200: AdminAuctionSearchCollectionData;
+};
+
+export type AdminSearchAuctionsResponse = AdminSearchAuctionsResponses[keyof AdminSearchAuctionsResponses];
 
 export type CreateAdminAuctionData = {
     body: CreateAuctionData;
@@ -3243,7 +5019,7 @@ export type GetAdminAuctionErrors = {
      */
     401: unknown;
     /**
-     * Administrator authority required (`FORBIDDEN`).
+     * Administrator authority and delegated `auctions:read` capability required (`FORBIDDEN`).
      */
     403: unknown;
     /**
@@ -3484,6 +5260,77 @@ export type DeletePartnerProductListingsResponses = {
 
 export type DeletePartnerProductListingsResponse = DeletePartnerProductListingsResponses[keyof DeletePartnerProductListingsResponses];
 
+export type ListPartnerProductListingsData = {
+    body?: never;
+    path: {
+        /**
+         * Strict ListingSource TypeID authorized by Partnership grant.
+         */
+        listingSourceId: string;
+    };
+    query?: {
+        /**
+         * Exact case-sensitive source-local identity after outer whitespace trimming.
+         */
+        sourceListingId?: string;
+        lifecycle?: ListingLifecycleData;
+        availability?: ListingAvailabilityData;
+        /**
+         * Strict Auction TypeID.
+         */
+        auctionId?: string;
+        /**
+         * At most 512 UTF-8 bytes and NUL-free; outer whitespace and case normalized. Percent/underscore are literal.
+         */
+        query?: string;
+        sort?: 'created' | 'updated';
+        order?: 'asc' | 'desc';
+        /**
+         * Clamped to 1–100.
+         */
+        size?: number;
+        /**
+         * Opaque cursor returned by this normalized filter/sort scope.
+         */
+        searchAfter?: string;
+    };
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings';
+};
+
+export type ListPartnerProductListingsErrors = {
+    /**
+     * Invalid ID, directory query or scoped cursor (`BAD_QUERY_PARAMETER_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Partnership source grant or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type ListPartnerProductListingsError = ListPartnerProductListingsErrors[keyof ListPartnerProductListingsErrors];
+
+export type ListPartnerProductListingsResponses = {
+    /**
+     * Lightweight summary page; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingPage;
+};
+
+export type ListPartnerProductListingsResponse = ListPartnerProductListingsResponses[keyof ListPartnerProductListingsResponses];
+
 export type PatchPartnerProductListingsData = {
     /**
      * Array of at most 100 product updates to apply synchronously. May be empty.
@@ -3654,6 +5501,236 @@ export type PutPartnerProductListingsResponses = {
 };
 
 export type PutPartnerProductListingsResponse = PutPartnerProductListingsResponses[keyof PutPartnerProductListingsResponses];
+
+export type WithdrawPartnerProductListingData = {
+    body?: never;
+    path: {
+        /**
+         * Strict ListingSource TypeID authorized by Partnership grant.
+         */
+        listingSourceId: string;
+        /**
+         * Strict Aura ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query: {
+        expectedVersion: number;
+    };
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}';
+};
+
+export type WithdrawPartnerProductListingErrors = {
+    /**
+     * Invalid ID or missing/invalid expectedVersion query parameter (`BAD_QUERY_PARAMETER_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Partnership source grant or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not present under the authorized path ListingSource (`PRODUCT_LISTING_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Stale expectedVersion or racing write (`PRODUCT_LISTING_CONCURRENCY_CONFLICT`).
+     */
+    409: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type WithdrawPartnerProductListingError = WithdrawPartnerProductListingErrors[keyof WithdrawPartnerProductListingErrors];
+
+export type WithdrawPartnerProductListingResponses = {
+    /**
+     * Withdrawal committed or unchanged; Cache-Control is private, no-store.
+     */
+    204: void;
+};
+
+export type WithdrawPartnerProductListingResponse = WithdrawPartnerProductListingResponses[keyof WithdrawPartnerProductListingResponses];
+
+export type GetPartnerProductListingData = {
+    body?: never;
+    path: {
+        /**
+         * Strict ListingSource TypeID authorized by Partnership grant.
+         */
+        listingSourceId: string;
+        /**
+         * Strict Aura ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}';
+};
+
+export type GetPartnerProductListingErrors = {
+    /**
+     * Invalid ListingSource or ProductListing ID (`INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Partnership source grant or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not present under the authorized path ListingSource (`PRODUCT_LISTING_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type GetPartnerProductListingError = GetPartnerProductListingErrors[keyof GetPartnerProductListingErrors];
+
+export type GetPartnerProductListingResponses = {
+    /**
+     * Original retained listing facts and expectedVersion; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingDetails;
+};
+
+export type GetPartnerProductListingResponse = GetPartnerProductListingResponses[keyof GetPartnerProductListingResponses];
+
+export type UpdatePartnerProductListingData = {
+    body: UpdateAdminProductListing;
+    path: {
+        /**
+         * Strict ListingSource TypeID authorized by Partnership grant.
+         */
+        listingSourceId: string;
+        /**
+         * Strict Aura ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}';
+};
+
+export type UpdatePartnerProductListingErrors = {
+    /**
+     * Invalid ID, JSON, expectedVersion, unknown/read-only field or invalid field/null value (`BAD_BODY_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Partnership source grant or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not present under the authorized path ListingSource, or referenced Auction not found (`PRODUCT_LISTING_NOT_FOUND`, `AUCTION_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Stale expectedVersion/racing write (`PRODUCT_LISTING_CONCURRENCY_CONFLICT`), PATCH of withdrawn listing (`PRODUCT_LISTING_WITHDRAWN`), or cross-source Auction reference (`CONFLICT`).
+     */
+    409: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type UpdatePartnerProductListingError = UpdatePartnerProductListingErrors[keyof UpdatePartnerProductListingErrors];
+
+export type UpdatePartnerProductListingResponses = {
+    /**
+     * Committed resulting/current version and CHANGED or UNCHANGED; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingMutation;
+};
+
+export type UpdatePartnerProductListingResponse = UpdatePartnerProductListingResponses[keyof UpdatePartnerProductListingResponses];
+
+export type RestorePartnerProductListingData = {
+    body: AdminProductListingVersion;
+    path: {
+        /**
+         * Strict ListingSource TypeID authorized by Partnership grant.
+         */
+        listingSourceId: string;
+        /**
+         * Strict Aura ProductListing TypeID.
+         */
+        productListingId: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}/restore';
+};
+
+export type RestorePartnerProductListingErrors = {
+    /**
+     * Invalid ID, JSON or missing/invalid expectedVersion; unknown fields are rejected (`BAD_BODY_VALUE`, `INVALID_OBJECT_ID`).
+     */
+    400: ApiError;
+    /**
+     * Missing/invalid credential (`INVALID_CREDENTIALS`).
+     */
+    401: ApiError;
+    /**
+     * Partnership source grant or delegated capability missing (`FORBIDDEN`).
+     */
+    403: ApiError;
+    /**
+     * Target listing not present under the authorized path ListingSource (`PRODUCT_LISTING_NOT_FOUND`).
+     */
+    404: ApiError;
+    /**
+     * Stale expectedVersion or racing write (`PRODUCT_LISTING_CONCURRENCY_CONFLICT`).
+     */
+    409: ApiError;
+    /**
+     * Unexpected failure or invalid persisted state (`PRODUCT_LISTING_INTERNAL_ERROR`).
+     */
+    500: ApiError;
+    /**
+     * Temporary authorization/read/persistence dependency failure (`PRODUCT_LISTING_TEMPORARILY_UNAVAILABLE`).
+     */
+    503: ApiError;
+};
+
+export type RestorePartnerProductListingError = RestorePartnerProductListingErrors[keyof RestorePartnerProductListingErrors];
+
+export type RestorePartnerProductListingResponses = {
+    /**
+     * Committed resulting/current version and CHANGED or UNCHANGED; Cache-Control is private, no-store.
+     */
+    200: AdminProductListingMutation;
+};
+
+export type RestorePartnerProductListingResponse = RestorePartnerProductListingResponses[keyof RestorePartnerProductListingResponses];
 
 export type DeleteAsyncPartnerProductListingsData = {
     /**
@@ -3975,6 +6052,92 @@ export type PostWoocommerceWebhookResponses = {
 
 export type PostWoocommerceWebhookResponse = PostWoocommerceWebhookResponses[keyof PostWoocommerceWebhookResponses];
 
+export type PostLoopsPreferenceWebhookData = {
+    /**
+     * Loops webhook payload. The service verifies the signature before parsing or mapping the selected event.
+     */
+    body: {
+        webhookSchemaVersion: string;
+        /**
+         * Supported event names are listed in the operation description; verified unknown names are ignored and receipted.
+         */
+        eventName: string;
+        /**
+         * Provider event time in Unix seconds.
+         */
+        eventTime: number;
+        /**
+         * Required for supported contact and email events; verified unknown event names may be safely ignored without it.
+         */
+        contactIdentity?: {
+            id: string;
+            email: string;
+        };
+        /**
+         * Required for supported contact.mailingList events; only the configured marketing list affects consent.
+         */
+        mailingList?: {
+            id: string;
+        };
+        [key: string]: unknown;
+    };
+    headers: {
+        /**
+         * Loops delivery identifier used for committed receipt deduplication.
+         */
+        'webhook-id': string;
+        /**
+         * Unix timestamp covered by the Loops signature; stale proofs are rejected.
+         */
+        'webhook-timestamp': string;
+        /**
+         * Loops HMAC-SHA256 signature over delivery ID, timestamp, and exact raw body bytes.
+         */
+        'webhook-signature': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/webhooks/loops';
+};
+
+export type PostLoopsPreferenceWebhookErrors = {
+    /**
+     * Malformed body/event, unsupported payload schema version, or invalid authenticated event time. Uses `LOOPS_WEBHOOK_INVALID_BODY`.
+     */
+    400: ApiError;
+    /**
+     * Missing, invalid, stale, or ambiguous Loops proof. The response does not distinguish authentication failures. Uses `LOOPS_WEBHOOK_UNAUTHORIZED`.
+     */
+    401: ApiError;
+    /**
+     * A verified delivery identifier was previously committed with different body bytes. Uses `LOOPS_WEBHOOK_CONFLICT`.
+     */
+    409: ApiError;
+    /**
+     * Request body exceeds 64 KiB. Uses `LOOPS_WEBHOOK_PAYLOAD_TOO_LARGE`.
+     */
+    413: ApiError;
+    /**
+     * Redacted internal signing-secret or cryptographic configuration failure. Uses `LOOPS_WEBHOOK_INTERNAL_ERROR`.
+     */
+    500: ApiError;
+    /**
+     * Temporary persistence/provider-reader failure or exceeded processing budget. Retry the delivery. Uses `LOOPS_WEBHOOK_TEMPORARILY_UNAVAILABLE`.
+     */
+    503: ApiError;
+};
+
+export type PostLoopsPreferenceWebhookError = PostLoopsPreferenceWebhookErrors[keyof PostLoopsPreferenceWebhookErrors];
+
+export type PostLoopsPreferenceWebhookResponses = {
+    /**
+     * Authenticated event receipt and required local effects committed, or identical duplicate/safe ignore. No response body.
+     */
+    204: void;
+};
+
+export type PostLoopsPreferenceWebhookResponse = PostLoopsPreferenceWebhookResponses[keyof PostLoopsPreferenceWebhookResponses];
+
 export type GetProductListingByTitleSlugData = {
     body?: never;
     path: {
@@ -3995,6 +6158,14 @@ export type GetProductListingByTitleSlugErrors = {
      * Invalid path or query parameter
      */
     400: ApiError;
+    /**
+     * Supplied bearer credentials are invalid (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * The current authenticated user is suspended, deleted or not permitted (FORBIDDEN).
+     */
+    403: ApiError;
     /**
      * ProductListing not found
      */
@@ -4047,6 +6218,14 @@ export type GetProductListingErrors = {
      */
     400: ApiError;
     /**
+     * Supplied bearer credentials are invalid (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * The current authenticated user is suspended, deleted or not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
      * ProductListing not found, including a withdrawn listing
      */
     404: ApiError;
@@ -4079,13 +6258,18 @@ export type GetProductListingHistoryData = {
          */
         productListingId: string;
     };
-    query?: never;
+    query?: {
+        /**
+         * Optional display currency for historical monetary values; omitted means source values only.
+         */
+        currency?: CurrencyData;
+    };
     url: '/api/v1/product-listings/{productListingId}/history';
 };
 
 export type GetProductListingHistoryErrors = {
     /**
-     * Bad request - Invalid parameters
+     * Bad request - Invalid parameters, including unsupported currency (BAD_QUERY_PARAMETER_VALUE)
      */
     400: ApiError;
     /**
@@ -4093,7 +6277,7 @@ export type GetProductListingHistoryErrors = {
      */
     404: ApiError;
     /**
-     * ProductListing history contains invalid stored event data
+     * ProductListing history contains invalid stored event/FX data or a price conversion overflowed
      */
     500: ApiError;
     /**
@@ -4140,6 +6324,14 @@ export type GetSimilarProductListingsErrors = {
      */
     400: ApiError;
     /**
+     * Supplied bearer credentials are invalid (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * The current authenticated user is suspended, deleted or not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
      * Product not found
      */
     404: ApiError;
@@ -4147,6 +6339,10 @@ export type GetSimilarProductListingsErrors = {
      * Internal server error
      */
     500: ApiError;
+    /**
+     * Shipping storage/transaction or permitted destination reads are temporarily unavailable.
+     */
+    503: ApiError;
 };
 
 export type GetSimilarProductListingsError = GetSimilarProductListingsErrors[keyof GetSimilarProductListingsErrors];
@@ -4168,6 +6364,14 @@ export type SimpleSearchProductListingsData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * Definite whole-country advertised shipping, independent of item geography and browsing preference. Nested country/service/charge predicates constrain indexed membership and totals, which may lag current returned terms. No shipping cost sorting or cart total is supported.
+         */
+        shipping?: ShippingSearchData;
+        /**
+         * Advertised item geography; source defaults do not confirm individual physical custody.
+         */
+        geography?: GeographicSearchData;
         /**
          * Language used for search matching and localized response fields; defaults to `en`
          */
@@ -4310,6 +6514,14 @@ export type SimpleSearchProductListingsErrors = {
      */
     400: ApiError;
     /**
+     * Supplied bearer credentials are invalid (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * The current authenticated user is suspended, deleted or not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
      * Internal server error
      */
     500: ApiError;
@@ -4343,7 +6555,7 @@ export type GetUserSearchFiltersErrors = {
      */
     401: ApiError;
     /**
-     * Forbidden - Aura access token lacks the required `search-filters:write` scope
+     * Forbidden - Aura access token lacks the required `search-filters:read` scope
      */
     403: ApiError;
     /**
@@ -4479,7 +6691,7 @@ export type GetUserSearchFilterErrors = {
      */
     401: ApiError;
     /**
-     * Forbidden - Aura access token lacks the required `search-filters:write` scope
+     * Forbidden - Aura access token lacks the required `search-filters:read` scope
      */
     403: ApiError;
     /**
@@ -4596,7 +6808,7 @@ export type ListSearchFilterMatchesErrors = {
      */
     401: ApiError;
     /**
-     * Forbidden - Aura access token lacks the required `search-filters:write` scope
+     * Forbidden - Aura access token lacks the required `search-filters:read` scope
      */
     403: ApiError;
     /**
@@ -4713,6 +6925,10 @@ export type GetWatchlistProductListingsErrors = {
      * Unauthorized - invalid or missing JWT token
      */
     401: ApiError;
+    /**
+     * The current authenticated user is suspended, deleted or not permitted (FORBIDDEN).
+     */
+    403: ApiError;
     /**
      * Internal server error
      */
@@ -5919,7 +8135,7 @@ export type GetMyAccessTokensData = {
 
 export type GetMyAccessTokensErrors = {
     /**
-     * Unauthorized - invalid or missing JWT token
+     * Unauthorized - invalid or missing bearer credentials
      */
     401: ApiError;
     /**
@@ -5938,7 +8154,7 @@ export type GetMyAccessTokensResponses = {
     /**
      * Access tokens retrieved successfully
      */
-    200: Array<GetAccessTokenData>;
+    200: Array<OwnAccessTokenData>;
 };
 
 export type GetMyAccessTokensResponse = GetMyAccessTokensResponses[keyof GetMyAccessTokensResponses];
@@ -5959,7 +8175,7 @@ export type PatchMyAccessTokenErrors = {
      */
     400: ApiError;
     /**
-     * Unauthorized - invalid or missing JWT token
+     * Unauthorized - invalid or missing bearer credentials
      */
     401: ApiError;
     /**
@@ -5978,7 +8194,7 @@ export type PatchMyAccessTokenResponses = {
     /**
      * Access token updated successfully
      */
-    200: GetAccessTokenData;
+    200: OwnAccessTokenData;
 };
 
 export type PatchMyAccessTokenResponse = PatchMyAccessTokenResponses[keyof PatchMyAccessTokenResponses];
@@ -5999,7 +8215,7 @@ export type PostMyAccessTokenErrors = {
      */
     400: ApiError;
     /**
-     * Unauthorized - invalid or missing JWT token
+     * Unauthorized - invalid or missing bearer credentials
      */
     401: ApiError;
     /**
@@ -6018,7 +8234,7 @@ export type PostMyAccessTokenResponses = {
     /**
      * Access token created successfully
      */
-    201: GetAccessTokenData;
+    201: CreatedAccessTokenData;
 };
 
 export type PostMyAccessTokenResponse = PostMyAccessTokenResponses[keyof PostMyAccessTokenResponses];
@@ -6041,7 +8257,7 @@ export type DeleteMyAccessTokenErrors = {
      */
     400: ApiError;
     /**
-     * Unauthorized - invalid or missing JWT token
+     * Unauthorized - invalid or missing bearer credentials
      */
     401: ApiError;
     /**
@@ -6079,7 +8295,7 @@ export type GetMyAccessTokenErrors = {
      */
     400: ApiError;
     /**
-     * Unauthorized - invalid or missing JWT token
+     * Unauthorized - invalid or missing bearer credentials
      */
     401: ApiError;
     /**
@@ -6098,7 +8314,7 @@ export type GetMyAccessTokenResponses = {
     /**
      * Access token retrieved successfully
      */
-    200: GetAccessTokenData;
+    200: OwnAccessTokenData;
 };
 
 export type GetMyAccessTokenResponse = GetMyAccessTokenResponses[keyof GetMyAccessTokenResponses];
@@ -6351,6 +8567,10 @@ export type DeleteNotificationsErrors = {
      */
     401: ApiError;
     /**
+     * Forbidden - required delegated scope missing
+     */
+    403: ApiError;
+    /**
      * Notifications are temporarily unavailable
      */
     503: ApiError;
@@ -6391,6 +8611,10 @@ export type ListNotificationsErrors = {
      */
     401: ApiError;
     /**
+     * Forbidden - required delegated scope missing
+     */
+    403: ApiError;
+    /**
      * Notifications are temporarily unavailable
      */
     503: ApiError;
@@ -6424,6 +8648,10 @@ export type UpdateNotificationsSeenErrors = {
      */
     401: ApiError;
     /**
+     * Forbidden - required delegated scope missing
+     */
+    403: ApiError;
+    /**
      * Notifications are temporarily unavailable
      */
     503: ApiError;
@@ -6456,6 +8684,10 @@ export type UpdateAllNotificationsSeenErrors = {
      * Invalid or missing bearer credential
      */
     401: ApiError;
+    /**
+     * Forbidden - required delegated scope missing
+     */
+    403: ApiError;
     /**
      * Notifications are temporarily unavailable
      */
@@ -6491,6 +8723,10 @@ export type DeleteNotificationErrors = {
      * Invalid or missing bearer credential
      */
     401: ApiError;
+    /**
+     * Forbidden - required delegated scope missing
+     */
+    403: ApiError;
     /**
      * Notification not found
      */
@@ -6531,6 +8767,10 @@ export type UpdateNotificationSeenErrors = {
      */
     401: ApiError;
     /**
+     * Forbidden - required delegated scope missing
+     */
+    403: ApiError;
+    /**
      * Notification not found
      */
     404: ApiError;
@@ -6553,7 +8793,7 @@ export type UpdateNotificationSeenResponse = UpdateNotificationSeenResponses[key
 
 export type PutNewsletterSubscriptionData2 = {
     /**
-     * Newsletter subscription data.
+     * Newsletter confirmation request data.
      */
     body: PutNewsletterSubscriptionData;
     path?: never;
@@ -6563,17 +8803,19 @@ export type PutNewsletterSubscriptionData2 = {
 
 export type PutNewsletterSubscriptionErrors = {
     /**
-     * Bad request — the request body is missing, malformed, contains invalid field values,
-     * or the newsletter provider rejects the submitted email address as invalid.
-     *
+     * Missing, malformed, oversized, or invalid request body.
      */
     400: ApiError;
     /**
-     * Internal newsletter subscription failure
+     * A supplied bearer credential is invalid.
+     */
+    401: ApiError;
+    /**
+     * Internal/configuration failure, including a permanent definite SES rejection.
      */
     500: ApiError;
     /**
-     * Newsletter provider temporarily unavailable
+     * Newsletter persistence, confirmation-template retrieval, or SES is temporarily unavailable, SES throttling was rejected, or SES acceptance is ambiguous.
      */
     503: ApiError;
 };
@@ -6582,12 +8824,48 @@ export type PutNewsletterSubscriptionError = PutNewsletterSubscriptionErrors[key
 
 export type PutNewsletterSubscriptionResponses = {
     /**
-     * Newsletter subscription write accepted by the provider. This does not confirm message or campaign delivery; existing Loops opt-out state is preserved.
+     * Confirmation request handled. The requested mailbox may be pending, already confirmed, or rate suppressed.
      */
     204: void;
 };
 
 export type PutNewsletterSubscriptionResponse = PutNewsletterSubscriptionResponses[keyof PutNewsletterSubscriptionResponses];
+
+export type ConfirmNewsletterSubscriptionData2 = {
+    /**
+     * The opaque confirmation capability.
+     */
+    body: ConfirmNewsletterSubscriptionData;
+    path?: never;
+    query?: never;
+    url: '/api/v1/newsletter-subscriptions/confirm';
+};
+
+export type ConfirmNewsletterSubscriptionErrors = {
+    /**
+     * Malformed, oversized, or wrong-shape body, or one generic invalid, unknown, expired, or invalidated confirmation result.
+     */
+    400: ApiError;
+    /**
+     * Internal confirmation-state failure.
+     */
+    500: ApiError;
+    /**
+     * Newsletter confirmation persistence is temporarily unavailable.
+     */
+    503: ApiError;
+};
+
+export type ConfirmNewsletterSubscriptionError = ConfirmNewsletterSubscriptionErrors[keyof ConfirmNewsletterSubscriptionErrors];
+
+export type ConfirmNewsletterSubscriptionResponses = {
+    /**
+     * Confirmation committed, or an already confirmed token was replayed.
+     */
+    204: void;
+};
+
+export type ConfirmNewsletterSubscriptionResponse = ConfirmNewsletterSubscriptionResponses[keyof ConfirmNewsletterSubscriptionResponses];
 
 export type AdminDeleteListingSourceData = {
     body?: never;
@@ -8273,3 +10551,1849 @@ export type AdminDecidePartnershipApplicationResponses = {
 };
 
 export type AdminDecidePartnershipApplicationResponse = AdminDecidePartnershipApplicationResponses[keyof AdminDecidePartnershipApplicationResponses];
+
+export type ListUserAddressesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        after?: UserAddressId;
+        limit?: number;
+    };
+    url: '/api/v1/me/addresses';
+};
+
+export type ListUserAddressesErrors = {
+    /**
+     * Invalid body, query or strict object ID.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale version (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ListUserAddressesError = ListUserAddressesErrors[keyof ListUserAddressesErrors];
+
+export type ListUserAddressesResponses = {
+    /**
+     * Successful private operation.
+     */
+    200: UserAddressPage;
+};
+
+export type ListUserAddressesResponse = ListUserAddressesResponses[keyof ListUserAddressesResponses];
+
+export type CreateUserAddressData = {
+    body: CreateUserAddress;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/addresses';
+};
+
+export type CreateUserAddressErrors = {
+    /**
+     * Invalid body (BAD_BODY_VALUE), including a caller-supplied addressId.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Concurrent persistence conflict (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type CreateUserAddressError = CreateUserAddressErrors[keyof CreateUserAddressErrors];
+
+export type CreateUserAddressResponses = {
+    /**
+     * Successful private operation.
+     */
+    201: UserAddress;
+};
+
+export type CreateUserAddressResponse = CreateUserAddressResponses[keyof CreateUserAddressResponses];
+
+export type DeleteUserAddressData = {
+    body: UserAddressExpectedVersion;
+    path: {
+        address_id: UserAddressId;
+    };
+    query?: never;
+    url: '/api/v1/me/addresses/{address_id}';
+};
+
+export type DeleteUserAddressErrors = {
+    /**
+     * Invalid body, query or strict object ID.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale version (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type DeleteUserAddressError = DeleteUserAddressErrors[keyof DeleteUserAddressErrors];
+
+export type DeleteUserAddressResponses = {
+    /**
+     * Successful private operation.
+     */
+    204: void;
+};
+
+export type DeleteUserAddressResponse = DeleteUserAddressResponses[keyof DeleteUserAddressResponses];
+
+export type GetUserAddressData = {
+    body?: never;
+    path: {
+        address_id: UserAddressId;
+    };
+    query?: never;
+    url: '/api/v1/me/addresses/{address_id}';
+};
+
+export type GetUserAddressErrors = {
+    /**
+     * Invalid body, query or strict object ID.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale version (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type GetUserAddressError = GetUserAddressErrors[keyof GetUserAddressErrors];
+
+export type GetUserAddressResponses = {
+    /**
+     * Successful private operation.
+     */
+    200: UserAddress;
+};
+
+export type GetUserAddressResponse = GetUserAddressResponses[keyof GetUserAddressResponses];
+
+export type UpdateUserAddressData = {
+    body: UpdateUserAddress;
+    path: {
+        address_id: UserAddressId;
+    };
+    query?: never;
+    url: '/api/v1/me/addresses/{address_id}';
+};
+
+export type UpdateUserAddressErrors = {
+    /**
+     * Invalid body, query or strict object ID.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale version (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type UpdateUserAddressError = UpdateUserAddressErrors[keyof UpdateUserAddressErrors];
+
+export type UpdateUserAddressResponses = {
+    /**
+     * Successful private operation.
+     */
+    200: UserAddress;
+};
+
+export type UpdateUserAddressResponse = UpdateUserAddressResponses[keyof UpdateUserAddressResponses];
+
+export type GetBrowsingDestinationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/browsing-destination';
+};
+
+export type GetBrowsingDestinationErrors = {
+    /**
+     * Invalid body, query or strict object ID.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale version (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type GetBrowsingDestinationError = GetBrowsingDestinationErrors[keyof GetBrowsingDestinationErrors];
+
+export type GetBrowsingDestinationResponses = {
+    /**
+     * Successful private operation.
+     */
+    200: BrowsingDestinationView;
+};
+
+export type GetBrowsingDestinationResponse = GetBrowsingDestinationResponses[keyof GetBrowsingDestinationResponses];
+
+export type SetBrowsingDestinationData = {
+    body: SetBrowsingDestination;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/browsing-destination';
+};
+
+export type SetBrowsingDestinationErrors = {
+    /**
+     * Invalid body, query or strict object ID.
+     */
+    400: ApiError;
+    /**
+     * Bearer credential required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Current user or delegated scope is not permitted (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Address/owner not found (USER_ADDRESS_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale version (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (ADDRESS_BOOK_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (ADDRESS_BOOK_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type SetBrowsingDestinationError = SetBrowsingDestinationErrors[keyof SetBrowsingDestinationErrors];
+
+export type SetBrowsingDestinationResponses = {
+    /**
+     * Successful private operation.
+     */
+    200: BrowsingDestinationView;
+};
+
+export type SetBrowsingDestinationResponse = SetBrowsingDestinationResponses[keyof SetBrowsingDestinationResponses];
+
+export type DiscoverPartyLocationsData = {
+    body?: never;
+    path?: never;
+    query: {
+        geography: GeographicSearchData;
+        size?: number;
+        searchAfter?: PartyLocationDiscoveryCursorData;
+    };
+    url: '/api/v1/party-locations';
+};
+
+export type DiscoverPartyLocationsErrors = {
+    /**
+     * Invalid geographic predicates, origin or continuation (BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Location read unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type DiscoverPartyLocationsError = DiscoverPartyLocationsErrors[keyof DiscoverPartyLocationsErrors];
+
+export type DiscoverPartyLocationsResponses = {
+    /**
+     * Matching public locations.
+     */
+    200: {
+        items: Array<PublicPartyLocationData>;
+        size: number;
+        searchAfter?: PartyLocationDiscoveryCursorData;
+    };
+};
+
+export type DiscoverPartyLocationsResponse = DiscoverPartyLocationsResponses[keyof DiscoverPartyLocationsResponses];
+
+export type ListPartyLocationsData = {
+    body?: never;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+    };
+    query?: {
+        /**
+         * Exclusive ascending UUID keyset continuation; use previous next in the same Party/view.
+         */
+        after?: PartyLocationId;
+        limit?: number;
+    };
+    url: '/api/v1/parties/{party_id}/locations';
+};
+
+export type ListPartyLocationsErrors = {
+    /**
+     * Invalid body/header/path/query (BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_OBJECT_ID or BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing credential scope or Party-location management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Party or eligible location not found (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence/transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ListPartyLocationsError = ListPartyLocationsErrors[keyof ListPartyLocationsErrors];
+
+export type ListPartyLocationsResponses = {
+    /**
+     * Successful PartyLocation operation.
+     */
+    200: PartyLocationsPage;
+};
+
+export type ListPartyLocationsResponse = ListPartyLocationsResponses[keyof ListPartyLocationsResponses];
+
+export type CreatePartyLocationData2 = {
+    body: CreatePartyLocationData;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+    };
+    query?: never;
+    url: '/api/v1/parties/{party_id}/locations';
+};
+
+export type CreatePartyLocationErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing credential scope or Party-location management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Party or eligible location not found (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale or exhausted relocation revision or retired relocation source (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence/transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type CreatePartyLocationError = CreatePartyLocationErrors[keyof CreatePartyLocationErrors];
+
+export type CreatePartyLocationResponses = {
+    /**
+     * Created location with a new server-generated ID.
+     */
+    201: PartyLocationData;
+};
+
+export type CreatePartyLocationResponse = CreatePartyLocationResponses[keyof CreatePartyLocationResponses];
+
+export type GetPartyLocationData = {
+    body?: never;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+        location_id: PartyLocationId;
+    };
+    query?: never;
+    url: '/api/v1/parties/{party_id}/locations/{location_id}';
+};
+
+export type GetPartyLocationErrors = {
+    /**
+     * Invalid body/header/path/query (BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_OBJECT_ID or BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing credential scope or Party-location management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Party or eligible location not found (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence/transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type GetPartyLocationError = GetPartyLocationErrors[keyof GetPartyLocationErrors];
+
+export type GetPartyLocationResponses = {
+    /**
+     * Successful PartyLocation operation.
+     */
+    200: PartyLocationData;
+};
+
+export type GetPartyLocationResponse = GetPartyLocationResponses[keyof GetPartyLocationResponses];
+
+export type CorrectPartyLocationData2 = {
+    body: CorrectPartyLocationData;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+        location_id: PartyLocationId;
+    };
+    query?: never;
+    url: '/api/v1/parties/{party_id}/locations/{location_id}';
+};
+
+export type CorrectPartyLocationErrors = {
+    /**
+     * Invalid body/header/path/query (BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_OBJECT_ID or BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing credential scope or Party-location management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Party or eligible location not found (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale or exhausted revision or retired-site correction (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence/transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type CorrectPartyLocationError = CorrectPartyLocationErrors[keyof CorrectPartyLocationErrors];
+
+export type CorrectPartyLocationResponses = {
+    /**
+     * Successful PartyLocation operation.
+     */
+    200: PartyLocationData;
+};
+
+export type CorrectPartyLocationResponse = CorrectPartyLocationResponses[keyof CorrectPartyLocationResponses];
+
+export type SetPartyLocationLifecycleData2 = {
+    body: SetPartyLocationLifecycleData;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+        location_id: PartyLocationId;
+    };
+    query?: never;
+    url: '/api/v1/parties/{party_id}/locations/{location_id}/lifecycle';
+};
+
+export type SetPartyLocationLifecycleErrors = {
+    /**
+     * Invalid body/header/path/query (BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_OBJECT_ID or BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing credential scope or Party-location management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Party or eligible location not found (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale or exhausted revision or retired-site correction (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence/transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type SetPartyLocationLifecycleError = SetPartyLocationLifecycleErrors[keyof SetPartyLocationLifecycleErrors];
+
+export type SetPartyLocationLifecycleResponses = {
+    /**
+     * Successful PartyLocation operation.
+     */
+    200: PartyLocationData;
+};
+
+export type SetPartyLocationLifecycleResponse = SetPartyLocationLifecycleResponses[keyof SetPartyLocationLifecycleResponses];
+
+export type ListPartyLocationManagersData = {
+    body?: never;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+    };
+    query?: {
+        /**
+         * Exact strict User TypeID. A user with no current access yields an empty page.
+         */
+        userId?: string;
+        /**
+         * Include users with this access reason; each item still reports all current reasons.
+         */
+        access?: 'EXPLICIT' | 'PARTNERSHIP';
+        /**
+         * Requested page size, clamped to 1–100. Defaults to 21.
+         */
+        size?: number;
+        /**
+         * Strict User TypeID from the previous page. Continue with the same Party and filters.
+         */
+        searchAfter?: string;
+    };
+    url: '/api/v1/admin/parties/{party_id}/location-managers';
+};
+
+export type ListPartyLocationManagersErrors = {
+    /**
+     * Invalid IDs or query (INVALID_OBJECT_ID or BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing parties:read scope or current administrator authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Unknown Party (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ListPartyLocationManagersError = ListPartyLocationManagersErrors[keyof ListPartyLocationManagersErrors];
+
+export type ListPartyLocationManagersResponses = {
+    /**
+     * Current location managers; size is the number of returned users.
+     */
+    200: PartyLocationManagersPage;
+};
+
+export type ListPartyLocationManagersResponse = ListPartyLocationManagersResponses[keyof ListPartyLocationManagersResponses];
+
+export type SetPartyLocationManagementGrantData = {
+    body: PartyLocationManagementGrantData;
+    path: {
+        /**
+         * Strict Party TypeID.
+         */
+        party_id: string;
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/parties/{party_id}/location-managers/{user_id}';
+};
+
+export type SetPartyLocationManagementGrantErrors = {
+    /**
+     * Invalid body/header/path/query (BAD_BODY_VALUE, BAD_HEADER_VALUE, INVALID_OBJECT_ID or BAD_QUERY_PARAMETER_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing credential scope or administrator authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Party or eligible location not found (PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale or exhausted revision or retired-site correction (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (PARTY_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence/transaction unavailable (PARTY_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type SetPartyLocationManagementGrantError = SetPartyLocationManagementGrantErrors[keyof SetPartyLocationManagementGrantErrors];
+
+export type SetPartyLocationManagementGrantResponses = {
+    /**
+     * Grant state applied.
+     */
+    204: void;
+};
+
+export type SetPartyLocationManagementGrantResponse = SetPartyLocationManagementGrantResponses[keyof SetPartyLocationManagementGrantResponses];
+
+export type ClearSourceLocationDefaultData2 = {
+    body: ClearSourceLocationDefaultData;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default';
+};
+
+export type ClearSourceLocationDefaultErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current source management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ClearSourceLocationDefaultError = ClearSourceLocationDefaultErrors[keyof ClearSourceLocationDefaultErrors];
+
+export type ClearSourceLocationDefaultResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type ClearSourceLocationDefaultResponse = ClearSourceLocationDefaultResponses[keyof ClearSourceLocationDefaultResponses];
+
+export type GetSourceLocationDefaultData = {
+    body?: never;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default';
+};
+
+export type GetSourceLocationDefaultErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current source management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type GetSourceLocationDefaultError = GetSourceLocationDefaultErrors[keyof GetSourceLocationDefaultErrors];
+
+export type GetSourceLocationDefaultResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type GetSourceLocationDefaultResponse = GetSourceLocationDefaultResponses[keyof GetSourceLocationDefaultResponses];
+
+export type ChangeSourceLocationDefaultApplicabilityData2 = {
+    body: ChangeSourceLocationDefaultApplicabilityData;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default';
+};
+
+export type ChangeSourceLocationDefaultApplicabilityErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current source management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ChangeSourceLocationDefaultApplicabilityError = ChangeSourceLocationDefaultApplicabilityErrors[keyof ChangeSourceLocationDefaultApplicabilityErrors];
+
+export type ChangeSourceLocationDefaultApplicabilityResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type ChangeSourceLocationDefaultApplicabilityResponse = ChangeSourceLocationDefaultApplicabilityResponses[keyof ChangeSourceLocationDefaultApplicabilityResponses];
+
+export type AssignSourceLocationDefaultData2 = {
+    body: AssignSourceLocationDefaultData;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default';
+};
+
+export type AssignSourceLocationDefaultErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current source management authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type AssignSourceLocationDefaultError = AssignSourceLocationDefaultErrors[keyof AssignSourceLocationDefaultErrors];
+
+export type AssignSourceLocationDefaultResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type AssignSourceLocationDefaultResponse = AssignSourceLocationDefaultResponses[keyof AssignSourceLocationDefaultResponses];
+
+export type AdminClearSourceLocationDefaultData = {
+    body: ClearSourceLocationDefaultData;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default';
+};
+
+export type AdminClearSourceLocationDefaultErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current unsuspended administrator authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type AdminClearSourceLocationDefaultError = AdminClearSourceLocationDefaultErrors[keyof AdminClearSourceLocationDefaultErrors];
+
+export type AdminClearSourceLocationDefaultResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type AdminClearSourceLocationDefaultResponse = AdminClearSourceLocationDefaultResponses[keyof AdminClearSourceLocationDefaultResponses];
+
+export type AdminGetSourceLocationDefaultData = {
+    body?: never;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default';
+};
+
+export type AdminGetSourceLocationDefaultErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current unsuspended administrator authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type AdminGetSourceLocationDefaultError = AdminGetSourceLocationDefaultErrors[keyof AdminGetSourceLocationDefaultErrors];
+
+export type AdminGetSourceLocationDefaultResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type AdminGetSourceLocationDefaultResponse = AdminGetSourceLocationDefaultResponses[keyof AdminGetSourceLocationDefaultResponses];
+
+export type AdminChangeSourceLocationDefaultApplicabilityData = {
+    body: ChangeSourceLocationDefaultApplicabilityData;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default';
+};
+
+export type AdminChangeSourceLocationDefaultApplicabilityErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current unsuspended administrator authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type AdminChangeSourceLocationDefaultApplicabilityError = AdminChangeSourceLocationDefaultApplicabilityErrors[keyof AdminChangeSourceLocationDefaultApplicabilityErrors];
+
+export type AdminChangeSourceLocationDefaultApplicabilityResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type AdminChangeSourceLocationDefaultApplicabilityResponse = AdminChangeSourceLocationDefaultApplicabilityResponses[keyof AdminChangeSourceLocationDefaultApplicabilityResponses];
+
+export type AdminAssignSourceLocationDefaultData = {
+    body: AssignSourceLocationDefaultData;
+    path: {
+        /**
+         * Strict ls_ UUIDv7 ListingSource TypeID.
+         */
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default';
+};
+
+export type AdminAssignSourceLocationDefaultErrors = {
+    /**
+     * Invalid body/path (BAD_BODY_VALUE or INVALID_OBJECT_ID).
+     */
+    400: ApiError;
+    /**
+     * Bearer authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing scope or current unsuspended administrator authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source (LISTING_SOURCE_NOT_FOUND) or operator-owned location (PARTY_NOT_FOUND) does not exist.
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, retired selection or applicability change without an assignment (CONFLICT).
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or internal failure (LISTING_SOURCE_INTERNAL_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Persistence or transaction unavailable (LISTING_SOURCE_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type AdminAssignSourceLocationDefaultError = AdminAssignSourceLocationDefaultErrors[keyof AdminAssignSourceLocationDefaultErrors];
+
+export type AdminAssignSourceLocationDefaultResponses = {
+    /**
+     * Protected default configuration with evidence and expected-revision token, without a copied location address or point.
+     */
+    200: SourceLocationDefaultData;
+};
+
+export type AdminAssignSourceLocationDefaultResponse = AdminAssignSourceLocationDefaultResponses[keyof AdminAssignSourceLocationDefaultResponses];
+
+export type ListShippingProfilesData = {
+    body?: never;
+    path: {
+        listing_source_id: string;
+    };
+    query?: {
+        size?: number;
+        after?: string;
+        /**
+         * Exact stable object key belonging to the authenticated producer. Omit integrationMethod for SOURCE identity.
+         */
+        objectKey?: string;
+        /**
+         * Enabled provider method for objectKey lookup; requires objectKey.
+         */
+        integrationMethod?: 'SHOPIFY' | 'WOOCOMMERCE';
+    };
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles';
+};
+
+export type ListShippingProfilesErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ListShippingProfilesError = ListShippingProfilesErrors[keyof ListShippingProfilesErrors];
+
+export type ListShippingProfilesResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: Array<ShippingProfileSummaryData>;
+};
+
+export type ListShippingProfilesResponse = ListShippingProfilesResponses[keyof ListShippingProfilesResponses];
+
+export type CreateShippingProfileData2 = {
+    body: CreateShippingProfileData;
+    path: {
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles';
+};
+
+export type CreateShippingProfileErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type CreateShippingProfileError = CreateShippingProfileErrors[keyof CreateShippingProfileErrors];
+
+export type CreateShippingProfileResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingProfileData;
+};
+
+export type CreateShippingProfileResponse = CreateShippingProfileResponses[keyof CreateShippingProfileResponses];
+
+export type RetireShippingProfileData = {
+    body: ShippingProfileLifecycleData;
+    path: {
+        listing_source_id: string;
+        shipping_profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}';
+};
+
+export type RetireShippingProfileErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type RetireShippingProfileError = RetireShippingProfileErrors[keyof RetireShippingProfileErrors];
+
+export type RetireShippingProfileResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingProfileData;
+};
+
+export type RetireShippingProfileResponse = RetireShippingProfileResponses[keyof RetireShippingProfileResponses];
+
+export type GetShippingProfileData = {
+    body?: never;
+    path: {
+        listing_source_id: string;
+        shipping_profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}';
+};
+
+export type GetShippingProfileErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type GetShippingProfileError = GetShippingProfileErrors[keyof GetShippingProfileErrors];
+
+export type GetShippingProfileResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingProfileData;
+};
+
+export type GetShippingProfileResponse = GetShippingProfileResponses[keyof GetShippingProfileResponses];
+
+export type ReplaceShippingProfileData2 = {
+    body: ReplaceShippingProfileData;
+    path: {
+        listing_source_id: string;
+        shipping_profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}';
+};
+
+export type ReplaceShippingProfileErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ReplaceShippingProfileError = ReplaceShippingProfileErrors[keyof ReplaceShippingProfileErrors];
+
+export type ReplaceShippingProfileResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingProfileData;
+};
+
+export type ReplaceShippingProfileResponse = ReplaceShippingProfileResponses[keyof ReplaceShippingProfileResponses];
+
+export type RestoreShippingProfileData = {
+    body: ShippingProfileLifecycleData;
+    path: {
+        listing_source_id: string;
+        shipping_profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}/restore';
+};
+
+export type RestoreShippingProfileErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type RestoreShippingProfileError = RestoreShippingProfileErrors[keyof RestoreShippingProfileErrors];
+
+export type RestoreShippingProfileResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingProfileData;
+};
+
+export type RestoreShippingProfileResponse = RestoreShippingProfileResponses[keyof RestoreShippingProfileResponses];
+
+export type ClearShippingDefaultData2 = {
+    body: ClearShippingDefaultData;
+    path: {
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-default';
+};
+
+export type ClearShippingDefaultErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type ClearShippingDefaultError = ClearShippingDefaultErrors[keyof ClearShippingDefaultErrors];
+
+export type ClearShippingDefaultResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingDefaultData;
+};
+
+export type ClearShippingDefaultResponse = ClearShippingDefaultResponses[keyof ClearShippingDefaultResponses];
+
+export type GetShippingDefaultData = {
+    body?: never;
+    path: {
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-default';
+};
+
+export type GetShippingDefaultErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type GetShippingDefaultError = GetShippingDefaultErrors[keyof GetShippingDefaultErrors];
+
+export type GetShippingDefaultResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingDefaultData;
+};
+
+export type GetShippingDefaultResponse = GetShippingDefaultResponses[keyof GetShippingDefaultResponses];
+
+export type AssignShippingDefaultData2 = {
+    body: AssignShippingDefaultData;
+    path: {
+        listing_source_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-default';
+};
+
+export type AssignShippingDefaultErrors = {
+    /**
+     * Invalid path/body/schema/revision (INVALID_OBJECT_ID or BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Missing or invalid authentication (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing current authority or credential scope (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source, scoped profile, compatible location or attributed Party absent (LISTING_SOURCE_NOT_FOUND, SHIPPING_PROFILE_NOT_FOUND, SHIPPING_LOCATION_NOT_FOUND, PARTY_NOT_FOUND).
+     */
+    404: ApiError;
+    /**
+     * Stale/exhausted revision, conflicting creation retry or ineligible profile/reference (SHIPPING_STALE_REVISION, SHIPPING_REVISION_EXHAUSTED, SHIPPING_CREATION_KEY_CONFLICT, SHIPPING_PROFILE_RETIRED, SHIPPING_REFERENCE_INELIGIBLE).
+     */
+    409: ApiError;
+    /**
+     * Persisted state cannot be decoded or storage operation failed (SHIPPING_STORAGE_ERROR).
+     */
+    500: ApiError;
+    /**
+     * Storage or transaction unavailable (SHIPPING_TEMPORARILY_UNAVAILABLE).
+     */
+    503: ApiError;
+};
+
+export type AssignShippingDefaultError = AssignShippingDefaultErrors[keyof AssignShippingDefaultErrors];
+
+export type AssignShippingDefaultResponses = {
+    /**
+     * Committed advertised shipping management result.
+     */
+    200: ShippingDefaultData;
+};
+
+export type AssignShippingDefaultResponse = AssignShippingDefaultResponses[keyof AssignShippingDefaultResponses];
+
+export type GetProductListingDeliveryData = {
+    body?: never;
+    path: {
+        listing_source_id: string;
+        source_listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/product-listings/by-source-id/{source_listing_id}/delivery';
+};
+
+export type GetProductListingDeliveryErrors = {
+    /**
+     * Invalid delivery command or references (BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing capability or source authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source or source-local listing missing.
+     */
+    404: ApiError;
+    /**
+     * Stale listing version, withdrawn listing or missing/retired/foreign delivery reference.
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or operation failure.
+     */
+    500: ApiError;
+    /**
+     * Transaction or capability unavailable.
+     */
+    503: ApiError;
+};
+
+export type GetProductListingDeliveryError = GetProductListingDeliveryErrors[keyof GetProductListingDeliveryErrors];
+
+export type GetProductListingDeliveryResponses = {
+    /**
+     * Current protected delivery configuration.
+     */
+    200: ProductListingDeliveryViewData;
+};
+
+export type GetProductListingDeliveryResponse = GetProductListingDeliveryResponses[keyof GetProductListingDeliveryResponses];
+
+export type ChangeProductListingDeliveryData = {
+    body: ProductListingDeliveryCommandData;
+    path: {
+        listing_source_id: string;
+        source_listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/product-listings/by-source-id/{source_listing_id}/delivery';
+};
+
+export type ChangeProductListingDeliveryErrors = {
+    /**
+     * Invalid delivery command or references (BAD_BODY_VALUE).
+     */
+    400: ApiError;
+    /**
+     * Authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing capability or source authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Source or source-local listing missing.
+     */
+    404: ApiError;
+    /**
+     * Stale listing version, withdrawn listing or missing/retired/foreign delivery reference.
+     */
+    409: ApiError;
+    /**
+     * Invalid persisted state or operation failure.
+     */
+    500: ApiError;
+    /**
+     * Transaction or capability unavailable.
+     */
+    503: ApiError;
+};
+
+export type ChangeProductListingDeliveryError = ChangeProductListingDeliveryErrors[keyof ChangeProductListingDeliveryErrors];
+
+export type ChangeProductListingDeliveryResponses = {
+    /**
+     * Committed delivery command result.
+     */
+    200: ProductListingDeliveryResultData;
+};
+
+export type ChangeProductListingDeliveryResponse = ChangeProductListingDeliveryResponses[keyof ChangeProductListingDeliveryResponses];
+
+export type SubmitProductListingDeliveryData = {
+    body: ProductListingDeliveryCommandData;
+    headers?: {
+        /**
+         * Retry with unchanged content and key. Accepted means FIFO admission only; execution checks the original expectedVersion.
+         */
+        'Idempotency-Key'?: string;
+    };
+    path: {
+        listing_source_id: string;
+        source_listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listing-sources/{listing_source_id}/product-listings/by-source-id/{source_listing_id}/delivery/async';
+};
+
+export type SubmitProductListingDeliveryErrors = {
+    /**
+     * Invalid command/header problem, or rejected typed admission report.
+     */
+    400: ApiError;
+    /**
+     * Authentication required (INVALID_CREDENTIALS).
+     */
+    401: ApiError;
+    /**
+     * Missing capability or source authority (FORBIDDEN).
+     */
+    403: ApiError;
+    /**
+     * Delivery command exceeds the FIFO message limit; no confirmed acceptance.
+     */
+    413: AsyncProductListingBatchReport;
+    /**
+     * Internal admission problem, or nonretryable enqueue failure report.
+     */
+    500: ApiError;
+    /**
+     * Publisher unavailable problem, or retryable failed/unconfirmed admission report.
+     */
+    503: ApiError;
+};
+
+export type SubmitProductListingDeliveryError = SubmitProductListingDeliveryErrors[keyof SubmitProductListingDeliveryErrors];
+
+export type SubmitProductListingDeliveryResponses = {
+    /**
+     * Confirmed admission report; not canonical completion.
+     */
+    202: AsyncProductListingBatchReport;
+};
+
+export type SubmitProductListingDeliveryResponse = SubmitProductListingDeliveryResponses[keyof SubmitProductListingDeliveryResponses];

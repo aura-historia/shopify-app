@@ -28,7 +28,8 @@ const config = {
   redirectUri: "https://shopify.test/callback",
   clientId,
   clientSecret: "client-secret",
-  scope: "listing-sources:write product-listings:write",
+  scope:
+    "listing-sources:read listing-sources:write product-listings:read product-listings:write",
 };
 
 function makeKv() {
@@ -82,7 +83,7 @@ describe("Aura Historia OAuth flow helpers", () => {
     );
     assert.equal(
       devConfig.scope,
-      "listing-sources:write product-listings:write",
+      "listing-sources:read listing-sources:write product-listings:read product-listings:write",
     );
   });
 
@@ -118,7 +119,7 @@ describe("Aura Historia OAuth flow helpers", () => {
     );
     assert.equal(
       authorization.url.searchParams.get("scope"),
-      "listing-sources:write product-listings:write",
+      "listing-sources:read listing-sources:write product-listings:read product-listings:write",
     );
     assert.equal(authorization.url.searchParams.get("client_id"), clientId);
     assert.equal(authorization.url.searchParams.get("response_type"), "code");
@@ -182,7 +183,8 @@ describe("Aura Historia OAuth flow helpers", () => {
             access_token: "aurahistoria_partner_token",
             token_type: "BEARER",
             expires_in: null,
-            scope: "listing-sources:write product-listings:write",
+            scope:
+              "listing-sources:read listing-sources:write product-listings:read product-listings:write",
           }),
           {
             status: 200,
@@ -202,14 +204,18 @@ describe("Aura Historia OAuth flow helpers", () => {
           redirectUri: "https://shopify.test/callback",
           clientId,
           clientSecret: "client-secret",
-          scope: "listing-sources:write product-listings:write",
+          scope:
+            "listing-sources:read listing-sources:write product-listings:read product-listings:write",
         },
         "oauth-code",
         "code-verifier",
       );
 
       assert.equal(token.access_token, "aurahistoria_partner_token");
-      assert.equal(token.scope, "listing-sources:write product-listings:write");
+      assert.equal(
+        token.scope,
+        "listing-sources:read listing-sources:write product-listings:read product-listings:write",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

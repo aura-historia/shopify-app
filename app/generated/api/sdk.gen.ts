@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, type Options as Options2, type RequestResult, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { AddWatchlistProductData, AddWatchlistProductErrors, AddWatchlistProductResponses, AdminCreateListingSourceData, AdminCreateListingSourceErrors, AdminCreateListingSourceResponses, AdminCreateOAuthClientData, AdminCreateOAuthClientErrors, AdminCreateOAuthClientResponses, AdminCreatePartyData, AdminCreatePartyErrors, AdminCreatePartyResponses, AdminDecidePartnershipApplicationData, AdminDecidePartnershipApplicationErrors, AdminDecidePartnershipApplicationResponses, AdminDeleteListingSourceData, AdminDeleteListingSourceErrors, AdminDeleteListingSourceResponses, AdminDeleteOAuthClientData, AdminDeleteOAuthClientErrors, AdminDeleteOAuthClientResponses, AdminDeletePartyData, AdminDeletePartyErrors, AdminDeletePartyResponses, AdminDeleteUserAccessTokenData, AdminDeleteUserAccessTokenErrors, AdminDeleteUserAccessTokenResponses, AdminDeleteUserAccessTokensData, AdminDeleteUserAccessTokensErrors, AdminDeleteUserAccessTokensResponses, AdminDeleteUserData, AdminDeleteUserErrors, AdminDeleteUserResponses, AdminDissolvePartnershipData, AdminDissolvePartnershipErrors, AdminDissolvePartnershipResponses, AdminGetListingSourceData, AdminGetListingSourceErrors, AdminGetListingSourceResponses, AdminGetOAuthClientData, AdminGetOAuthClientErrors, AdminGetOAuthClientResponses, AdminGetPartnershipApplicationData, AdminGetPartnershipApplicationErrors, AdminGetPartnershipApplicationResponses, AdminGetPartnershipData, AdminGetPartnershipErrors, AdminGetPartnershipResponses, AdminGetPartyData, AdminGetPartyErrors, AdminGetPartyResponses, AdminGetUserData, AdminGetUserErrors, AdminGetUserResponses, AdminGrantPartnershipListingSourceData, AdminGrantPartnershipListingSourceErrors, AdminGrantPartnershipListingSourceResponses, AdminGrantPartnershipMembershipData, AdminGrantPartnershipMembershipErrors, AdminGrantPartnershipMembershipResponses, AdminListOAuthClientsData, AdminListOAuthClientsErrors, AdminListOAuthClientsResponses, AdminListUserAccessTokensData, AdminListUserAccessTokensErrors, AdminListUserAccessTokensResponses, AdminMarkPartnershipApplicationInReviewData, AdminMarkPartnershipApplicationInReviewErrors, AdminMarkPartnershipApplicationInReviewResponses, AdminPatchOAuthClientData, AdminPatchOAuthClientErrors, AdminPatchOAuthClientResponses, AdminPatchUserData, AdminPatchUserErrors, AdminPatchUserResponses, AdminRevokePartnershipListingSourceData, AdminRevokePartnershipListingSourceErrors, AdminRevokePartnershipListingSourceResponses, AdminRevokePartnershipMembershipData, AdminRevokePartnershipMembershipErrors, AdminRevokePartnershipMembershipResponses, AdminRevokeUserSessionsData, AdminRevokeUserSessionsErrors, AdminRevokeUserSessionsResponses, AdminSearchListingSourcesData, AdminSearchListingSourcesErrors, AdminSearchListingSourcesResponses, AdminSearchPartiesData, AdminSearchPartiesErrors, AdminSearchPartiesResponses, AdminSearchPartnershipApplicationsData, AdminSearchPartnershipApplicationsErrors, AdminSearchPartnershipApplicationsResponses, AdminSearchPartnershipsData, AdminSearchPartnershipsErrors, AdminSearchPartnershipsResponses, AdminSearchUsersData, AdminSearchUsersErrors, AdminSearchUsersResponses, AdminSuspendUserData, AdminSuspendUserErrors, AdminSuspendUserResponses, AdminUnsuspendUserData, AdminUnsuspendUserErrors, AdminUnsuspendUserResponses, AdminUpdateListingSourceData, AdminUpdateListingSourceErrors, AdminUpdateListingSourceResponses, AdminUpdatePartyData, AdminUpdatePartyErrors, AdminUpdatePartyResponses, CreateAdminAuctionData, CreateAdminAuctionErrors, CreateAdminAuctionResponses, CreateUserSearchFilterData, CreateUserSearchFilterErrors, CreateUserSearchFilterResponses, DeleteAsyncPartnerProductListingsData, DeleteAsyncPartnerProductListingsErrors, DeleteAsyncPartnerProductListingsResponses, DeleteMyAccessTokenData, DeleteMyAccessTokenErrors, DeleteMyAccessTokenResponses, DeleteNotificationData, DeleteNotificationErrors, DeleteNotificationResponses, DeleteNotificationsData, DeleteNotificationsErrors, DeleteNotificationsResponses, DeleteOwnPartnershipApplicationData, DeleteOwnPartnershipApplicationErrors, DeleteOwnPartnershipApplicationResponses, DeletePartnerProductListingsData, DeletePartnerProductListingsErrors, DeletePartnerProductListingsResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DeleteUserSearchFilterData, DeleteUserSearchFilterErrors, DeleteUserSearchFilterResponses, DeleteWatchlistProductData, DeleteWatchlistProductErrors, DeleteWatchlistProductResponses, GetAdminAuctionData, GetAdminAuctionErrors, GetAdminAuctionResponses, GetAdminOverviewData, GetAdminOverviewErrors, GetAdminOverviewResponses, GetAuctionCatalogueData, GetAuctionCatalogueErrors, GetAuctionCatalogueResponses, GetAuctionData, GetAuctionErrors, GetAuctionResponses, GetHealthData, GetHealthResponses, GetMyAccessTokenData, GetMyAccessTokenErrors, GetMyAccessTokenResponses, GetMyAccessTokensData, GetMyAccessTokensErrors, GetMyAccessTokensResponses, GetMyListingSourcesData, GetMyListingSourcesErrors, GetMyListingSourcesResponses, GetMyPartnershipApplicationsData, GetMyPartnershipApplicationsErrors, GetMyPartnershipApplicationsResponses, GetOAuthConsentClientData, GetOAuthConsentClientErrors, GetOAuthConsentClientResponses, GetOwnPartnershipApplicationData, GetOwnPartnershipApplicationErrors, GetOwnPartnershipApplicationResponses, GetProductListingByTitleSlugData, GetProductListingByTitleSlugErrors, GetProductListingByTitleSlugResponses, GetProductListingData, GetProductListingErrors, GetProductListingHistoryData, GetProductListingHistoryErrors, GetProductListingHistoryResponses, GetProductListingResponses, GetPublicListingSourceBySlugData, GetPublicListingSourceBySlugErrors, GetPublicListingSourceBySlugResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetSimilarProductListingsData, GetSimilarProductListingsErrors, GetSimilarProductListingsResponses, GetUserAccountData, GetUserAccountErrors, GetUserAccountResponses, GetUserSearchFilterData, GetUserSearchFilterErrors, GetUserSearchFilterResponses, GetUserSearchFiltersData, GetUserSearchFiltersErrors, GetUserSearchFiltersResponses, GetWatchlistProductListingsData, GetWatchlistProductListingsErrors, GetWatchlistProductListingsResponses, ListAuctionsData, ListAuctionsErrors, ListAuctionsResponses, ListNotificationsData, ListNotificationsErrors, ListNotificationsResponses, ListSearchFilterMatchesData, ListSearchFilterMatchesErrors, ListSearchFilterMatchesResponses, OauthAuthorizeData, OauthAuthorizeErrors, OauthIntrospectData, OauthIntrospectErrors, OauthIntrospectResponses, OauthRevokeData, OauthRevokeErrors, OauthRevokeResponses, OauthTokenByThirdPartyCodeData, OauthTokenByThirdPartyCodeErrors, OauthTokenByThirdPartyCodeResponses, OauthTokenData, OauthTokenErrors, OauthTokenResponses, PatchAsyncPartnerProductListingsData, PatchAsyncPartnerProductListingsErrors, PatchAsyncPartnerProductListingsResponses, PatchMyAccessTokenData, PatchMyAccessTokenErrors, PatchMyAccessTokenResponses, PatchPartnerProductListingsData, PatchPartnerProductListingsErrors, PatchPartnerProductListingsResponses, PatchWatchlistProductData, PatchWatchlistProductErrors, PatchWatchlistProductResponses, PostAsyncPartnerProductListingsData, PostAsyncPartnerProductListingsErrors, PostAsyncPartnerProductListingsResponses, PostBillingCheckoutData2, PostBillingCheckoutErrors, PostBillingCheckoutResponses, PostBillingManageData, PostBillingManageErrors, PostBillingManageResponses, PostBillingPortalData, PostBillingPortalErrors, PostBillingPortalResponses, PostMyAccessTokenData, PostMyAccessTokenErrors, PostMyAccessTokenResponses, PostPartnerProductListingsData, PostPartnerProductListingsErrors, PostPartnerProductListingsResponses, PostPartnershipApplicationData, PostPartnershipApplicationErrors, PostPartnershipApplicationResponses, PostWoocommerceWebhookData, PostWoocommerceWebhookErrors, PostWoocommerceWebhookResponses, PutAsyncPartnerProductListingsData, PutAsyncPartnerProductListingsErrors, PutAsyncPartnerProductListingsResponses, PutNewsletterSubscriptionData2, PutNewsletterSubscriptionErrors, PutNewsletterSubscriptionResponses, PutPartnerProductListingsData, PutPartnerProductListingsErrors, PutPartnerProductListingsResponses, PutShopifyListingSourceIngestionConfigurationData2, PutShopifyListingSourceIngestionConfigurationErrors, PutShopifyListingSourceIngestionConfigurationResponses, PutWoocommerceListingSourceIngestionConfigurationData2, PutWoocommerceListingSourceIngestionConfigurationErrors, PutWoocommerceListingSourceIngestionConfigurationResponses, SearchPublicListingSourcesData, SearchPublicListingSourcesErrors, SearchPublicListingSourcesResponses, SimpleSearchProductListingsData, SimpleSearchProductListingsErrors, SimpleSearchProductListingsResponses, UpdateAdminAuctionData, UpdateAdminAuctionErrors, UpdateAdminAuctionResponses, UpdateAllNotificationsSeenData, UpdateAllNotificationsSeenErrors, UpdateAllNotificationsSeenResponses, UpdateNotificationSeenData2, UpdateNotificationSeenErrors, UpdateNotificationSeenResponses, UpdateNotificationsSeenData2, UpdateNotificationsSeenErrors, UpdateNotificationsSeenResponses, UpdateSearchFilterMatchFeedbackData, UpdateSearchFilterMatchFeedbackErrors, UpdateSearchFilterMatchFeedbackResponses, UpdateUserAccountData, UpdateUserAccountErrors, UpdateUserAccountResponses, UpdateUserSearchFilterData, UpdateUserSearchFilterErrors, UpdateUserSearchFilterResponses } from './types.gen';
+import type { AddWatchlistProductData, AddWatchlistProductErrors, AddWatchlistProductResponses, AdminAssignSourceLocationDefaultData, AdminAssignSourceLocationDefaultErrors, AdminAssignSourceLocationDefaultResponses, AdminChangeSourceLocationDefaultApplicabilityData, AdminChangeSourceLocationDefaultApplicabilityErrors, AdminChangeSourceLocationDefaultApplicabilityResponses, AdminClearSourceLocationDefaultData, AdminClearSourceLocationDefaultErrors, AdminClearSourceLocationDefaultResponses, AdminCreateListingSourceData, AdminCreateListingSourceErrors, AdminCreateListingSourceResponses, AdminCreateOAuthClientData, AdminCreateOAuthClientErrors, AdminCreateOAuthClientResponses, AdminCreatePartyData, AdminCreatePartyErrors, AdminCreatePartyResponses, AdminDecidePartnershipApplicationData, AdminDecidePartnershipApplicationErrors, AdminDecidePartnershipApplicationResponses, AdminDeleteListingSourceData, AdminDeleteListingSourceErrors, AdminDeleteListingSourceResponses, AdminDeleteOAuthClientData, AdminDeleteOAuthClientErrors, AdminDeleteOAuthClientResponses, AdminDeletePartyData, AdminDeletePartyErrors, AdminDeletePartyResponses, AdminDeleteUserAccessTokenData, AdminDeleteUserAccessTokenErrors, AdminDeleteUserAccessTokenResponses, AdminDeleteUserAccessTokensData, AdminDeleteUserAccessTokensErrors, AdminDeleteUserAccessTokensResponses, AdminDeleteUserData, AdminDeleteUserErrors, AdminDeleteUserResponses, AdminDissolvePartnershipData, AdminDissolvePartnershipErrors, AdminDissolvePartnershipResponses, AdminGetListingSourceData, AdminGetListingSourceErrors, AdminGetListingSourceResponses, AdminGetOAuthClientData, AdminGetOAuthClientErrors, AdminGetOAuthClientResponses, AdminGetPartnershipApplicationData, AdminGetPartnershipApplicationErrors, AdminGetPartnershipApplicationResponses, AdminGetPartnershipData, AdminGetPartnershipErrors, AdminGetPartnershipResponses, AdminGetPartyData, AdminGetPartyErrors, AdminGetPartyResponses, AdminGetSourceLocationDefaultData, AdminGetSourceLocationDefaultErrors, AdminGetSourceLocationDefaultResponses, AdminGetUserData, AdminGetUserErrors, AdminGetUserResponses, AdminGrantPartnershipListingSourceData, AdminGrantPartnershipListingSourceErrors, AdminGrantPartnershipListingSourceResponses, AdminGrantPartnershipMembershipData, AdminGrantPartnershipMembershipErrors, AdminGrantPartnershipMembershipResponses, AdminListOAuthClientsData, AdminListOAuthClientsErrors, AdminListOAuthClientsResponses, AdminListUserAccessTokensData, AdminListUserAccessTokensErrors, AdminListUserAccessTokensResponses, AdminMarkPartnershipApplicationInReviewData, AdminMarkPartnershipApplicationInReviewErrors, AdminMarkPartnershipApplicationInReviewResponses, AdminPatchOAuthClientData, AdminPatchOAuthClientErrors, AdminPatchOAuthClientResponses, AdminPatchUserData, AdminPatchUserErrors, AdminPatchUserResponses, AdminRevokePartnershipListingSourceData, AdminRevokePartnershipListingSourceErrors, AdminRevokePartnershipListingSourceResponses, AdminRevokePartnershipMembershipData, AdminRevokePartnershipMembershipErrors, AdminRevokePartnershipMembershipResponses, AdminRevokeUserSessionsData, AdminRevokeUserSessionsErrors, AdminRevokeUserSessionsResponses, AdminSearchAuctionsData, AdminSearchAuctionsErrors, AdminSearchAuctionsResponses, AdminSearchListingSourcesData, AdminSearchListingSourcesErrors, AdminSearchListingSourcesResponses, AdminSearchPartiesData, AdminSearchPartiesErrors, AdminSearchPartiesResponses, AdminSearchPartnershipApplicationsData, AdminSearchPartnershipApplicationsErrors, AdminSearchPartnershipApplicationsResponses, AdminSearchPartnershipsData, AdminSearchPartnershipsErrors, AdminSearchPartnershipsResponses, AdminSearchUsersData, AdminSearchUsersErrors, AdminSearchUsersResponses, AdminSuspendUserData, AdminSuspendUserErrors, AdminSuspendUserResponses, AdminUnsuspendUserData, AdminUnsuspendUserErrors, AdminUnsuspendUserResponses, AdminUpdateListingSourceData, AdminUpdateListingSourceErrors, AdminUpdateListingSourceResponses, AdminUpdatePartyData, AdminUpdatePartyErrors, AdminUpdatePartyResponses, AssignShippingDefaultData2, AssignShippingDefaultErrors, AssignShippingDefaultResponses, AssignSourceLocationDefaultData2, AssignSourceLocationDefaultErrors, AssignSourceLocationDefaultResponses, ChangeProductListingDeliveryData, ChangeProductListingDeliveryErrors, ChangeProductListingDeliveryResponses, ChangeSourceLocationDefaultApplicabilityData2, ChangeSourceLocationDefaultApplicabilityErrors, ChangeSourceLocationDefaultApplicabilityResponses, ClearShippingDefaultData2, ClearShippingDefaultErrors, ClearShippingDefaultResponses, ClearSourceLocationDefaultData2, ClearSourceLocationDefaultErrors, ClearSourceLocationDefaultResponses, ConfirmNewsletterSubscriptionData2, ConfirmNewsletterSubscriptionErrors, ConfirmNewsletterSubscriptionResponses, CorrectPartyLocationData2, CorrectPartyLocationErrors, CorrectPartyLocationResponses, CreateAdminAuctionData, CreateAdminAuctionErrors, CreateAdminAuctionResponses, CreatePartyLocationData2, CreatePartyLocationErrors, CreatePartyLocationResponses, CreateShippingProfileData2, CreateShippingProfileErrors, CreateShippingProfileResponses, CreateUserAddressData, CreateUserAddressErrors, CreateUserAddressResponses, CreateUserSearchFilterData, CreateUserSearchFilterErrors, CreateUserSearchFilterResponses, DeleteAsyncPartnerProductListingsData, DeleteAsyncPartnerProductListingsErrors, DeleteAsyncPartnerProductListingsResponses, DeleteMyAccessTokenData, DeleteMyAccessTokenErrors, DeleteMyAccessTokenResponses, DeleteNotificationData, DeleteNotificationErrors, DeleteNotificationResponses, DeleteNotificationsData, DeleteNotificationsErrors, DeleteNotificationsResponses, DeleteOwnPartnershipApplicationData, DeleteOwnPartnershipApplicationErrors, DeleteOwnPartnershipApplicationResponses, DeletePartnerProductListingsData, DeletePartnerProductListingsErrors, DeletePartnerProductListingsResponses, DeleteUserAddressData, DeleteUserAddressErrors, DeleteUserAddressResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DeleteUserSearchFilterData, DeleteUserSearchFilterErrors, DeleteUserSearchFilterResponses, DeleteWatchlistProductData, DeleteWatchlistProductErrors, DeleteWatchlistProductResponses, DiscoverPartyLocationsData, DiscoverPartyLocationsErrors, DiscoverPartyLocationsResponses, GetAdminAuctionData, GetAdminAuctionErrors, GetAdminAuctionResponses, GetAdminOverviewData, GetAdminOverviewErrors, GetAdminOverviewResponses, GetAdminProductListingData, GetAdminProductListingErrors, GetAdminProductListingResponses, GetAuctionCatalogueData, GetAuctionCatalogueErrors, GetAuctionCatalogueResponses, GetAuctionData, GetAuctionErrors, GetAuctionResponses, GetBrowsingDestinationData, GetBrowsingDestinationErrors, GetBrowsingDestinationResponses, GetHealthData, GetHealthResponses, GetMyAccessTokenData, GetMyAccessTokenErrors, GetMyAccessTokenResponses, GetMyAccessTokensData, GetMyAccessTokensErrors, GetMyAccessTokensResponses, GetMyListingSourcesData, GetMyListingSourcesErrors, GetMyListingSourcesResponses, GetMyPartnershipApplicationsData, GetMyPartnershipApplicationsErrors, GetMyPartnershipApplicationsResponses, GetOAuthConsentClientData, GetOAuthConsentClientErrors, GetOAuthConsentClientResponses, GetOwnPartnershipApplicationData, GetOwnPartnershipApplicationErrors, GetOwnPartnershipApplicationResponses, GetPartnerProductListingData, GetPartnerProductListingErrors, GetPartnerProductListingResponses, GetPartyLocationData, GetPartyLocationErrors, GetPartyLocationResponses, GetProductListingByTitleSlugData, GetProductListingByTitleSlugErrors, GetProductListingByTitleSlugResponses, GetProductListingData, GetProductListingDeliveryData, GetProductListingDeliveryErrors, GetProductListingDeliveryResponses, GetProductListingErrors, GetProductListingHistoryData, GetProductListingHistoryErrors, GetProductListingHistoryResponses, GetProductListingResponses, GetPublicListingSourceBySlugData, GetPublicListingSourceBySlugErrors, GetPublicListingSourceBySlugResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetShippingDefaultData, GetShippingDefaultErrors, GetShippingDefaultResponses, GetShippingProfileData, GetShippingProfileErrors, GetShippingProfileResponses, GetSimilarProductListingsData, GetSimilarProductListingsErrors, GetSimilarProductListingsResponses, GetSourceLocationDefaultData, GetSourceLocationDefaultErrors, GetSourceLocationDefaultResponses, GetUserAccountData, GetUserAccountErrors, GetUserAccountResponses, GetUserAddressData, GetUserAddressErrors, GetUserAddressResponses, GetUserSearchFilterData, GetUserSearchFilterErrors, GetUserSearchFilterResponses, GetUserSearchFiltersData, GetUserSearchFiltersErrors, GetUserSearchFiltersResponses, GetWatchlistProductListingsData, GetWatchlistProductListingsErrors, GetWatchlistProductListingsResponses, ListAuctionsData, ListAuctionsErrors, ListAuctionsResponses, ListNotificationsData, ListNotificationsErrors, ListNotificationsResponses, ListPartnerProductListingsData, ListPartnerProductListingsErrors, ListPartnerProductListingsResponses, ListPartyLocationManagersData, ListPartyLocationManagersErrors, ListPartyLocationManagersResponses, ListPartyLocationsData, ListPartyLocationsErrors, ListPartyLocationsResponses, ListSearchFilterMatchesData, ListSearchFilterMatchesErrors, ListSearchFilterMatchesResponses, ListShippingProfilesData, ListShippingProfilesErrors, ListShippingProfilesResponses, ListUserAddressesData, ListUserAddressesErrors, ListUserAddressesResponses, OauthAuthorizeData, OauthAuthorizeErrors, OauthIntrospectData, OauthIntrospectErrors, OauthIntrospectResponses, OauthRevokeData, OauthRevokeErrors, OauthRevokeResponses, OauthTokenByThirdPartyCodeData, OauthTokenByThirdPartyCodeErrors, OauthTokenByThirdPartyCodeResponses, OauthTokenData, OauthTokenErrors, OauthTokenResponses, PatchAsyncPartnerProductListingsData, PatchAsyncPartnerProductListingsErrors, PatchAsyncPartnerProductListingsResponses, PatchMyAccessTokenData, PatchMyAccessTokenErrors, PatchMyAccessTokenResponses, PatchPartnerProductListingsData, PatchPartnerProductListingsErrors, PatchPartnerProductListingsResponses, PatchWatchlistProductData, PatchWatchlistProductErrors, PatchWatchlistProductResponses, PostAsyncPartnerProductListingsData, PostAsyncPartnerProductListingsErrors, PostAsyncPartnerProductListingsResponses, PostBillingCheckoutData2, PostBillingCheckoutErrors, PostBillingCheckoutResponses, PostBillingManageData, PostBillingManageErrors, PostBillingManageResponses, PostBillingPortalData, PostBillingPortalErrors, PostBillingPortalResponses, PostLoopsPreferenceWebhookData, PostLoopsPreferenceWebhookErrors, PostLoopsPreferenceWebhookResponses, PostMyAccessTokenData, PostMyAccessTokenErrors, PostMyAccessTokenResponses, PostPartnerProductListingsData, PostPartnerProductListingsErrors, PostPartnerProductListingsResponses, PostPartnershipApplicationData, PostPartnershipApplicationErrors, PostPartnershipApplicationResponses, PostWoocommerceWebhookData, PostWoocommerceWebhookErrors, PostWoocommerceWebhookResponses, PutAsyncPartnerProductListingsData, PutAsyncPartnerProductListingsErrors, PutAsyncPartnerProductListingsResponses, PutNewsletterSubscriptionData2, PutNewsletterSubscriptionErrors, PutNewsletterSubscriptionResponses, PutPartnerProductListingsData, PutPartnerProductListingsErrors, PutPartnerProductListingsResponses, PutShopifyListingSourceIngestionConfigurationData2, PutShopifyListingSourceIngestionConfigurationErrors, PutShopifyListingSourceIngestionConfigurationResponses, PutWoocommerceListingSourceIngestionConfigurationData2, PutWoocommerceListingSourceIngestionConfigurationErrors, PutWoocommerceListingSourceIngestionConfigurationResponses, ReplaceShippingProfileData2, ReplaceShippingProfileErrors, ReplaceShippingProfileResponses, RestoreAdminProductListingData, RestoreAdminProductListingErrors, RestoreAdminProductListingResponses, RestorePartnerProductListingData, RestorePartnerProductListingErrors, RestorePartnerProductListingResponses, RestoreShippingProfileData, RestoreShippingProfileErrors, RestoreShippingProfileResponses, RetireShippingProfileData, RetireShippingProfileErrors, RetireShippingProfileResponses, SearchAdminProductListingsData, SearchAdminProductListingsErrors, SearchAdminProductListingsResponses, SearchPublicListingSourcesData, SearchPublicListingSourcesErrors, SearchPublicListingSourcesResponses, SetBrowsingDestinationData, SetBrowsingDestinationErrors, SetBrowsingDestinationResponses, SetPartyLocationLifecycleData2, SetPartyLocationLifecycleErrors, SetPartyLocationLifecycleResponses, SetPartyLocationManagementGrantData, SetPartyLocationManagementGrantErrors, SetPartyLocationManagementGrantResponses, SimpleSearchProductListingsData, SimpleSearchProductListingsErrors, SimpleSearchProductListingsResponses, SubmitProductListingDeliveryData, SubmitProductListingDeliveryErrors, SubmitProductListingDeliveryResponses, UpdateAdminAuctionData, UpdateAdminAuctionErrors, UpdateAdminAuctionResponses, UpdateAdminProductListingData, UpdateAdminProductListingErrors, UpdateAdminProductListingResponses, UpdateAllNotificationsSeenData, UpdateAllNotificationsSeenErrors, UpdateAllNotificationsSeenResponses, UpdateNotificationSeenData2, UpdateNotificationSeenErrors, UpdateNotificationSeenResponses, UpdateNotificationsSeenData2, UpdateNotificationsSeenErrors, UpdateNotificationsSeenResponses, UpdatePartnerProductListingData, UpdatePartnerProductListingErrors, UpdatePartnerProductListingResponses, UpdateSearchFilterMatchFeedbackData, UpdateSearchFilterMatchFeedbackErrors, UpdateSearchFilterMatchFeedbackResponses, UpdateUserAccountData, UpdateUserAccountErrors, UpdateUserAccountResponses, UpdateUserAddressData, UpdateUserAddressErrors, UpdateUserAddressResponses, UpdateUserSearchFilterData, UpdateUserSearchFilterErrors, UpdateUserSearchFilterResponses, WithdrawAdminProductListingData, WithdrawAdminProductListingErrors, WithdrawAdminProductListingResponses, WithdrawPartnerProductListingData, WithdrawPartnerProductListingErrors, WithdrawPartnerProductListingResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -48,7 +48,131 @@ export const getAuction = <ThrowOnError extends boolean = false>(options: Option
 export const getAuctionCatalogue = <ThrowOnError extends boolean = false>(options: Options<GetAuctionCatalogueData, ThrowOnError>): RequestResult<GetAuctionCatalogueResponses, GetAuctionCatalogueErrors, ThrowOnError> => (options.client ?? client).get<GetAuctionCatalogueResponses, GetAuctionCatalogueErrors, ThrowOnError>({ url: '/api/v1/auctions/{auctionId}/product-listings', ...options });
 
 /**
+ * Search ProductListings for administration
+ *
+ * Administrator authority is required; delegated Aura tokens additionally require `product-listings:read`. Cognito administrators need no delegated scope or Partnership grant. Success and all errors use `private, no-store`. Original source values include retained withdrawn listings and do not depend on OpenSearch or enrichment readiness. Live keyset pagination includes both lifecycle states by default. Source-local identity alone is not globally unique. Text query is bounded literal matching over original title/source-local ID; no total count is returned. Cursors are bound to normalized filters and sort/order, with listing ID breaking timestamp ties.
+ */
+export const searchAdminProductListings = <ThrowOnError extends boolean = false>(options?: Options<SearchAdminProductListingsData, ThrowOnError>): RequestResult<SearchAdminProductListingsResponses, SearchAdminProductListingsErrors, ThrowOnError> => (options?.client ?? client).get<SearchAdminProductListingsResponses, SearchAdminProductListingsErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/product-listings',
+    ...options
+});
+
+/**
+ * Withdraw a retained ProductListing
+ *
+ * Administrator authority is required; delegated Aura tokens additionally require `product-listings:write`. Cognito administrators need no delegated scope or Partnership grant. All responses/errors use `private, no-store`. State and the ordinary change event commit together; indexing, embeddings, notifications and cache convergence are asynchronous. Later ingestion may overwrite edits or restore withdrawal. Refetch/reconcile after a lost response; do not automatically retry with a different version. DELETE withdraws rather than physically purging identity, history or watchlist state. Availability is cleared; sale observation is retained. Already withdrawn is a no-op only with a matching current version; stale versions still conflict.
+ */
+export const withdrawAdminProductListing = <ThrowOnError extends boolean = false>(options: Options<WithdrawAdminProductListingData, ThrowOnError>): RequestResult<WithdrawAdminProductListingResponses, WithdrawAdminProductListingErrors, ThrowOnError> => (options.client ?? client).delete<WithdrawAdminProductListingResponses, WithdrawAdminProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/product-listings/{productListingId}',
+    ...options
+});
+
+/**
+ * Inspect authoritative ProductListing facts
+ *
+ * Administrator authority is required; delegated Aura tokens additionally require `product-listings:read`. Cognito administrators need no delegated scope or Partnership grant. Success and all errors use `private, no-store`. Original source values include retained withdrawn listings and do not depend on OpenSearch or enrichment readiness. Original title/description, slug, sale observation and enrichment are read-only. Canonical image URLs are privileged inspection data; previews must respect sensitive/unassessed content rather than automatically rendering them. Public redaction is unchanged.
+ */
+export const getAdminProductListing = <ThrowOnError extends boolean = false>(options: Options<GetAdminProductListingData, ThrowOnError>): RequestResult<GetAdminProductListingResponses, GetAdminProductListingErrors, ThrowOnError> => (options.client ?? client).get<GetAdminProductListingResponses, GetAdminProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/product-listings/{productListingId}',
+    ...options
+});
+
+/**
+ * Update an existing active ProductListing
+ *
+ * Administrator authority is required; delegated Aura tokens additionally require `product-listings:write`. Cognito administrators need no delegated scope or Partnership grant. All responses/errors use `private, no-store`. State and the ordinary change event commit together; indexing, embeddings, notifications and cache convergence are asynchronous. Later ingestion may overwrite edits or restore withdrawal. Refetch/reconcile after a lost response; do not automatically retry with a different version. Never creates or restores a listing. The required expectedVersion is checked before changes and again through compare-and-set persistence. Availability edits do not fabricate sale observations. No-op preserves version/timestamps and emits no event. Unknown/read-only fields and nested unknown fields are rejected.
+ */
+export const updateAdminProductListing = <ThrowOnError extends boolean = false>(options: Options<UpdateAdminProductListingData, ThrowOnError>): RequestResult<UpdateAdminProductListingResponses, UpdateAdminProductListingErrors, ThrowOnError> => (options.client ?? client).patch<UpdateAdminProductListingResponses, UpdateAdminProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/product-listings/{productListingId}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Explicitly restore a retained ProductListing
+ *
+ * Administrator authority is required; delegated Aura tokens additionally require `product-listings:write`. Cognito administrators need no delegated scope or Partnership grant. All responses/errors use `private, no-store`. State and the ordinary change event commit together; indexing, embeddings, notifications and cache convergence are asynchronous. Later ingestion may overwrite edits or restore withdrawal. Refetch/reconcile after a lost response; do not automatically retry with a different version. Restores to ACTIVE with unknown availability; no former availability is reconstructed. Already active is a no-op only with a matching current version. Missing retained identity is never created.
+ */
+export const restoreAdminProductListing = <ThrowOnError extends boolean = false>(options: Options<RestoreAdminProductListingData, ThrowOnError>): RequestResult<RestoreAdminProductListingResponses, RestoreAdminProductListingErrors, ThrowOnError> => (options.client ?? client).post<RestoreAdminProductListingResponses, RestoreAdminProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/product-listings/{productListingId}/restore',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Search Auctions for administration
+ *
+ * Administrator authority is required. Delegated Aura access tokens also require `auctions:read`; Cognito users do not require a delegated scope. Success and errors are always `no-store`.
+ */
+export const adminSearchAuctions = <ThrowOnError extends boolean = false>(options?: Options<AdminSearchAuctionsData, ThrowOnError>): RequestResult<AdminSearchAuctionsResponses, AdminSearchAuctionsErrors, ThrowOnError> => (options?.client ?? client).get<AdminSearchAuctionsResponses, AdminSearchAuctionsErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/auctions',
+    ...options
+});
+
+/**
  * Create a source-scoped Auction (admin)
+ *
+ * Delegated Aura access tokens require `auctions:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const createAdminAuction = <ThrowOnError extends boolean = false>(options: Options<CreateAdminAuctionData, ThrowOnError>): RequestResult<CreateAdminAuctionResponses, CreateAdminAuctionErrors, ThrowOnError> => (options.client ?? client).post<CreateAdminAuctionResponses, CreateAdminAuctionErrors, ThrowOnError>({
     security: [{
@@ -70,6 +194,8 @@ export const createAdminAuction = <ThrowOnError extends boolean = false>(options
 
 /**
  * Get Auction administration detail
+ *
+ * Administrator authority is required. Delegated Aura access tokens also require `auctions:read`; Cognito users do not require a delegated scope. Success and errors are always `no-store`.
  */
 export const getAdminAuction = <ThrowOnError extends boolean = false>(options: Options<GetAdminAuctionData, ThrowOnError>): RequestResult<GetAdminAuctionResponses, GetAdminAuctionErrors, ThrowOnError> => (options.client ?? client).get<GetAdminAuctionResponses, GetAdminAuctionErrors, ThrowOnError>({
     security: [{
@@ -87,6 +213,8 @@ export const getAdminAuction = <ThrowOnError extends boolean = false>(options: O
 
 /**
  * Update Auction metadata (admin)
+ *
+ * Delegated Aura access tokens require `auctions:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const updateAdminAuction = <ThrowOnError extends boolean = false>(options: Options<UpdateAdminAuctionData, ThrowOnError>): RequestResult<UpdateAdminAuctionResponses, UpdateAdminAuctionErrors, ThrowOnError> => (options.client ?? client).patch<UpdateAdminAuctionResponses, UpdateAdminAuctionErrors, ThrowOnError>({
     security: [{
@@ -195,6 +323,25 @@ export const deletePartnerProductListings = <ThrowOnError extends boolean = fals
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * List ProductListings for an administered ListingSource
+ *
+ * An authenticated partner with an active Partnership grant for the path ListingSource is required; delegated Aura tokens additionally require `product-listings:read`. Cognito partners need no delegated scope. Administrator role alone does not grant access. Source authorization precedes reads or mutations; a listing outside the authorized source returns the same not-found result as a missing listing. Success and all errors use `private, no-store`. Original source values include retained withdrawn listings and do not depend on OpenSearch or enrichment readiness. Live keyset pagination includes both lifecycle states by default. Source-local identity alone is not globally unique. Text query is bounded literal matching over original title/source-local ID; no total count is returned. Cursors are bound to normalized filters and sort/order, with listing ID breaking timestamp ties.
+ */
+export const listPartnerProductListings = <ThrowOnError extends boolean = false>(options: Options<ListPartnerProductListingsData, ThrowOnError>): RequestResult<ListPartnerProductListingsResponses, ListPartnerProductListingsErrors, ThrowOnError> => (options.client ?? client).get<ListPartnerProductListingsResponses, ListPartnerProductListingsErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings',
+    ...options
 });
 
 /**
@@ -316,6 +463,90 @@ export const putPartnerProductListings = <ThrowOnError extends boolean = false>(
             type: 'http'
         }],
     url: '/api/v1/listing-sources/{listingSourceId}/product-listings',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Withdraw a retained ProductListing
+ *
+ * An authenticated partner with an active Partnership grant for the path ListingSource is required; delegated Aura tokens additionally require `product-listings:write`. Cognito partners need no delegated scope. Administrator role alone does not grant access. Source authorization precedes reads or mutations; a listing outside the authorized source returns the same not-found result as a missing listing. All responses/errors use `private, no-store`. State and the ordinary change event commit together; indexing, embeddings, notifications and cache convergence are asynchronous. Later ingestion may overwrite edits or restore withdrawal. Refetch/reconcile after a lost response; do not automatically retry with a different version. DELETE withdraws rather than physically purging identity, history or watchlist state. Availability is cleared; sale observation is retained. Already withdrawn is a no-op only with a matching current version; stale versions still conflict.
+ */
+export const withdrawPartnerProductListing = <ThrowOnError extends boolean = false>(options: Options<WithdrawPartnerProductListingData, ThrowOnError>): RequestResult<WithdrawPartnerProductListingResponses, WithdrawPartnerProductListingErrors, ThrowOnError> => (options.client ?? client).delete<WithdrawPartnerProductListingResponses, WithdrawPartnerProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}',
+    ...options
+});
+
+/**
+ * Inspect authoritative ProductListing facts
+ *
+ * An authenticated partner with an active Partnership grant for the path ListingSource is required; delegated Aura tokens additionally require `product-listings:read`. Cognito partners need no delegated scope. Administrator role alone does not grant access. Source authorization precedes reads or mutations; a listing outside the authorized source returns the same not-found result as a missing listing. Success and all errors use `private, no-store`. Original source values include retained withdrawn listings and do not depend on OpenSearch or enrichment readiness. Original title/description, slug, sale observation and enrichment are read-only. Canonical image URLs are privileged inspection data; previews must respect sensitive/unassessed content rather than automatically rendering them. Public redaction is unchanged.
+ */
+export const getPartnerProductListing = <ThrowOnError extends boolean = false>(options: Options<GetPartnerProductListingData, ThrowOnError>): RequestResult<GetPartnerProductListingResponses, GetPartnerProductListingErrors, ThrowOnError> => (options.client ?? client).get<GetPartnerProductListingResponses, GetPartnerProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}',
+    ...options
+});
+
+/**
+ * Update an existing active ProductListing
+ *
+ * An authenticated partner with an active Partnership grant for the path ListingSource is required; delegated Aura tokens additionally require `product-listings:write`. Cognito partners need no delegated scope. Administrator role alone does not grant access. Source authorization precedes reads or mutations; a listing outside the authorized source returns the same not-found result as a missing listing. All responses/errors use `private, no-store`. State and the ordinary change event commit together; indexing, embeddings, notifications and cache convergence are asynchronous. Later ingestion may overwrite edits or restore withdrawal. Refetch/reconcile after a lost response; do not automatically retry with a different version. Never creates or restores a listing. The required expectedVersion is checked before changes and again through compare-and-set persistence. Availability edits do not fabricate sale observations. No-op preserves version/timestamps and emits no event. Unknown/read-only fields and nested unknown fields are rejected.
+ */
+export const updatePartnerProductListing = <ThrowOnError extends boolean = false>(options: Options<UpdatePartnerProductListingData, ThrowOnError>): RequestResult<UpdatePartnerProductListingResponses, UpdatePartnerProductListingErrors, ThrowOnError> => (options.client ?? client).patch<UpdatePartnerProductListingResponses, UpdatePartnerProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Explicitly restore a retained ProductListing
+ *
+ * An authenticated partner with an active Partnership grant for the path ListingSource is required; delegated Aura tokens additionally require `product-listings:write`. Cognito partners need no delegated scope. Administrator role alone does not grant access. Source authorization precedes reads or mutations; a listing outside the authorized source returns the same not-found result as a missing listing. All responses/errors use `private, no-store`. State and the ordinary change event commit together; indexing, embeddings, notifications and cache convergence are asynchronous. Later ingestion may overwrite edits or restore withdrawal. Refetch/reconcile after a lost response; do not automatically retry with a different version. Restores to ACTIVE with unknown availability; no former availability is reconstructed. Already active is a no-op only with a matching current version. Missing retained identity is never created.
+ */
+export const restorePartnerProductListing = <ThrowOnError extends boolean = false>(options: Options<RestorePartnerProductListingData, ThrowOnError>): RequestResult<RestorePartnerProductListingResponses, RestorePartnerProductListingErrors, ThrowOnError> => (options.client ?? client).post<RestorePartnerProductListingResponses, RestorePartnerProductListingErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listingSourceId}/product-listings/{productListingId}/restore',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -630,6 +861,21 @@ export const postWoocommerceWebhook = <ThrowOnError extends boolean = false>(opt
 });
 
 /**
+ * Apply a signed Loops preference webhook
+ *
+ * Accepts one Loops webhook signed over the exact received body bytes. No Aura/Cognito bearer is required; `webhook-id`, `webhook-timestamp`, and `webhook-signature` must form a valid, recent Loops proof. The request body is limited to 64 KiB. The currently supported `webhookSchemaVersion` is `1.0.0`. Supported `eventName` values are `contact.unsubscribed`, `contact.deleted`, `email.unsubscribed`, `contact.mailingList.subscribed`, `contact.mailingList.unsubscribed`, `email.resubscribed`, `email.hardBounced`, and `email.spamReported`. A verified unknown event name is receipted as ignored; malformed events and unsupported payload schema versions return an error for provider retry.
+ * `204` means the receipt and any local preference effects committed, or the authenticated delivery was an identical duplicate or a safely ignored event. It does not mean a marketing message was sent or delivered. Conflicting delivery identity returns `409`; temporary database/provider-reader failure or the 10-second processing budget returns retryable `503`. All responses are `no-store`.
+ */
+export const postLoopsPreferenceWebhook = <ThrowOnError extends boolean = false>(options: Options<PostLoopsPreferenceWebhookData, ThrowOnError>): RequestResult<PostLoopsPreferenceWebhookResponses, PostLoopsPreferenceWebhookErrors, ThrowOnError> => (options.client ?? client).post<PostLoopsPreferenceWebhookResponses, PostLoopsPreferenceWebhookErrors, ThrowOnError>({
+    url: '/api/v1/webhooks/loops',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Get a single product by title slug
  *
  * Retrieves an active ProductListing by its immutable Aura-owned `productListingTitleSlugId`, derived from its title. Withdrawn listings return `404 PRODUCT_LISTING_NOT_FOUND`; this endpoint never returns `410`. Anonymous successful 200 responses without Authorization use `public, max-age=0, s-maxage=120, stale-if-error=0`; any request with Authorization and all non-200 responses use `private, no-store`.
@@ -676,7 +922,7 @@ export const getProductListing = <ThrowOnError extends boolean = false>(options:
  *
  * Retrieves immutable domain history for one ProductListing by `productListingId`.
  * Each array item is one committed `PRODUCT_LISTING_DISCOVERED` or `PRODUCT_LISTING_CHANGED` event, ordered by occurrence time and event ID. A changed item contains a deterministic ordered `changes` array; it is never split into synthetic entries. Discovery exposes image count, never source image URLs.
- * Price snapshots preserve stored source amounts and currencies. Sale observations retain their immutable source provenance. This endpoint performs no currency conversion.
+ * Price snapshots preserve stored source amounts and currencies. Sale observations retain their immutable source provenance. Without `currency`, the response is unchanged. With `currency`, each monetary discovery price/estimate and each previous/current price/estimate change value may include `display` with `currency`, `amount`, `fxRateId` and `capturedAt`. The snapshot is the latest persisted capture at or before this entry's `timestamp`, including an exact capture-time match. Both sides of a change use that entry's snapshot, even if the source currency changed. Conversion uses HalfUp rounding and the requested currency's minor-unit exponent (JPY and KRW: 0; all others: 2). Same-currency amounts retain the snapshot provenance. Missing snapshots or source/target quotes omit `display` for that value; the response still succeeds, and consumers fall back to the labelled source value. ON_REQUEST and null values receive no display projection. No later snapshot, current rates or provider calls are used. Source values, event order and the changes array remain intact. Currency query variants are included in the shared edge cache key.
  *
  */
 export const getProductListingHistory = <ThrowOnError extends boolean = false>(options: Options<GetProductListingHistoryData, ThrowOnError>): RequestResult<GetProductListingHistoryResponses, GetProductListingHistoryErrors, ThrowOnError> => (options.client ?? client).get<GetProductListingHistoryResponses, GetProductListingHistoryErrors, ThrowOnError>({ url: '/api/v1/product-listings/{productListingId}/history', ...options });
@@ -707,7 +953,7 @@ export const getSimilarProductListings = <ThrowOnError extends boolean = false>(
 /**
  * Simple product search via query parameters
  *
- * Performs canonical ProductListing search with query parameters. Text queries combine BM25 and embedding KNN retrieval when embedding generation succeeds; otherwise the backend falls back to BM25. Explicit non-score sorts use BM25. Any request with an Authorization header is private and not stored, including valid credentials that add user state. Anonymous successful 200 responses use `public, max-age=0, s-maxage=60, stale-if-error=0`; errors use `private, no-store`. `language` defaults to `en` and `currency` defaults to `EUR`.
+ * Performs canonical ProductListing search with query parameters. Text queries combine BM25 and embedding KNN retrieval when embedding generation succeeds; otherwise the backend falls back to BM25. Explicit non-score sorts use BM25. Any request with an Authorization header is private and not stored, including valid credentials that add user state. Anonymous successful 200 responses use `public, max-age=0, s-maxage=60, stale-if-error=0`; errors use `private, no-store`. Geographic predicates are AND; values in each country or subdivision set are OR. Missing geography never matches. Radius is inclusive in its supplied unit to the same recorded point used by distance ordering. Numeric origins never resolve from addresses/preferences. Distance ordering conflicts with sort and uses lexical text matching. Geographic responses are private, no-store and use eventually consistent OpenSearch projections; location updates can briefly lag in items, ordering, total and continuation. `language` defaults to `en` and `currency` defaults to `EUR`.
  */
 export const simpleSearchProductListings = <ThrowOnError extends boolean = false>(options?: Options<SimpleSearchProductListingsData, ThrowOnError>): RequestResult<SimpleSearchProductListingsResponses, SimpleSearchProductListingsErrors, ThrowOnError> => (options?.client ?? client).get<SimpleSearchProductListingsResponses, SimpleSearchProductListingsErrors, ThrowOnError>({
     security: [{
@@ -722,9 +968,9 @@ export const simpleSearchProductListings = <ThrowOnError extends boolean = false
 /**
  * List user search filters
  *
- * Retrieves all search filters for the authenticated user.
+ * Delegated Aura access tokens require `search-filters:read`; missing scope returns `403 FORBIDDEN`. Retrieves all search filters for the authenticated user.
  * Uses the service's fixed collection ordering.
- * Requires a Cognito JWT or an Aura access token with `search-filters:write`.
+ * Requires a Cognito JWT or an Aura access token with `search-filters:read`.
  *
  */
 export const getUserSearchFilters = <ThrowOnError extends boolean = false>(options?: Options<GetUserSearchFiltersData, ThrowOnError>): RequestResult<GetUserSearchFiltersResponses, GetUserSearchFiltersErrors, ThrowOnError> => (options?.client ?? client).get<GetUserSearchFiltersResponses, GetUserSearchFiltersErrors, ThrowOnError>({
@@ -798,9 +1044,9 @@ export const deleteUserSearchFilter = <ThrowOnError extends boolean = false>(opt
 /**
  * Get a specific search filter
  *
- * Retrieves a specific search filter by its ID for the authenticated user.
+ * Delegated Aura access tokens require `search-filters:read`; missing scope returns `403 FORBIDDEN`. Retrieves a specific search filter by its ID for the authenticated user.
  * Returns the complete search filter configuration and metadata.
- * Requires a Cognito JWT or an Aura access token with `search-filters:write`.
+ * Requires a Cognito JWT or an Aura access token with `search-filters:read`.
  *
  */
 export const getUserSearchFilter = <ThrowOnError extends boolean = false>(options: Options<GetUserSearchFilterData, ThrowOnError>): RequestResult<GetUserSearchFilterResponses, GetUserSearchFilterErrors, ThrowOnError> => (options.client ?? client).get<GetUserSearchFilterResponses, GetUserSearchFilterErrors, ThrowOnError>({
@@ -853,8 +1099,9 @@ export const updateUserSearchFilter = <ThrowOnError extends boolean = false>(opt
 /**
  * List persisted matches for a saved search filter
  *
- * Returns persisted product-listing matches associated with the authenticated user’s saved search filter. Results are read from stored match state and returned with cursor-based pagination in ascending persisted match-creation order. This endpoint does not execute a live search or preview the filter against current product listings.
- * Requires a Cognito JWT or an Aura access token with `search-filters:write`.
+ * Delegated Aura access tokens require `search-filters:read`; missing scope returns `403 FORBIDDEN`. Returns persisted product-listing matches associated with the authenticated user’s saved search filter. Results are read from stored match state and returned with cursor-based pagination in ascending persisted match-creation order. This endpoint does not execute a live search or preview the filter against current product listings.
+ * New matches are discovered by bounded scheduled matching of active ordinary and enhanced filters, subject to product-search projection lag. Semantic candidates are individually evaluated with evidence permitted by the saved filter’s plan; deterministic filters require no model decision. Runs inspect up to 50 eligible candidates per filter and do not guarantee exhaustive catalogue coverage. Match discovery and notifications are not synchronous with listing changes or filter creation.
+ * Requires a Cognito JWT or an Aura access token with `search-filters:read`.
  */
 export const listSearchFilterMatches = <ThrowOnError extends boolean = false>(options: Options<ListSearchFilterMatchesData, ThrowOnError>): RequestResult<ListSearchFilterMatchesResponses, ListSearchFilterMatchesErrors, ThrowOnError> => (options.client ?? client).get<ListSearchFilterMatchesResponses, ListSearchFilterMatchesErrors, ThrowOnError>({
     security: [{
@@ -953,6 +1200,7 @@ export const addWatchlistProduct = <ThrowOnError extends boolean = false>(option
 /**
  * Search ListingSources as admin
  *
+ * Delegated Aura access tokens require `listing-sources:read`; missing scope returns `403 FORBIDDEN`.
  * Searches ListingSource records for authenticated administrators.
  *
  * `query` performs a case-insensitive substring search across the ListingSource name and
@@ -989,6 +1237,7 @@ export const adminSearchListingSources = <ThrowOnError extends boolean = false>(
 /**
  * Create a ListingSource as admin
  *
+ * Delegated Aura access tokens require `listing-sources:write`; missing scope returns `403 FORBIDDEN`.
  * Creates a ListingSource for an authenticated administrator.
  *
  * `operator` accepts either an existing Party reference (`EXISTING` with `partyId`) or a
@@ -1019,6 +1268,7 @@ export const adminCreateListingSource = <ThrowOnError extends boolean = false>(o
 /**
  * Search parties as admin
  *
+ * Delegated Aura access tokens require `parties:read`; missing scope returns `403 FORBIDDEN`.
  * Searches Party records for authenticated administrators.
  *
  * `query` performs a case-insensitive substring search across Party name, phone, and email.
@@ -1050,6 +1300,7 @@ export const adminSearchParties = <ThrowOnError extends boolean = false>(options
 /**
  * Create a Party as admin
  *
+ * Delegated Aura access tokens require `parties:write`; missing scope returns `403 FORBIDDEN`.
  * Creates a Party for an authenticated administrator.
  *
  * The request accepts only the Party name and optional phone/email contact information.
@@ -1079,6 +1330,7 @@ export const adminCreateParty = <ThrowOnError extends boolean = false>(options: 
 /**
  * Hard-delete an unused Party as admin
  *
+ * Delegated Aura access tokens require `parties:write`; missing scope returns `403 FORBIDDEN`.
  * Deletes only an unused Party after commit. A Party with any ListingSource or retained
  * Partnership, including `DISSOLVED`, returns `409 CONFLICT`; no dependent business or
  * historical row is cascaded, detached, rewritten, or archived. Responses use
@@ -1102,6 +1354,7 @@ export const adminDeleteParty = <ThrowOnError extends boolean = false>(options: 
 /**
  * Get a Party as admin
  *
+ * Delegated Aura access tokens require `parties:read`; missing scope returns `403 FORBIDDEN`.
  * Gets one Party for an authenticated administrator.
  *
  * `partyId` must be a valid Party ID. The response contains the Party identity, immutable slug,
@@ -1126,6 +1379,7 @@ export const adminGetParty = <ThrowOnError extends boolean = false>(options: Opt
 /**
  * Update a Party as admin
  *
+ * Delegated Aura access tokens require `parties:write`; missing scope returns `403 FORBIDDEN`.
  * Updates the name and/or contact information for a Party for an authenticated administrator.
  *
  * Only `name`, `phone`, and `email` are supported. Omitted members remain unchanged;
@@ -1513,14 +1767,18 @@ export const updateUserAccount = <ThrowOnError extends boolean = false>(options:
 /**
  * List Aura Historia access tokens
  *
- * Lists the authenticated user's non-expired Aura Historia access tokens.
- * The `token` field is masked on this endpoint and does not reveal the plaintext bearer token again.
- * Requires valid Cognito JWT authentication.
+ * Lists all of the authenticated user's persisted Aura Historia access tokens, including expired and current tokens.
+ * The response contains secret-free metadata only. It does not return plaintext or masked token values.
+ * Accepts Cognito access JWTs or Aura Historia opaque bearer access tokens. Aura Historia access tokens require the delegated `access-tokens:read` capability.
  *
  */
 export const getMyAccessTokens = <ThrowOnError extends boolean = false>(options?: Options<GetMyAccessTokensData, ThrowOnError>): RequestResult<GetMyAccessTokensResponses, GetMyAccessTokensErrors, ThrowOnError> => (options?.client ?? client).get<GetMyAccessTokensResponses, GetMyAccessTokensErrors, ThrowOnError>({
     security: [{
             key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
             scheme: 'bearer',
             type: 'http'
         }],
@@ -1533,13 +1791,17 @@ export const getMyAccessTokens = <ThrowOnError extends boolean = false>(options?
  *
  * Updates metadata for one access token owned by the authenticated user. Omitted properties
  * remain unchanged; `expires: null` clears expiry. `name` and `scopes` reject `null`; use
- * `scopes: []` to clear scopes.
- * Requires valid Cognito JWT authentication.
+ * `scopes: []` to clear scopes. The response contains secret-free metadata only and never returns plaintext or masked token values.
+ * Accepts Cognito access JWTs or Aura Historia opaque bearer access tokens. Aura Historia access tokens require the delegated `access-tokens:write` capability.
  *
  */
 export const patchMyAccessToken = <ThrowOnError extends boolean = false>(options: Options<PatchMyAccessTokenData, ThrowOnError>): RequestResult<PatchMyAccessTokenResponses, PatchMyAccessTokenErrors, ThrowOnError> => (options.client ?? client).patch<PatchMyAccessTokenResponses, PatchMyAccessTokenErrors, ThrowOnError>({
     security: [{
             key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
             scheme: 'bearer',
             type: 'http'
         }],
@@ -1555,13 +1817,17 @@ export const patchMyAccessToken = <ThrowOnError extends boolean = false>(options
  * Create an Aura Historia access token
  *
  * Creates a new Aura Historia access token for the authenticated user.
- * The plaintext bearer token is returned only in this create response; later reads return a masked token value.
- * Requires valid Cognito JWT authentication.
+ * The response includes the plaintext bearer token once. List, get, and update responses contain only secret-free metadata and never return the bearer token again.
+ * Accepts Cognito access JWTs or Aura Historia opaque bearer access tokens. Aura Historia access tokens require the delegated `access-tokens:write` capability.
  *
  */
 export const postMyAccessToken = <ThrowOnError extends boolean = false>(options: Options<PostMyAccessTokenData, ThrowOnError>): RequestResult<PostMyAccessTokenResponses, PostMyAccessTokenErrors, ThrowOnError> => (options.client ?? client).post<PostMyAccessTokenResponses, PostMyAccessTokenErrors, ThrowOnError>({
     security: [{
             key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
             scheme: 'bearer',
             type: 'http'
         }],
@@ -1599,14 +1865,18 @@ export const deleteMyAccessToken = <ThrowOnError extends boolean = false>(option
 /**
  * Get one Aura Historia access token
  *
- * Retrieves one non-expired Aura Historia access token owned by the authenticated user.
- * The `token` field is masked on this endpoint and does not reveal the plaintext bearer token again.
- * Requires valid Cognito JWT authentication.
+ * Retrieves one persisted Aura Historia access token owned by the authenticated user, including expired and current tokens.
+ * The response contains secret-free metadata only. It does not return plaintext or masked token values.
+ * Accepts Cognito access JWTs or Aura Historia opaque bearer access tokens. Aura Historia access tokens require the delegated `access-tokens:read` capability.
  *
  */
 export const getMyAccessToken = <ThrowOnError extends boolean = false>(options: Options<GetMyAccessTokenData, ThrowOnError>): RequestResult<GetMyAccessTokenResponses, GetMyAccessTokenErrors, ThrowOnError> => (options.client ?? client).get<GetMyAccessTokenResponses, GetMyAccessTokenErrors, ThrowOnError>({
     security: [{
             key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
             scheme: 'bearer',
             type: 'http'
         }],
@@ -1731,6 +2001,8 @@ export const patchWatchlistProduct = <ThrowOnError extends boolean = false>(opti
 
 /**
  * Delete all notifications
+ *
+ * Delegated Aura access tokens require `notifications:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const deleteNotifications = <ThrowOnError extends boolean = false>(options?: Options<DeleteNotificationsData, ThrowOnError>): RequestResult<DeleteNotificationsResponses, DeleteNotificationsErrors, ThrowOnError> => (options?.client ?? client).delete<DeleteNotificationsResponses, DeleteNotificationsErrors, ThrowOnError>({
     security: [{
@@ -1749,7 +2021,7 @@ export const deleteNotifications = <ThrowOnError extends boolean = false>(option
 /**
  * List user notifications
  *
- * Retrieves the authenticated user’s canonical notifications in newest-first order.
+ * Delegated Aura access tokens require `notifications:read`; missing scope returns `403 FORBIDDEN`. Retrieves the authenticated user’s canonical notifications in newest-first order.
  * Watchlist price-change notifications preserve each event’s immutable source currency; no FX conversion
  * is applied from the user’s preferences. Product image URLs are presented according to the authenticated
  * user’s `showUnassessedOrSensitiveContent` preference.
@@ -1772,7 +2044,7 @@ export const listNotifications = <ThrowOnError extends boolean = false>(options?
 /**
  * Update selected notification seen states
  *
- * Updates the seen state for the explicit canonical notification IDs in the request body.
+ * Delegated Aura access tokens require `notifications:write`; missing scope returns `403 FORBIDDEN`. Updates the seen state for the explicit canonical notification IDs in the request body.
  */
 export const updateNotificationsSeen = <ThrowOnError extends boolean = false>(options: Options<UpdateNotificationsSeenData2, ThrowOnError>): RequestResult<UpdateNotificationsSeenResponses, UpdateNotificationsSeenErrors, ThrowOnError> => (options.client ?? client).patch<UpdateNotificationsSeenResponses, UpdateNotificationsSeenErrors, ThrowOnError>({
     security: [{
@@ -1794,6 +2066,8 @@ export const updateNotificationsSeen = <ThrowOnError extends boolean = false>(op
 
 /**
  * Update all notification seen states
+ *
+ * Delegated Aura access tokens require `notifications:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const updateAllNotificationsSeen = <ThrowOnError extends boolean = false>(options: Options<UpdateAllNotificationsSeenData, ThrowOnError>): RequestResult<UpdateAllNotificationsSeenResponses, UpdateAllNotificationsSeenErrors, ThrowOnError> => (options.client ?? client).patch<UpdateAllNotificationsSeenResponses, UpdateAllNotificationsSeenErrors, ThrowOnError>({
     security: [{
@@ -1815,6 +2089,8 @@ export const updateAllNotificationsSeen = <ThrowOnError extends boolean = false>
 
 /**
  * Delete one notification
+ *
+ * Delegated Aura access tokens require `notifications:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const deleteNotification = <ThrowOnError extends boolean = false>(options: Options<DeleteNotificationData, ThrowOnError>): RequestResult<DeleteNotificationResponses, DeleteNotificationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteNotificationResponses, DeleteNotificationErrors, ThrowOnError>({
     security: [{
@@ -1832,6 +2108,8 @@ export const deleteNotification = <ThrowOnError extends boolean = false>(options
 
 /**
  * Update one notification seen state
+ *
+ * Delegated Aura access tokens require `notifications:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const updateNotificationSeen = <ThrowOnError extends boolean = false>(options: Options<UpdateNotificationSeenData2, ThrowOnError>): RequestResult<UpdateNotificationSeenResponses, UpdateNotificationSeenErrors, ThrowOnError> => (options.client ?? client).patch<UpdateNotificationSeenResponses, UpdateNotificationSeenErrors, ThrowOnError>({
     security: [{
@@ -1852,18 +2130,18 @@ export const updateNotificationSeen = <ThrowOnError extends boolean = false>(opt
 });
 
 /**
- * Upsert newsletter subscription
+ * Request newsletter confirmation
  *
- * Upserts an email address and its supplied profile fields in the Aura Historia Loops newsletter list.
+ * Requests double opt-in confirmation for the submitted email and optional profile. The endpoint accepts
+ * anonymous requests. An optional Cognito JWT or Aura Historia access-token bearer credential may be supplied;
+ * an invalid supplied credential returns 401. For an authenticated user, omitted profile values can fall back
+ * to that user's stored profile, but the credential never proves ownership of the submitted mailbox and never
+ * skips confirmation, including when the submitted address exactly matches the caller's account email.
  *
- * Existing Loops opt-out state is preserved; this operation does not clear an opt-out or guarantee that the
- * contact is eligible to receive marketing messages. A successful response means the provider accepted the
- * subscription write only; it does not mean a message or campaign was sent or delivered.
- *
- * The endpoint accepts anonymous requests.
- * An optional Cognito JWT or Aura Historia access-token bearer credential may be supplied for authenticated calls.
- * When authenticated, omitted optional profile fields (`firstName`, `lastName`, `language`, `currency`)
- * fall back to the authenticated user's stored account values; explicitly provided request values take precedence.
+ * The body is limited to 8 KiB. Every result is `Cache-Control: no-store`. Empty 204 means the request was
+ * handled, including when rate suppression applies. It does not reveal account or pending-challenge state,
+ * confirm a subscription, or mean that email was delivered or Loops was called. Loops synchronization occurs
+ * asynchronously after confirmation.
  *
  */
 export const putNewsletterSubscription = <ThrowOnError extends boolean = false>(options: Options<PutNewsletterSubscriptionData2, ThrowOnError>): RequestResult<PutNewsletterSubscriptionResponses, PutNewsletterSubscriptionErrors, ThrowOnError> => (options.client ?? client).put<PutNewsletterSubscriptionResponses, PutNewsletterSubscriptionErrors, ThrowOnError>({
@@ -1881,8 +2159,30 @@ export const putNewsletterSubscription = <ThrowOnError extends boolean = false>(
 });
 
 /**
+ * Confirm a newsletter subscription
+ *
+ * Confirms the newsletter subscription using the bearer capability in the JSON body. This anonymous route
+ * accepts no Aura bearer credential. The body is limited to 8 KiB and the token to 512 bytes. Every result is
+ * `Cache-Control: no-store`.
+ *
+ * Empty 204 means the C09 confirmation, consent-state, and asynchronous Loops intent transaction committed;
+ * replaying a retained confirmed token also returns 204 without another grant. It does not mean Loops accepted
+ * or applied the later provider update. Tokens are not accepted in paths, query parameters, or GET requests.
+ *
+ */
+export const confirmNewsletterSubscription = <ThrowOnError extends boolean = false>(options: Options<ConfirmNewsletterSubscriptionData2, ThrowOnError>): RequestResult<ConfirmNewsletterSubscriptionResponses, ConfirmNewsletterSubscriptionErrors, ThrowOnError> => (options.client ?? client).post<ConfirmNewsletterSubscriptionResponses, ConfirmNewsletterSubscriptionErrors, ThrowOnError>({
+    url: '/api/v1/newsletter-subscriptions/confirm',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Delete an unused ListingSource as admin
  *
+ * Delegated Aura access tokens require `listing-sources:write`; missing scope returns `403 FORBIDDEN`.
  * Physically removes a ListingSource only when it has no ProductListings, raw-ingestion
  * streams, approved PartnershipApplication reference, or retained existing-source proposal.
  * The committed transaction explicitly removes its Partnership grants and owned ingestion
@@ -1910,6 +2210,7 @@ export const adminDeleteListingSource = <ThrowOnError extends boolean = false>(o
 /**
  * Get a ListingSource as admin
  *
+ * Delegated Aura access tokens require `listing-sources:read`; missing scope returns `403 FORBIDDEN`.
  * Gets one ListingSource for an authenticated administrator.
  *
  * `listingSourceId` must be a valid ListingSource ID. The response uses the canonical ListingSource detail
@@ -1934,6 +2235,7 @@ export const adminGetListingSource = <ThrowOnError extends boolean = false>(opti
 /**
  * Update a ListingSource as admin
  *
+ * Delegated Aura access tokens require `listing-sources:write`; missing scope returns `403 FORBIDDEN`.
  * Updates one ListingSource for an authenticated administrator.
  *
  * `listingSourceId` must be a valid ListingSource ID. Omitted members remain unchanged; `null` clears only
@@ -2285,6 +2587,8 @@ export const getPublicListingSourceBySlug = <ThrowOnError extends boolean = fals
 
 /**
  * List caller-administered ListingSources
+ *
+ * Delegated Aura access tokens require `listing-sources:read`; missing scope returns `403 FORBIDDEN`.
  */
 export const getMyListingSources = <ThrowOnError extends boolean = false>(options?: Options<GetMyListingSourcesData, ThrowOnError>): RequestResult<GetMyListingSourcesResponses, GetMyListingSourcesErrors, ThrowOnError> => (options?.client ?? client).get<GetMyListingSourcesResponses, GetMyListingSourcesErrors, ThrowOnError>({
     security: [{
@@ -2302,6 +2606,8 @@ export const getMyListingSources = <ThrowOnError extends boolean = false>(option
 
 /**
  * List caller PartnershipApplications
+ *
+ * Delegated Aura access tokens require `partnership-applications:read`; missing scope returns `403 FORBIDDEN`.
  */
 export const getMyPartnershipApplications = <ThrowOnError extends boolean = false>(options?: Options<GetMyPartnershipApplicationsData, ThrowOnError>): RequestResult<GetMyPartnershipApplicationsResponses, GetMyPartnershipApplicationsErrors, ThrowOnError> => (options?.client ?? client).get<GetMyPartnershipApplicationsResponses, GetMyPartnershipApplicationsErrors, ThrowOnError>({
     security: [{
@@ -2319,6 +2625,8 @@ export const getMyPartnershipApplications = <ThrowOnError extends boolean = fals
 
 /**
  * Submit a PartnershipApplication
+ *
+ * Delegated Aura access tokens require `partnership-applications:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const postPartnershipApplication = <ThrowOnError extends boolean = false>(options: Options<PostPartnershipApplicationData, ThrowOnError>): RequestResult<PostPartnershipApplicationResponses, PostPartnershipApplicationErrors, ThrowOnError> => (options.client ?? client).post<PostPartnershipApplicationResponses, PostPartnershipApplicationErrors, ThrowOnError>({
     security: [{
@@ -2340,6 +2648,8 @@ export const postPartnershipApplication = <ThrowOnError extends boolean = false>
 
 /**
  * Withdraw a PartnershipApplication
+ *
+ * Delegated Aura access tokens require `partnership-applications:write`; missing scope returns `403 FORBIDDEN`.
  */
 export const deleteOwnPartnershipApplication = <ThrowOnError extends boolean = false>(options: Options<DeleteOwnPartnershipApplicationData, ThrowOnError>): RequestResult<DeleteOwnPartnershipApplicationResponses, DeleteOwnPartnershipApplicationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteOwnPartnershipApplicationResponses, DeleteOwnPartnershipApplicationErrors, ThrowOnError>({
     security: [{
@@ -2357,6 +2667,8 @@ export const deleteOwnPartnershipApplication = <ThrowOnError extends boolean = f
 
 /**
  * Get a caller PartnershipApplication
+ *
+ * Delegated Aura access tokens require `partnership-applications:read`; missing scope returns `403 FORBIDDEN`.
  */
 export const getOwnPartnershipApplication = <ThrowOnError extends boolean = false>(options: Options<GetOwnPartnershipApplicationData, ThrowOnError>): RequestResult<GetOwnPartnershipApplicationResponses, GetOwnPartnershipApplicationErrors, ThrowOnError> => (options.client ?? client).get<GetOwnPartnershipApplicationResponses, GetOwnPartnershipApplicationErrors, ThrowOnError>({
     security: [{
@@ -2375,6 +2687,7 @@ export const getOwnPartnershipApplication = <ThrowOnError extends boolean = fals
 /**
  * Get the administrator operational overview
  *
+ * Delegated Aura access tokens require `admin-overview:read`; missing scope returns `403 FORBIDDEN`.
  * Returns a bounded landing-page summary for authenticated administrators. `schemaVersion` is
  * required so clients can select a compatible response decoder. Every counter is read from
  * authoritative PostgreSQL by one aggregate statement; OpenSearch and other rebuildable
@@ -2404,6 +2717,7 @@ export const getAdminOverview = <ThrowOnError extends boolean = false>(options?:
 /**
  * List Partnerships for administration
  *
+ * Delegated Aura access tokens require `partnerships:read`; missing scope returns `403 FORBIDDEN`.
  * Lists active Partnerships for authenticated administrators.
  *
  * Results use bounded keyset cursor pagination in fixed `created` descending, then
@@ -2438,6 +2752,7 @@ export const adminSearchPartnerships = <ThrowOnError extends boolean = false>(op
 /**
  * Dissolve a Partnership
  *
+ * Delegated Aura access tokens require `partnerships:write`; missing scope returns `403 FORBIDDEN`.
  * Semantically deletes a Partnership for an authenticated administrator. The Partnership row
  * remains as a `DISSOLVED` historical reference for approved PartnershipApplications, while
  * all current membership and ListingSource-grant rows are removed in the same PostgreSQL
@@ -2464,6 +2779,7 @@ export const adminDissolvePartnership = <ThrowOnError extends boolean = false>(o
 /**
  * Get a Partnership for administration
  *
+ * Delegated Aura access tokens require `partnerships:read`; missing scope returns `403 FORBIDDEN`.
  * Returns one established Partnership for an authenticated administrator.
  *
  * The response includes the Partnership identity, its Party reference, current member user
@@ -2492,6 +2808,7 @@ export const adminGetPartnership = <ThrowOnError extends boolean = false>(option
 /**
  * Revoke a ListingSource from a Partnership
  *
+ * Delegated Aura access tokens require `partnerships:write`; missing scope returns `403 FORBIDDEN`.
  * Idempotently removes an existing ListingSource grant from an existing Partnership for an
  * authenticated administrator. Only the targeted Partnership/ListingSource join row is
  * removed; the Partnership, ListingSource, members, and historical PartnershipApplications
@@ -2517,6 +2834,7 @@ export const adminRevokePartnershipListingSource = <ThrowOnError extends boolean
 /**
  * Grant a ListingSource to a Partnership
  *
+ * Delegated Aura access tokens require `partnerships:write`; missing scope returns `403 FORBIDDEN`.
  * Idempotently grants an existing ListingSource to an existing Partnership for an
  * authenticated administrator. The Partnership and ListingSource must belong to the same
  * Party; a mismatched Party is rejected with `409 CONFLICT`. An existing grant is a
@@ -2541,6 +2859,7 @@ export const adminGrantPartnershipListingSource = <ThrowOnError extends boolean 
 /**
  * Revoke a user membership in a Partnership
  *
+ * Delegated Aura access tokens require `partnerships:write`; missing scope returns `403 FORBIDDEN`.
  * Idempotently removes the target user membership from the specified Partnership for an
  * authenticated administrator. The target user and Partnership must already exist. A missing
  * membership is a successful no-op. Only the membership row is removed; the user, Partnership,
@@ -2566,6 +2885,7 @@ export const adminRevokePartnershipMembership = <ThrowOnError extends boolean = 
 /**
  * Grant a user membership in a Partnership
  *
+ * Delegated Aura access tokens require `partnerships:write`; missing scope returns `403 FORBIDDEN`.
  * Idempotently grants the target user membership in the specified Partnership for an
  * authenticated administrator. The target user and Partnership must already exist. An
  * existing membership is a successful no-op. The operation is committed in one PostgreSQL
@@ -2590,6 +2910,7 @@ export const adminGrantPartnershipMembership = <ThrowOnError extends boolean = f
 /**
  * Search PartnershipApplications for administration
  *
+ * Delegated Aura access tokens require `partnership-applications:read`; missing scope returns `403 FORBIDDEN`.
  * Searches PartnershipApplications for authenticated administrators.
  *
  * `state` and `proposalType` accept repeated exact canonical values. `applicantUserId`
@@ -2623,7 +2944,7 @@ export const adminSearchPartnershipApplications = <ThrowOnError extends boolean 
 /**
  * Get a PartnershipApplication for administration
  *
- * Retrieves a single PartnershipApplication for authenticated administrators.
+ * Delegated Aura access tokens require `partnership-applications:read`; missing scope returns `403 FORBIDDEN`. Retrieves a single PartnershipApplication for authenticated administrators.
  * The response includes the applicant, state, proposal, and nullable approval references. All responses send `Cache-Control: no-store`.
  *
  */
@@ -2644,6 +2965,7 @@ export const adminGetPartnershipApplication = <ThrowOnError extends boolean = fa
 /**
  * Mark a PartnershipApplication in review as admin
  *
+ * Delegated Aura access tokens require `partnership-applications:write`; missing scope returns `403 FORBIDDEN`.
  * Marks a PartnershipApplication in review for an authenticated administrator.
  *
  * This operation accepts no request body and only performs the domain-authoritative
@@ -2669,6 +2991,7 @@ export const adminMarkPartnershipApplicationInReview = <ThrowOnError extends boo
 /**
  * Decide a PartnershipApplication as admin
  *
+ * Delegated Aura access tokens require `partnership-applications:write`; missing scope returns `403 FORBIDDEN`.
  * Approves or rejects a PartnershipApplication for an authenticated administrator.
  *
  * The request accepts only `APPROVE` or `REJECT`; arbitrary state assignment is not supported.
@@ -2691,6 +3014,741 @@ export const adminDecidePartnershipApplication = <ThrowOnError extends boolean =
             type: 'http'
         }],
     url: '/api/v1/admin/partnership-applications/{partnershipApplicationId}/decision',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Paginate own private addresses
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:read. Success and errors are no-store. Current geocoding state and eligible accepted results are included using bounded batch hydration.
+ */
+export const listUserAddresses = <ThrowOnError extends boolean = false>(options?: Options<ListUserAddressesData, ThrowOnError>): RequestResult<ListUserAddressesResponses, ListUserAddressesErrors, ThrowOnError> => (options?.client ?? client).get<ListUserAddressesResponses, ListUserAddressesErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/addresses',
+    ...options
+});
+
+/**
+ * Save a private address
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:write. Success and errors are no-store. Each accepted request generates a new addressId, even for equal label/geography. Idempotency-Key headers are ignored, including invalid or repeated values; they are not echoed and provide no deduplication or result recovery. Saving does not synchronously geocode or select a preferred address. Automatic creation retries can produce duplicates. After an ambiguous timeout, refresh current addresses and reconcile before creating again; address/label equality cannot identify the original request conclusively.
+ */
+export const createUserAddress = <ThrowOnError extends boolean = false>(options: Options<CreateUserAddressData, ThrowOnError>): RequestResult<CreateUserAddressResponses, CreateUserAddressErrors, ThrowOnError> => (options.client ?? client).post<CreateUserAddressResponses, CreateUserAddressErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/addresses',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Erase an own private address
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:write. Success and errors are no-store. Erases text/enrichment/pending binding. Deleting the preferred address clears only that preference atomically; no alternative is selected.
+ */
+export const deleteUserAddress = <ThrowOnError extends boolean = false>(options: Options<DeleteUserAddressData, ThrowOnError>): RequestResult<DeleteUserAddressResponses, DeleteUserAddressErrors, ThrowOnError> => (options.client ?? client).delete<DeleteUserAddressResponses, DeleteUserAddressErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/addresses/{address_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read an own private address
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:read. Success and errors are no-store.
+ */
+export const getUserAddress = <ThrowOnError extends boolean = false>(options: Options<GetUserAddressData, ThrowOnError>): RequestResult<GetUserAddressResponses, GetUserAddressErrors, ThrowOnError> => (options.client ?? client).get<GetUserAddressResponses, GetUserAddressErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/addresses/{address_id}',
+    ...options
+});
+
+/**
+ * Replace an own private address
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:write. Success and errors are no-store. Full replacement preserves ID. Geographic changes increment inputRevision and fence old enrichment. Label-only changes preserve resolution input. No-op writes require current version and preserve versions.
+ */
+export const updateUserAddress = <ThrowOnError extends boolean = false>(options: Options<UpdateUserAddressData, ThrowOnError>): RequestResult<UpdateUserAddressResponses, UpdateUserAddressErrors, ThrowOnError> => (options.client ?? client).put<UpdateUserAddressResponses, UpdateUserAddressErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/addresses/{address_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read own browsing destination
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:read. Success and errors are no-store. An untouched preference has version 1 and NONE.
+ */
+export const getBrowsingDestination = <ThrowOnError extends boolean = false>(options?: Options<GetBrowsingDestinationData, ThrowOnError>): RequestResult<GetBrowsingDestinationResponses, GetBrowsingDestinationErrors, ThrowOnError> => (options?.client ?? client).get<GetBrowsingDestinationResponses, GetBrowsingDestinationErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/browsing-destination',
+    ...options
+});
+
+/**
+ * Select or clear browsing destination
+ *
+ * Requires the current unsuspended owner. Delegated credentials require users:write. Success and errors are no-store. Atomic mutually exclusive preference. NONE clears. ADDRESS must belong to current owner. COUNTRY_POSTAL needs no full address. At most one address is preferred.
+ */
+export const setBrowsingDestination = <ThrowOnError extends boolean = false>(options: Options<SetBrowsingDestinationData, ThrowOnError>): RequestResult<SetBrowsingDestinationResponses, SetBrowsingDestinationErrors, ThrowOnError> => (options.client ?? client).put<SetBrowsingDestinationResponses, SetBrowsingDestinationErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/me/browsing-destination',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Discover public Party locations
+ *
+ * Location-oriented discovery of eligible active Party sites. Multiple matching sites of one Party intentionally appear as separate locations. Country/subdivision predicates need no coordinates. Radius or distance ordering requires an explicit numeric origin. Strict proximity requires PREMISES precision; approximate mode retains coarse labels. Ordered by distance when requested, then native location UUID ascending; otherwise UUID ascending. Reads current PostgreSQL locations independently of listing projection catch-up. All responses are private, no-store. Management evidence, addresses and revisions stay private.
+ */
+export const discoverPartyLocations = <ThrowOnError extends boolean = false>(options: Options<DiscoverPartyLocationsData, ThrowOnError>): RequestResult<DiscoverPartyLocationsResponses, DiscoverPartyLocationsErrors, ThrowOnError> => (options.client ?? client).get<DiscoverPartyLocationsResponses, DiscoverPartyLocationsErrors, ThrowOnError>({ url: '/api/v1/party-locations', ...options });
+
+/**
+ * List protected Party locations
+ *
+ * Delegated credentials require parties:read. Use cases require administrator/internal authority, membership in this Party's active partnership, or an explicit location management grant. Non-administrator users must be unsuspended. Membership removal or partnership dissolution removes derived authority; independent explicit grants survive. Listing-write scope does not confer access.
+ */
+export const listPartyLocations = <ThrowOnError extends boolean = false>(options: Options<ListPartyLocationsData, ThrowOnError>): RequestResult<ListPartyLocationsResponses, ListPartyLocationsErrors, ThrowOnError> => (options.client ?? client).get<ListPartyLocationsResponses, ListPartyLocationsErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/parties/{party_id}/locations',
+    ...options
+});
+
+/**
+ * Create a Party location
+ *
+ * Delegated credentials require parties:write. Use cases require administrator/internal authority, membership in this Party's active partnership, or an explicit location management grant. Non-administrator users must be unsuspended. Membership removal or partnership dissolution removes derived authority; independent explicit grants survive. Listing-write scope does not confer access. Each accepted ordinary create generates a new location ID, even for equal content. Idempotency-Key headers are ignored, including invalid or repeated values; they are not echoed and provide no deduplication or result recovery. Automatic creation retries can produce duplicates. After an ambiguous timeout, refresh locations and reconcile before creating again; address/label equality cannot identify the original request conclusively. Relocation atomically retires the old location and creates its replacement using the old expected revision. Repeating a committed relocation with that revision returns 409 and creates no second replacement.
+ */
+export const createPartyLocation = <ThrowOnError extends boolean = false>(options: Options<CreatePartyLocationData2, ThrowOnError>): RequestResult<CreatePartyLocationResponses, CreatePartyLocationErrors, ThrowOnError> => (options.client ?? client).post<CreatePartyLocationResponses, CreatePartyLocationErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/parties/{party_id}/locations',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get a protected Party location
+ *
+ * Delegated credentials require parties:read. Use cases require administrator/internal authority, membership in this Party's active partnership, or an explicit location management grant. Non-administrator users must be unsuspended. Membership removal or partnership dissolution removes derived authority; independent explicit grants survive. Listing-write scope does not confer access.
+ */
+export const getPartyLocation = <ThrowOnError extends boolean = false>(options: Options<GetPartyLocationData, ThrowOnError>): RequestResult<GetPartyLocationResponses, GetPartyLocationErrors, ThrowOnError> => (options.client ?? client).get<GetPartyLocationResponses, GetPartyLocationErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/parties/{party_id}/locations/{location_id}',
+    ...options
+});
+
+/**
+ * Correct the same identified site
+ *
+ * Delegated credentials require parties:write. Use cases require administrator/internal authority, membership in this Party's active partnership, or an explicit location management grant. Non-administrator users must be unsuspended. Membership removal or partnership dissolution removes derived authority; independent explicit grants survive. Listing-write scope does not confer access.
+ */
+export const correctPartyLocation = <ThrowOnError extends boolean = false>(options: Options<CorrectPartyLocationData2, ThrowOnError>): RequestResult<CorrectPartyLocationResponses, CorrectPartyLocationErrors, ThrowOnError> => (options.client ?? client).patch<CorrectPartyLocationResponses, CorrectPartyLocationErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/parties/{party_id}/locations/{location_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Retire or explicitly restore a Party location
+ *
+ * Delegated credentials require parties:write. Use cases require administrator/internal authority, membership in this Party's active partnership, or an explicit location management grant. Non-administrator users must be unsuspended. Membership removal or partnership dissolution removes derived authority; independent explicit grants survive. Listing-write scope does not confer access.
+ */
+export const setPartyLocationLifecycle = <ThrowOnError extends boolean = false>(options: Options<SetPartyLocationLifecycleData2, ThrowOnError>): RequestResult<SetPartyLocationLifecycleResponses, SetPartyLocationLifecycleErrors, ThrowOnError> => (options.client ?? client).put<SetPartyLocationLifecycleResponses, SetPartyLocationLifecycleErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/parties/{party_id}/locations/{location_id}/lifecycle',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List current Party location managers
+ *
+ * Administrator-only directory of current explicit grantees and members of active Partnerships for this Party. Delegated credentials also require parties:read. Suspended/deleted users, revoked grants and dissolved Partnerships are excluded. Each user appears once with all independent access reasons; an access filter selects users without removing their other reasons. Revoking an explicit grant leaves Partnership access intact. Administrator role alone does not create a row. Identity is limited to userId, email and optional firstName/lastName. Grant timestamps are not stored or returned. Results use keyset pagination ordered by underlying user UUID ascending; searchAfter is the last returned strict User TypeID only when another row exists. Pages reflect current state, so changes between requests may change membership. All responses use Cache-Control: no-store.
+ */
+export const listPartyLocationManagers = <ThrowOnError extends boolean = false>(options: Options<ListPartyLocationManagersData, ThrowOnError>): RequestResult<ListPartyLocationManagersResponses, ListPartyLocationManagersErrors, ThrowOnError> => (options.client ?? client).get<ListPartyLocationManagersResponses, ListPartyLocationManagersErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/parties/{party_id}/location-managers',
+    ...options
+});
+
+/**
+ * Grant or revoke Party location management
+ *
+ * Administrator/internal callers only, including parties:write for delegated credentials. An ordinary location manager cannot grant privileges. Revocation serializes against protected location operations.
+ */
+export const setPartyLocationManagementGrant = <ThrowOnError extends boolean = false>(options: Options<SetPartyLocationManagementGrantData, ThrowOnError>): RequestResult<SetPartyLocationManagementGrantResponses, SetPartyLocationManagementGrantErrors, ThrowOnError> => (options.client ?? client).put<SetPartyLocationManagementGrantResponses, SetPartyLocationManagementGrantErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/parties/{party_id}/location-managers/{user_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Clear source location default
+ *
+ * Requires an unsuspended administrator, or membership in the operator Party active partnership with this exact source grant. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:write. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const clearSourceLocationDefault = <ThrowOnError extends boolean = false>(options: Options<ClearSourceLocationDefaultData2, ThrowOnError>): RequestResult<ClearSourceLocationDefaultResponses, ClearSourceLocationDefaultErrors, ThrowOnError> => (options.client ?? client).delete<ClearSourceLocationDefaultResponses, ClearSourceLocationDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get source location default
+ *
+ * Requires an unsuspended administrator, or membership in the operator Party active partnership with this exact source grant. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:read. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const getSourceLocationDefault = <ThrowOnError extends boolean = false>(options: Options<GetSourceLocationDefaultData, ThrowOnError>): RequestResult<GetSourceLocationDefaultResponses, GetSourceLocationDefaultErrors, ThrowOnError> => (options.client ?? client).get<GetSourceLocationDefaultResponses, GetSourceLocationDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default',
+    ...options
+});
+
+/**
+ * Change source location applicability
+ *
+ * Requires an unsuspended administrator, or membership in the operator Party active partnership with this exact source grant. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:write. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const changeSourceLocationDefaultApplicability = <ThrowOnError extends boolean = false>(options: Options<ChangeSourceLocationDefaultApplicabilityData2, ThrowOnError>): RequestResult<ChangeSourceLocationDefaultApplicabilityResponses, ChangeSourceLocationDefaultApplicabilityErrors, ThrowOnError> => (options.client ?? client).patch<ChangeSourceLocationDefaultApplicabilityResponses, ChangeSourceLocationDefaultApplicabilityErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Assign or replace source location default
+ *
+ * Requires an unsuspended administrator, or membership in the operator Party active partnership with this exact source grant. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:write. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const assignSourceLocationDefault = <ThrowOnError extends boolean = false>(options: Options<AssignSourceLocationDefaultData2, ThrowOnError>): RequestResult<AssignSourceLocationDefaultResponses, AssignSourceLocationDefaultErrors, ThrowOnError> => (options.client ?? client).put<AssignSourceLocationDefaultResponses, AssignSourceLocationDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/location-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Clear source location default as administrator
+ *
+ * Requires an unsuspended administrator. Operator-partnership membership or a source grant alone does not authorize this admin route. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:write. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const adminClearSourceLocationDefault = <ThrowOnError extends boolean = false>(options: Options<AdminClearSourceLocationDefaultData, ThrowOnError>): RequestResult<AdminClearSourceLocationDefaultResponses, AdminClearSourceLocationDefaultErrors, ThrowOnError> => (options.client ?? client).delete<AdminClearSourceLocationDefaultResponses, AdminClearSourceLocationDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get source location default as administrator
+ *
+ * Requires an unsuspended administrator. Operator-partnership membership or a source grant alone does not authorize this admin route. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:read. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const adminGetSourceLocationDefault = <ThrowOnError extends boolean = false>(options: Options<AdminGetSourceLocationDefaultData, ThrowOnError>): RequestResult<AdminGetSourceLocationDefaultResponses, AdminGetSourceLocationDefaultErrors, ThrowOnError> => (options.client ?? client).get<AdminGetSourceLocationDefaultResponses, AdminGetSourceLocationDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default',
+    ...options
+});
+
+/**
+ * Change source location applicability as administrator
+ *
+ * Requires an unsuspended administrator. Operator-partnership membership or a source grant alone does not authorize this admin route. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:write. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const adminChangeSourceLocationDefaultApplicability = <ThrowOnError extends boolean = false>(options: Options<AdminChangeSourceLocationDefaultApplicabilityData, ThrowOnError>): RequestResult<AdminChangeSourceLocationDefaultApplicabilityResponses, AdminChangeSourceLocationDefaultApplicabilityErrors, ThrowOnError> => (options.client ?? client).patch<AdminChangeSourceLocationDefaultApplicabilityResponses, AdminChangeSourceLocationDefaultApplicabilityErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Assign or replace source location default as administrator
+ *
+ * Requires an unsuspended administrator. Operator-partnership membership or a source grant alone does not authorize this admin route. Trusted service/system use cases are also supported. Delegated callers additionally need listing-sources:write. Assignment does not mutate Party locations or attribute a listing seller. Protected reads retain private/retired references for traceability but return no location address/point. All responses are no-store. Current-revision no-ops preserve revisions; stale retries conflict.
+ */
+export const adminAssignSourceLocationDefault = <ThrowOnError extends boolean = false>(options: Options<AdminAssignSourceLocationDefaultData, ThrowOnError>): RequestResult<AdminAssignSourceLocationDefaultResponses, AdminAssignSourceLocationDefaultErrors, ThrowOnError> => (options.client ?? client).put<AdminAssignSourceLocationDefaultResponses, AdminAssignSourceLocationDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/admin/listing-sources/{listing_source_id}/location-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List source shipping profiles
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. Active and retired summaries in ascending UUID order. Use the final shippingProfileId as after to continue; an empty page is terminal. objectKey filters by stable authenticated producer identity and returns zero or one summary, including retired or manually taken-over profiles. No terms or evidence hydration.
+ */
+export const listShippingProfiles = <ThrowOnError extends boolean = false>(options: Options<ListShippingProfilesData, ThrowOnError>): RequestResult<ListShippingProfilesResponses, ListShippingProfilesErrors, ThrowOnError> => (options.client ?? client).get<ListShippingProfilesResponses, ListShippingProfilesErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles',
+    ...options
+});
+
+/**
+ * Create source shipping profile
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. Creation key is scoped to source and caller identity; matching original content/evidence returns the current profile without effects, differing content conflicts. Creation never selects a source default.
+ */
+export const createShippingProfile = <ThrowOnError extends boolean = false>(options: Options<CreateShippingProfileData2, ThrowOnError>): RequestResult<CreateShippingProfileResponses, CreateShippingProfileErrors, ThrowOnError> => (options.client ?? client).post<CreateShippingProfileResponses, CreateShippingProfileErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Retire shipping profile
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. Retirement retains terms, history, defaults and references. It does not assert no shipping. Repeat retirement is a no-op only at the current management revision.
+ */
+export const retireShippingProfile = <ThrowOnError extends boolean = false>(options: Options<RetireShippingProfileData, ThrowOnError>): RequestResult<RetireShippingProfileResponses, RetireShippingProfileErrors, ThrowOnError> => (options.client ?? client).delete<RetireShippingProfileResponses, RetireShippingProfileErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get source shipping profile
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes.
+ */
+export const getShippingProfile = <ThrowOnError extends boolean = false>(options: Options<GetShippingProfileData, ThrowOnError>): RequestResult<GetShippingProfileResponses, GetShippingProfileErrors, ThrowOnError> => (options.client ?? client).get<GetShippingProfileResponses, GetShippingProfileErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}',
+    ...options
+});
+
+/**
+ * Replace advertised profile content and evidence
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. CAS checks managementRevision, including semantic no-ops. Terms/lifecycle changes advance termsRevision; evidence-only corrections advance managementRevision independently. Explicit PartyLocation use asserts applicability and requires an active operator-owned location, without granting location-editing rights.
+ */
+export const replaceShippingProfile = <ThrowOnError extends boolean = false>(options: Options<ReplaceShippingProfileData2, ThrowOnError>): RequestResult<ReplaceShippingProfileResponses, ReplaceShippingProfileErrors, ThrowOnError> => (options.client ?? client).put<ReplaceShippingProfileResponses, ReplaceShippingProfileErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Restore shipping profile explicitly
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. Revalidates current referenced location eligibility. Does not select a default.
+ */
+export const restoreShippingProfile = <ThrowOnError extends boolean = false>(options: Options<RestoreShippingProfileData, ThrowOnError>): RequestResult<RestoreShippingProfileResponses, RestoreShippingProfileErrors, ThrowOnError> => (options.client ?? client).post<RestoreShippingProfileResponses, RestoreShippingProfileErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-profiles/{shipping_profile_id}/restore',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Clear source shipping default
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. Clear remains possible after profile retirement. CAS applies even when already clear; semantic no-op preserves the revision and emits no signal.
+ */
+export const clearShippingDefault = <ThrowOnError extends boolean = false>(options: Options<ClearShippingDefaultData2, ThrowOnError>): RequestResult<ClearShippingDefaultResponses, ClearShippingDefaultErrors, ThrowOnError> => (options.client ?? client).delete<ClearShippingDefaultResponses, ClearShippingDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read explicit source shipping default
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes.
+ */
+export const getShippingDefault = <ThrowOnError extends boolean = false>(options: Options<GetShippingDefaultData, ThrowOnError>): RequestResult<GetShippingDefaultResponses, GetShippingDefaultErrors, ThrowOnError> => (options.client ?? client).get<GetShippingDefaultResponses, GetShippingDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-default',
+    ...options
+});
+
+/**
+ * Assign active source shipping default
+ *
+ * Requires an unsuspended administrator or an active partnership member of the operator Party with the exact source grant. Delegated credentials also require listing-sources:read for reads, listing-sources:write for commands. All authority is revalidated in the transaction. Responses/errors are no-store. Terms are advertised arrangements, never authorized quotes. Requires the selected profile to belong to this source and remain active; repeat assignment revalidates eligibility and CAS.
+ */
+export const assignShippingDefault = <ThrowOnError extends boolean = false>(options: Options<AssignShippingDefaultData2, ThrowOnError>): RequestResult<AssignShippingDefaultResponses, AssignShippingDefaultErrors, ThrowOnError> => (options.client ?? client).put<AssignShippingDefaultResponses, AssignShippingDefaultErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/shipping-default',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Protected delivery configuration. Requires product-listings:read credential scope and current administrator or active operator Partnership source authority. Responses and errors are no-store. Returns retained configuration for active or withdrawn listings, without resolving effective delivery or revalidating current profile/location eligibility.
+ */
+export const getProductListingDelivery = <ThrowOnError extends boolean = false>(options: Options<GetProductListingDeliveryData, ThrowOnError>): RequestResult<GetProductListingDeliveryResponses, GetProductListingDeliveryErrors, ThrowOnError> => (options.client ?? client).get<GetProductListingDeliveryResponses, GetProductListingDeliveryErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/product-listings/by-source-id/{source_listing_id}/delivery',
+    ...options
+});
+
+/**
+ * Revision-checked delivery command. Requires product-listings:write credential scope and current administrator or active operator Partnership source authority. Responses and errors are no-store. Commands never create or restore listings. Current references are validated at execution. SET/UNCHANGED/CLEAR and coherent whole-policy replacement preserve unrelated facts.
+ */
+export const changeProductListingDelivery = <ThrowOnError extends boolean = false>(options: Options<ChangeProductListingDeliveryData, ThrowOnError>): RequestResult<ChangeProductListingDeliveryResponses, ChangeProductListingDeliveryErrors, ThrowOnError> => (options.client ?? client).patch<ChangeProductListingDeliveryResponses, ChangeProductListingDeliveryErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/product-listings/by-source-id/{source_listing_id}/delivery',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Asynchronous delivery admission. Requires product-listings:write credential scope for delegated credentials. Admission validates the typed command and confirms FIFO custody. Execution rechecks current administrator or active operator Partnership source authority, the original expectedVersion, active listing and current references. Responses and errors are no-store. Retry unchanged content with the returned Idempotency-Key.
+ */
+export const submitProductListingDelivery = <ThrowOnError extends boolean = false>(options: Options<SubmitProductListingDeliveryData, ThrowOnError>): RequestResult<SubmitProductListingDeliveryResponses, SubmitProductListingDeliveryErrors, ThrowOnError> => (options.client ?? client).post<SubmitProductListingDeliveryResponses, SubmitProductListingDeliveryErrors, ThrowOnError>({
+    security: [{
+            key: 'BearerAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }, {
+            key: 'AccessTokenAuth',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/listing-sources/{listing_source_id}/product-listings/by-source-id/{source_listing_id}/delivery/async',
     ...options,
     headers: {
         'Content-Type': 'application/json',

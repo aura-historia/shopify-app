@@ -1,0 +1,267 @@
+{
+  "profiles": {
+    "gid://shopify/DeliveryProfile/1": {
+      "id": "gid://shopify/DeliveryProfile/1",
+      "name": "Profile 1",
+      "version": 1,
+      "default": true,
+      "coversAllItems": false,
+      "originLocationCount": 1,
+      "locationsWithoutRatesCount": 0,
+      "groups": [
+        {
+          "id": "gid://shopify/DeliveryLocationGroup/1",
+          "zones": [
+            {
+              "id": "gid://shopify/DeliveryZone/10",
+              "countries": [
+                {
+                  "code": {
+                    "countryCode": "DE",
+                    "restOfWorld": false
+                  },
+                  "provinces": []
+                }
+              ],
+              "methods": [
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/10",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/10",
+                    "price": {
+                      "amount": "7.50",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                },
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/11",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [
+                    {
+                      "field": "TOTAL_PRICE",
+                      "operator": "GREATER_THAN_OR_EQUAL_TO",
+                      "conditionCriteria": {
+                        "__typename": "MoneyV2",
+                        "amount": "50.00",
+                        "currencyCode": "EUR"
+                      }
+                    }
+                  ],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/11",
+                    "price": {
+                      "amount": "0.00",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                },
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/12",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [
+                    {
+                      "field": "TOTAL_WEIGHT",
+                      "operator": "LESS_THAN_OR_EQUAL_TO",
+                      "conditionCriteria": {
+                        "__typename": "Weight",
+                        "value": 10,
+                        "unit": "KILOGRAMS"
+                      }
+                    }
+                  ],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/12",
+                    "price": {
+                      "amount": "20.00",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                },
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/13",
+                  "name": "Carrier",
+                  "active": true,
+                  "methodConditions": [],
+                  "rateProvider": {
+                    "__typename": "DeliveryParticipant",
+                    "id": "gid://shopify/DeliveryParticipant/1"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "gid://shopify/DeliveryZone/11",
+              "countries": [
+                {
+                  "code": {
+                    "countryCode": "FR",
+                    "restOfWorld": false
+                  },
+                  "provinces": []
+                }
+              ],
+              "methods": [
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/14",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/14",
+                    "price": {
+                      "amount": "10.00",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "memberships": {
+        "gid://shopify/Product/101": [
+          "gid://shopify/ProductVariant/1001",
+          "gid://shopify/ProductVariant/1002"
+        ],
+        "gid://shopify/Product/102": ["gid://shopify/ProductVariant/1003"]
+      },
+      "sellingPlans": false
+    },
+    "gid://shopify/DeliveryProfile/2": {
+      "id": "gid://shopify/DeliveryProfile/2",
+      "name": "Profile 2",
+      "version": 1,
+      "default": false,
+      "coversAllItems": false,
+      "originLocationCount": 1,
+      "locationsWithoutRatesCount": 0,
+      "groups": [
+        {
+          "id": "gid://shopify/DeliveryLocationGroup/2",
+          "zones": [
+            {
+              "id": "gid://shopify/DeliveryZone/20",
+              "countries": [
+                {
+                  "code": {
+                    "countryCode": "DE",
+                    "restOfWorld": false
+                  },
+                  "provinces": []
+                }
+              ],
+              "methods": [
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/20",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/20",
+                    "price": {
+                      "amount": "7.50",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                },
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/21",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [
+                    {
+                      "field": "TOTAL_PRICE",
+                      "operator": "GREATER_THAN_OR_EQUAL_TO",
+                      "conditionCriteria": {
+                        "__typename": "MoneyV2",
+                        "amount": "50.00",
+                        "currencyCode": "EUR"
+                      }
+                    }
+                  ],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/21",
+                    "price": {
+                      "amount": "0.00",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                },
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/22",
+                  "name": "Standard",
+                  "active": true,
+                  "methodConditions": [
+                    {
+                      "field": "TOTAL_WEIGHT",
+                      "operator": "LESS_THAN_OR_EQUAL_TO",
+                      "conditionCriteria": {
+                        "__typename": "Weight",
+                        "value": 10,
+                        "unit": "KILOGRAMS"
+                      }
+                    }
+                  ],
+                  "rateProvider": {
+                    "__typename": "DeliveryRateDefinition",
+                    "id": "gid://shopify/DeliveryRateDefinition/22",
+                    "price": {
+                      "amount": "20.00",
+                      "currencyCode": "EUR"
+                    }
+                  }
+                },
+                {
+                  "id": "gid://shopify/DeliveryMethodDefinition/23",
+                  "name": "Carrier",
+                  "active": true,
+                  "methodConditions": [],
+                  "rateProvider": {
+                    "__typename": "DeliveryParticipant",
+                    "id": "gid://shopify/DeliveryParticipant/2"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "memberships": {
+        "gid://shopify/Product/102": ["gid://shopify/ProductVariant/1004"]
+      },
+      "sellingPlans": false
+    }
+  },
+  "products": {
+    "gid://shopify/Product/101": {
+      "id": "gid://shopify/Product/101",
+      "updatedAt": "2026-10-17T10:00:00Z",
+      "variants": [
+        "gid://shopify/ProductVariant/1001",
+        "gid://shopify/ProductVariant/1002"
+      ]
+    },
+    "gid://shopify/Product/102": {
+      "id": "gid://shopify/Product/102",
+      "updatedAt": "2026-10-17T10:00:00Z",
+      "variants": [
+        "gid://shopify/ProductVariant/1003",
+        "gid://shopify/ProductVariant/1004"
+      ]
+    }
+  },
+  "acquiredAt": "2026-10-18T10:00:00Z"
+}

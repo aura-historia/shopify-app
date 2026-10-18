@@ -2,7 +2,6 @@ import type { LoaderFunctionArgs } from "react-router";
 import { redirect, useLoaderData } from "react-router";
 import {
   configureShopifyListingSource,
-  createAdminGraphqlRequest,
   triggerBackfill,
 } from "../backfill.server";
 import {
@@ -18,8 +17,8 @@ import {
   loadOAuthPendingContext,
   summarizeOAuthError,
 } from "../oauth.server";
+import { offlineGraphql, queueShipping } from "../shipping/runtime.server";
 import { isValidListingSourceId } from "../shop-credentials.server";
-import { getShopify } from "../shopify.server";
 import styles from "../styles/public-page.module.css";
 
 const legalLinks = [
@@ -131,21 +130,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
       },
       config,
       async () => {
-        const shopify = getShopify(context);
-        let admin: Awaited<
-          ReturnType<typeof shopify.unauthenticated.admin>
-        >["admin"];
-        try {
-          ({ admin } = await shopify.unauthenticated.admin(shopDomain));
-        } catch (error) {
-          if (error instanceof Error && error.name === "SessionNotFoundError") {
-            throw new Error(
-              "No offline Shopify session was available. Reopen the Shopify app to retry.",
-            );
-          }
-          throw error;
-        }
-        const graphqlRequest = createAdminGraphqlRequest(admin);
+        const graphqlRequest = offlineGraphql(context, shopDomain);
         const metadata = await configureShopifyListingSource(
           graphqlRequest,
           apiBaseUrl,
@@ -169,6 +154,8 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
           : "not_queued",
     );
 
+    const shippingQueued = await queueShipping(context, shopDomain);
+
     try {
       await clearOAuthPendingContext(context.cloudflare.env.KV, stateValue);
     } catch {
@@ -178,6 +165,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     return adminRedirect(shopifyStoreName, {
       oauth: "connected",
       backfill,
+      ...(shippingQueued ? {} : { shipping: "not_queued" }),
     });
   } catch (error) {
     return fail(

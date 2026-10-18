@@ -13,6 +13,18 @@ const legalLinks = [
 
 const accessSections = [
   {
+    title: "Advertised shipping (optional)",
+    description:
+      "Read shipping settings and product membership to publish supported advertised terms to Aura Historia. Cloudflare stores private import progress; precise fulfillment addresses and customer data are not read. Shipping prices are determined at merchant checkout.",
+    items: [
+      {
+        name: "read_shipping",
+        description:
+          "Optional merchant consent. Shipping profiles, destinations, rates and variant membership are translated by this app and sent to Aura Historia.",
+      },
+    ],
+  },
+  {
     title: "Products",
     description:
       "Product lifecycle events publish merchant catalogs to the Aura Historia sales channel.",

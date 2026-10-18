@@ -12,6 +12,26 @@ const packageJson = JSON.parse(
 };
 
 describe("tooling configuration", () => {
+  it("exports and binds the SQLite shop coordinator for background shipping work", () => {
+    const wrangler = readFileSync(
+      resolve(process.cwd(), "wrangler.jsonc"),
+      "utf8",
+    );
+    const entry = readFileSync(
+      resolve(process.cwd(), "workers/app.ts"),
+      "utf8",
+    );
+    assert.match(
+      wrangler,
+      /"name": "SHOP_COORDINATOR", "class_name": "ShopCoordinator"/,
+    );
+    assert.match(wrangler, /"new_sqlite_classes": \["ShopCoordinator"\]/);
+    assert.match(
+      entry,
+      /export \{ ShopCoordinator \} from "\.\/shop-coordinator"/,
+    );
+  });
+
   it("keeps the Node engine compatible with current Shopify tooling", () => {
     assert.equal(packageJson.engines.node, ">=22.18");
   });
@@ -62,7 +82,7 @@ describe("tooling configuration", () => {
       "utf8",
     );
     assert.equal(packageJson.scripts["openapi:generate"], "openapi-ts");
-    assert.match(config, /792444f6d62cfb9f8dd4dc44ffb47a420de54cad/);
+    assert.match(config, /8f39fcd549ebc49608bb2722bb219e623c6742e2/);
     assert.match(config, /output: "app\/generated\/api"/);
   });
 
@@ -78,7 +98,7 @@ describe("tooling configuration", () => {
     assert.match(wrangler, /"AURA_HISTORIA_OAUTH_ENV": "prod"/);
     assert.match(
       wrangler,
-      /"AURA_HISTORIA_OAUTH_SCOPE": "listing-sources:write product-listings:write"/,
+      /"AURA_HISTORIA_OAUTH_SCOPE": "listing-sources:read listing-sources:write product-listings:read product-listings:write"/,
     );
     const clientId = wrangler.match(
       /"AURA_HISTORIA_OAUTH_CLIENT_ID": "([^"]+)"/,

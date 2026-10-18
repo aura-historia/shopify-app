@@ -8,9 +8,10 @@
 
 ## Architecture constraints
 
-- Keep the app minimal: authentication, embedded app shell, Prisma session storage, and uninstall cleanup.
+- Keep the app focused on authentication, the embedded app shell, KV session storage, initial catalog backfill, advertised shipping imports, and uninstall cleanup.
 - Product webhooks and compliance webhooks are declared in `shopify.app.toml`.
-- `app/routes/webhooks.app.uninstalled.tsx` is the only webhook processed directly by this app.
+- Uninstall and bulk-operation completion webhooks are processed directly by this app. Product and compliance events use EventBridge.
+- Shipping acquisition, mapping and publication share the implementation in `app/shipping`; per-shop Durable Objects coordinate offline Shopify access for catalog and shipping. Keep provider credentials inside the app's protected sessions.
 - Avoid adding demo pages, sample mutations, placeholder business logic, or unnecessary UI.
 
 ## Local development rules
@@ -63,7 +64,7 @@
 ## Tooling rules
 
 - Use Biome for linting.
-- Keep package and CI Node versions aligned with `package.json` engines (`>=20.19 <22 || >=22.12`).
+- Keep package and CI Node versions aligned with `package.json` engines (`>=22.18`).
 - Keep `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` passing after meaningful changes.
 - Keep the GitHub Actions CI workflow current when changing project scripts or quality checks.
 

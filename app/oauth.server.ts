@@ -1,4 +1,3 @@
-import type { KVNamespace } from "@cloudflare/workers-types";
 import type { OAuthTokenResponseData } from "./generated/api/types.gen";
 import {
   type ShopCredentialsValues,
@@ -9,6 +8,8 @@ import {
   createShopifyAdminAppUrl,
   getShopifyStoreName,
 } from "./shopify-admin-url";
+
+type KVNamespace = CloudflareBindings["KV"];
 
 export interface AuraHistoriaOAuthConfig {
   authorizeUrl: string;
@@ -96,7 +97,8 @@ const AURA_HISTORIA_PROD_AUTHORIZE_URL =
 const AURA_HISTORIA_STAGE_API_BASE_URL = "https://api.stage.aura-historia.com";
 const AURA_HISTORIA_PROD_API_BASE_URL = "https://api.aura-historia.com";
 const SHOPIFY_APP_PROD_URL = "https://partner-connect.aura-historia.com";
-const OAUTH_SCOPE = "listing-sources:write product-listings:write";
+const OAUTH_SCOPE =
+  "listing-sources:read listing-sources:write product-listings:read product-listings:write";
 const OAUTH_PENDING_CONTEXT_KEY_PREFIX = "aura-historia:oauth-pending:";
 const OAUTH_PENDING_CONTEXT_TTL_SECONDS = 10 * 60;
 const SHOPIFY_STORE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;

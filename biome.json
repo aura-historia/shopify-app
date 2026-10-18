@@ -7,7 +7,12 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/package-lock.json", "!app/generated"]
+    "includes": [
+      "**",
+      "!**/package-lock.json",
+      "!app/generated",
+      "!worker-configuration.d.ts"
+    ]
   },
   "formatter": {
     "enabled": true,

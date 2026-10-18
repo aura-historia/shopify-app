@@ -1,11 +1,11 @@
 import type { ActionFunctionArgs } from "react-router";
 import {
   clearBackfillContext,
-  createAdminGraphqlRequest,
   fetchBulkOperationResultUrl,
   loadBackfillContext,
   processBackfillResults,
 } from "../backfill.server";
+import { offlineGraphql } from "../shipping/runtime.server";
 import { getShopify } from "../shopify.server";
 
 interface BulkOperationPayload {
@@ -40,8 +40,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   context.cloudflare.ctx.waitUntil(
     (async () => {
       try {
-        const { admin } = await shopify.unauthenticated.admin(shop);
-        const graphqlRequest = createAdminGraphqlRequest(admin);
+        const graphqlRequest = offlineGraphql(context, shop);
         const jsonlUrl = await fetchBulkOperationResultUrl(
           graphqlRequest,
           bulkOpId,
