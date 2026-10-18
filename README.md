@@ -48,6 +48,11 @@ flowchart LR
     B --> A
     U[App uninstall webhook] --> C[Session and connection cleanup]
     C --> K
+    SP[Shopify profile and scope events] --> H[HTTPS shipping receiver]
+    H --> D[Per-shop Durable Object]
+    D --> G[Shopify Admin API acquisition]
+    G --> D
+    D --> SH[Typed Aura shipping API]
 ```
 
 ### What lives here
@@ -73,7 +78,9 @@ flowchart LR
 | --- | --- | --- |
 | `products/create`, `products/update`, `products/delete` | Aura Historia Amazon EventBridge partner source | Keep merchant product discovery records current |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia Amazon EventBridge partner source | Required public-app privacy and compliance handling |
-| `app/uninstalled` | This app’s deployed HTTPS endpoint | Remove Shopify session and Aura Historia connection data |
+| `profiles/create`, `profiles/update`, `profiles/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current shipping acquisition |
+| `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access and withdraw owned assertions on permission loss |
+| `app/uninstalled` | This app’s deployed HTTPS endpoint | Stop shipping, admit owned cleanup, then remove Shopify sessions and connection data |
 | `bulk_operations/finish` | This app’s deployed HTTPS endpoint | Complete the initial catalog backfill workflow |
 
 The required public-app compliance subscriptions and product subscriptions are declared in `shopify.app.toml` and `shopify.app.prod.toml`.
@@ -129,7 +136,7 @@ The repository uses separate Shopify configuration files to keep stage-specific 
 | --- | --- |
 | `shopify.app.toml` | Default local/stage configuration using the development EventBridge partner source |
 | `shopify.app.prod.toml` | Production configuration using the production EventBridge partner source |
-| `shopify.app.tunnel.toml` | Development tunnel mode; exposes the backfill completion endpoint through the active tunnel |
+| `shopify.app.tunnel.toml` | Development tunnel mode; exposes backfill completion and shipping receivers through the active tunnel |
 
 The required Shopify scopes are `read_products` and `read_locales`; `read_shipping` is optional and requested from the embedded app for advertised shipping imports. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
 
@@ -148,17 +155,25 @@ refresh to the existing Shopify SDK and KV sessions. The backend never calls thi
 worker, reads its sessions, or receives Shopify credentials.
 
 `app/shipping/acquisition.server.ts`, `mapper.ts`, and `publisher.server.ts` are the
-common S01/S02 implementation. Future profile notifications should call the same
-`requestShipping(shop)` RPC through the authenticated app; they must not publish
-their own snapshots. Work is ordered by the current shop/source binding and an
+common S01/S02 implementation. Initial connection, **Import shipping settings**,
+profile notifications and periodic reconciliation all use that acquisition/mapper/publisher.
+Callbacks authenticate the bounded original body with Shopify, require an existing
+offline installation and durable source binding, then commit a deduplicated hint
+inbox. No provider read, token refresh or Aura publication runs in the callback.
+The receiver returns 503 on failed durable admission, so Shopify retries.
+Hints carry metadata only and never supply the Aura source identity or policy. Work is ordered by the current shop/source binding and an
 increasing durable sequence. Concurrent requests coalesce into a subsequent read.
 Conflicts trigger bounded reacquisition; pending uncertain writes retain their body,
 request key, sequence and original acquisition time across worker restarts. Missing
 catalog listings are retried independently without creating products. Partner-owned
 assertions and explicit clears are protected by backend import ownership checks.
 Reconciliation resolves other uncertain requests before replacing an acquisition.
+An inbox hint received during a scan forces reacquisition before publication.
+Already prepared requests resolve with their original keys, sequence and acquiredAt
+before newer work; no old observation is rebased onto a current revision.
 Publication stops retrying each record after eight failures; acquisition pauses after
-eight consecutive failures on a page. Exhausted work remains saved. **Import shipping settings**
+eight consecutive failures on a page. Exhausted work remains saved for up to seven days,
+subject to replacement by a new complete acquisition during periodic repair. **Import shipping settings**
 resumes those exact pending requests before acquiring the latest settings. GraphQL
 and Aura API calls have a 20-second timeout, and applied status requires a valid
 committed response.
@@ -169,7 +184,8 @@ The importer traverses all profile items, assigned variants, product variants, z
 and methods. A final profile/version traversal and product modification checks detect
 observed changes and restart affected acquisition; this is not an atomic Shopify
 snapshot. Failed/incomplete traversals never retire unseen objects. Only a complete
-read can explicitly retire previously mapped, confirmed missing profiles.
+read can explicitly retire previously mapped, confirmed missing profiles. Complete product comparisons also explicitly remove
+previously owned selections/inputs for products that disappeared from Shopify.
 
 The pinned Admin API is **2026-10**. Its published `DeliveryMethodDefinition` schema
 exposes `rateProvider` and `methodConditions`. The [shipping option changelog](https://shopify.dev/changelog/posts/new-apis-to-read-and-write-shipping-options-in-delivery-profile)
@@ -179,8 +195,13 @@ granted scope. `read_assigned_shipping` cannot read the complete shop profile/it
 membership, so it is insufficient. No shipping write, order, customer or checkout
 scope is requested. Any Shopify approval required for `read_shipping` must be
 completed in the Partner Dashboard before enabling consent; denial is reported in
-shipping status and does not fail catalog sync. S02 profile webhook subscriptions
-belong to this app and use the same shipping read permission.
+shipping status and does not fail catalog sync. Profile webhook subscriptions
+belong to this app and use the same shipping read permission. The pinned
+[2026-10 WebhookSubscriptionTopic reference](https://shopify.dev/docs/api/admin-graphql/2026-10/enums/WebhookSubscriptionTopic)
+lists all three PROFILES topics with `read_shipping` or `read_assigned_shipping`;
+full acquisition requires `read_shipping`. No extra scope is needed for
+`app/scopes_update`. The pinned webhook examples and backend commit are recorded
+in `tests/fixtures/shopify-shipping-webhooks-2026-10.json`.
 
 The supported subset is a profile with one origin group, no unrated origins or
 selling-plan applicability, explicit country zones, static rates, minimum
@@ -204,8 +225,9 @@ with inferred locations, eligibility, taxes, packing, duties or checkout prices.
 Status distinguishes queued work, acquisition, publication, partial progress,
 protected partner edits and applied operations. Applied means Aura committed the
 typed write; discovery indexing remains eventual and no shipping quote is promised.
-Use the manual import action to reconcile after resolving permissions, capabilities
-or a bounded failure. S02 ongoing notifications and recovery are tracked separately.
+Use the authenticated **Import shipping settings** action to repair after resolving
+permissions, capabilities or a bounded failure. **Refresh shipping status** distinguishes
+committed operations from pending work; search indexing remains eventual.
 
 The official generated Aura client is pinned in `openapi-ts.config.ts` to backend
 commit `8f39fcd549ebc49608bb2722bb219e623c6742e2` (B05, PR #2146).
@@ -214,6 +236,69 @@ explicitly. `tests/fixtures/shipping-contract.json` is the executable contract
 fixture from the same commit. Ordinary typed shipping writes carry `import` metadata
 with `observation: {}` for successful acquisitions, and no expiry/freshness fields.
 Returned assertion evidence uses `verifiedAt`.
+
+### Continuous refresh and recovery
+
+`app/routes/webhooks.shipping.tsx` is the app-owned receiver. Stage/default and
+production declare absolute `https://partner-connect.aura-historia.com/webhooks/shipping`
+destinations; localhost development therefore uses the deployed receiver. Tunnel
+configuration declares `/webhooks/shipping`, resolved to the active HTTPS tunnel.
+The product/compliance EventBridge destinations and uninstall/bulk endpoints retain
+their existing destinations. No additional product notification or catalog mutation
+is submitted by shipping. Shopify configuration activation, deployment and live
+exports require separate authorization.
+
+The per-shop Durable Object has a transactional hint inbox independent of provider
+I/O. It retains up to 512 delivery receipts per source/connection for 48 hours,
+returning retryable backpressure at capacity. Delivery IDs deduplicate within that
+binding; a reconnect creates a new random connection generation. Callback bodies
+are limited to 16 KiB. Topics, API version and profile GIDs are validated. A delete
+is a refresh hint: a complete API traversal and final verification must confirm
+absence before retiring a previously owned profile. Scope errors, missing pages
+and failed reads preserve prior terms and observation age. Scope-change notifications
+fence old prepared writes before the next current-access check.
+
+Every bound shop schedules a new reconciliation six hours after successful work.
+Paused work gets a bounded new acquisition at that interval; each run retains the
+S01 limits (100 profiles, 5,000 products, 4,000 pages, 4 MB). This covers profile
+assignment changes, product/variant membership and requires-shipping changes,
+origin-group/configuration changes and missed notifications independently of catalog
+EventBridge processing. It does not assume that profiles/update observes every
+assignment change. Unsupported origin or market-driven configurations remain
+unasserted and actionable. This is acquisition of current state, never TTL renewal
+or a scan of backend CDC/SQS pending work. Existing installations enter this schedule
+on their next initial/manual import; there is no unbounded installation enumeration.
+
+Worker alarms checkpoint one provider request or typed prepare/send step at a time.
+Eight attempts per record/page and exponential delays bound automatic retries.
+Missing catalog listings remain deferred with SHIPPING_IMPORT_DEPENDENCY_MISSING;
+manual repair resumes exact pending requests, and the seven-day retention cap
+bounds old request bodies. A new complete acquisition may supersede exhausted
+work, using stable object identities and a new acquisition order. The callback
+inbox does not wait for provider reads and cannot overwrite a connection stop.
+
+Permission loss withdraws owned shipping profiles, defaults, listing selections
+and inputs through the existing typed commands. Selection and input removals are
+independent; manual edits/clears and collection/shipping overrides stay protected
+by backend ownership checks. Product synchronization credentials remain usable.
+Uninstall/disconnect queues the same removals, then attempts Aura OAuth token
+revocation. OAuth revocation is recorded separately; it is not reported as source
+or grant revocation. Source switching fences old work and queues cleanup before
+new acquisition; at most five connection cleanups can be retained. Removals retain
+the last successful source acquisition time, so a newer backend authority boundary
+is never bypassed with a new timestamp. Reconnect always reads Shopify again.
+
+Cleanup status distinguishes **pending**, **committed** owned removals, and
+**unconfirmed** cleanup. Configuration/authority conflicts, unavailable credentials
+or exhausted retries can leave cleanup unconfirmed; it is visible in the embedded
+app where the installation is still accessible. Reconnect and import current
+settings, or have an authorized source administrator remove the remaining imports
+and review source/grant configuration. Stopping locally, erasing sessions or revoking
+an OAuth token does not prove that backend assertions were removed. Unconfirmed
+assertions can remain available beyond 30 days until explicitly updated/withdrawn
+or a backend source/configuration/grant authority change commits. They never expire
+because of observation age. Discovery indexing follows existing backend CDC/SQS
+continuations and retry/DLQ controls.
 
 ### External services and privacy
 
@@ -226,7 +311,13 @@ authorized API. Shipping requests contain no provider domain, token, session, ra
 provider payload, customer data or precise fulfillment address. The separate catalog
 ingestion domain configuration remains necessary for existing EventBridge ingestion.
 Errors exposed by shipping status contain categories, never provider response bodies
-or credentials. Disconnect cancels jobs; uninstall erases shipping state and sessions.
+or credentials. Disconnect durably fences publication before admitting cleanup; uninstall also
+erases Shopify sessions and the ordinary Aura connection immediately. Only required
+Aura credentials for cleanup remain in a separate protected KV entry, with a
+seven-day maximum retention. No Shopify token is copied. Cleanup state retains only
+canonical typed removal requests and resource identities, then discards them.
+Minimal stop/status tombstones are erased after seven days; unknown installations
+and hints cannot recreate a binding.
 The linked Aura privacy policy and App Store access disclosure must reflect this
 optional processing when the feature is released.
 

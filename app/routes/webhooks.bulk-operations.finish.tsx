@@ -6,7 +6,7 @@ import {
   processBackfillResults,
 } from "../backfill.server";
 import { offlineGraphql } from "../shipping/runtime.server";
-import { getShopify } from "../shopify.server";
+import { getShopifyWebhook } from "../shopify.server";
 
 interface BulkOperationPayload {
   admin_graphql_api_id?: string;
@@ -15,7 +15,7 @@ interface BulkOperationPayload {
 }
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
-  const shopify = getShopify(context);
+  const shopify = getShopifyWebhook(context);
   const { shop, payload } = await shopify.authenticate.webhook(request);
   const body = payload as BulkOperationPayload;
 

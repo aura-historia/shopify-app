@@ -1,0 +1,15 @@
+{
+  "apiVersion": "2026-10",
+  "reference": "https://shopify.dev/docs/api/admin-graphql/2026-10/enums/WebhookSubscriptionTopic",
+  "requiredScope": "read_shipping",
+  "backendCommit": "8f39fcd549ebc49608bb2722bb219e623c6742e2",
+  "topics": ["profiles/create", "profiles/update", "profiles/delete"],
+  "payload": {
+    "id": 1,
+    "admin_graphql_api_id": "gid://shopify/DeliveryProfile/1",
+    "name": "Example Delivery Profile",
+    "default": false,
+    "profile_type": null,
+    "version": 1
+  }
+}

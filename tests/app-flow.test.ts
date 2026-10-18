@@ -166,11 +166,7 @@ describe("public install flow", () => {
     assert.ok(
       appIndexRoute.includes('redirectParams.set("disconnect", "success")'),
     );
-    assert.ok(
-      appIndexRoute.includes(
-        "Failed to revoke Aura Historia access on disconnect",
-      ),
-    );
+    assert.ok(appIndexRoute.includes("disconnectShipping(session.shop)"));
     assert.ok(appIndexRoute.includes("Connect Aura Historia"));
     assert.ok(appIndexRoute.includes("Reconnect Aura Historia"));
     assert.ok(appIndexRoute.includes("Retry Aura Historia connection"));

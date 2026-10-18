@@ -1,8 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
-import { GraphqlQueryError } from "@shopify/shopify-api";
+import {
+  GraphqlQueryError,
+  HttpResponseError,
+  InvalidJwtError,
+} from "@shopify/shopify-api";
 import { SessionNotFoundError } from "@shopify/shopify-app-react-router/server";
 import type { GraphqlRequestFn } from "../app/backfill.server";
-import { getAuraHistoriaApiBaseUrl } from "../app/oauth.server";
+import {
+  getAuraHistoriaApiBaseUrl,
+  getAuraHistoriaOAuthConfig,
+  getMissingAuraHistoriaOAuthConfig,
+  revokeAuraHistoriaAccessToken,
+} from "../app/oauth.server";
 import {
   acquireShippingStep,
   beginAcquisition,
@@ -16,14 +25,27 @@ import {
   ShippingReadError,
 } from "../app/shipping/model";
 import {
+  addConfirmedMembershipRemovals,
   addConfirmedRemovals,
   beginPublication,
+  beginWithdrawal,
   type Publication,
   publishShippingStep,
   type ResourceMapping,
   readyPublicationWork,
 } from "../app/shipping/publisher.server";
-import { loadShopCredentials } from "../app/shop-credentials.server";
+import {
+  SHIPPING_TOPICS,
+  type ShippingHint,
+} from "../app/shipping/webhooks.server";
+import {
+  clearShopCredentialsDisconnected,
+  isShopCredentialsDisconnected,
+  loadShopCredentials,
+  type ShopCredentialsRecord,
+  type ShopCredentialsValues,
+  saveShopCredentials,
+} from "../app/shop-credentials.server";
 import {
   type CloudflareShopifyEnv,
   getShopifyForEnv,
@@ -45,6 +67,9 @@ export interface ShippingStatus {
   limitations: string[];
   error?: string;
   acquiredAt?: string;
+  nextReconciliationAt?: string;
+  cleanup?: "pending" | "committed" | "unconfirmed";
+  tokenRevoked?: boolean;
 }
 interface Job {
   shop: string;
@@ -59,13 +84,44 @@ interface Job {
   failures?: number;
   paused?: boolean;
 }
+interface CleanupJob {
+  shop: string;
+  listingSourceId: string;
+  credentialVersion: string;
+  credentialKey: string;
+  publication: Publication;
+  deadline: number;
+  attempts: number;
+  erase: boolean;
+  revoke: boolean;
+}
 interface CoordinatorState {
   sequence: number;
   mappings: Record<string, ResourceMapping>;
   source?: string;
   job?: Job;
   status: ShippingStatus;
+  binding?: {
+    shop: string;
+    listingSourceId: string;
+    credentialVersion: string;
+  };
+  stopped?: boolean;
+  seenHintVersion?: number;
+  eraseAt?: number;
+  memberships?: string[];
+  lastAcquiredAt?: string;
+  reconcileAt?: number;
+  cleanup?: CleanupJob;
+  cleanupQueue?: CleanupJob[];
+  cleanupHadFailure?: boolean;
 }
+
+export const RECONCILIATION_INTERVAL = 6 * 3600_000;
+const PRIVATE_RETENTION = 7 * 86_400_000;
+const DELIVERY_RETENTION = 48 * 3600_000;
+const credentialVersion = (record: ShopCredentialsRecord) =>
+  record.connectionId ?? record.updatedAt;
 
 const idle = (): ShippingStatus => ({
   phase: "idle",
@@ -81,6 +137,23 @@ function nextSequence(state: CoordinatorState) {
   // across concurrent wake-ups. Values remain exact JS integers at this epoch.
   state.sequence = Math.max(state.sequence + 1, Date.now() * 1000);
   return state.sequence;
+}
+
+function rememberPublication(state: CoordinatorState) {
+  const publication = state.job?.publication;
+  if (!publication) return;
+  state.lastAcquiredAt = publication.acquiredAt;
+  const memberships = new Set(state.memberships ?? []);
+  for (const work of publication.work) {
+    if (work.resource.kind === "profile")
+      state.mappings[work.key] ??= {
+        id: "",
+        providerId: work.resource.value.providerId,
+      };
+    if (work.resource.kind === "membership")
+      memberships.add(work.resource.value.sourceListingId);
+  }
+  state.memberships = [...memberships];
 }
 
 export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
@@ -113,6 +186,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     for (let i = 0; i < json.length; i += 25_000)
       chunks[`state:${i / 25_000}`] = json.slice(i, i + 25_000);
     chunks.chunks = Math.ceil(json.length / 25_000);
+    chunks.admission = JSON.stringify({
+      binding: state.binding,
+      stopped: state.stopped,
+    });
     // All parts and the manifest commit together, before sending a pending write.
     // Remove old tail chunks so completed snapshots are not retained privately.
     await this.ctx.storage.transaction(async (transaction) => {
@@ -127,6 +204,15 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       );
       for (let i = 0; i < excess.length; i += 64)
         await transaction.delete(excess.slice(i, i + 64));
+    });
+  }
+
+  private async schedule(state: CoordinatorState, when: number) {
+    await this.ctx.storage.transaction(async (transaction) => {
+      const hinted = (await transaction.get<number>("hintVersion")) ?? 0;
+      await transaction.setAlarm(
+        hinted > (state.seenHintVersion ?? 0) ? Date.now() + 1000 : when,
+      );
     });
   }
 
@@ -165,7 +251,15 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         // the typed errors back to acquisition, including scope denials.
         return { errors: error.body?.errors?.graphQLErrors };
       }
-      if (shipping && error instanceof SessionNotFoundError) {
+      if (
+        shipping &&
+        (error instanceof SessionNotFoundError ||
+          error instanceof InvalidJwtError ||
+          (error instanceof HttpResponseError &&
+            (error.response.code === 401 ||
+              (error.response.code === 400 &&
+                error.response.body?.error === "invalid_subject_token"))))
+      ) {
         throw new ShippingReadError("SHOPIFY_OFFLINE_ACCESS_REQUIRED");
       }
       throw error;
@@ -183,51 +277,168 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
   }
 
   async status(): Promise<ShippingStatus> {
-    return this.serialize(async () => (await this.load()).status);
+    return this.serialize(async () => {
+      const state = await this.load();
+      const hinted = (await this.ctx.storage.get<number>("hintVersion")) ?? 0;
+      return !state.stopped &&
+        state.binding &&
+        hinted > (state.seenHintVersion ?? 0)
+        ? { ...state.status, phase: "queued" }
+        : state.status;
+    });
   }
 
   async requestShipping(shop: string) {
     return this.serialize(async () => {
       const credentials = await loadShopCredentials(this.env.KV, shop);
-      if (!credentials) return false;
+      if (
+        !credentials ||
+        (await isShopCredentialsDisconnected(this.env.KV, shop))
+      )
+        return false;
       const state = await this.load();
       if (
-        state.job &&
-        state.job.listingSourceId === credentials.listingSourceId &&
-        state.job.credentialVersion === credentials.updatedAt
+        state.stopped &&
+        state.binding?.credentialVersion === credentialVersion(credentials)
+      )
+        return false;
+      if (
+        state.job?.publication?.retainUntil &&
+        state.job.publication.retainUntil <= Date.now()
       ) {
-        state.job.refreshRequested = true;
+        rememberPublication(state);
+        state.job = undefined;
+      }
+      this.enqueue(state, shop, credentials, true);
+      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      await this.save(state);
+      return true;
+    });
+  }
+
+  private enqueue(
+    state: CoordinatorState,
+    shop: string,
+    credentials: ShopCredentialsRecord,
+    resume: boolean,
+  ) {
+    state.stopped = false;
+    state.binding = {
+      shop,
+      listingSourceId: credentials.listingSourceId,
+      credentialVersion: credentialVersion(credentials),
+    };
+    state.reconcileAt ??= Date.now() + RECONCILIATION_INTERVAL;
+    if (
+      state.job &&
+      state.job.listingSourceId === credentials.listingSourceId &&
+      state.job.credentialVersion === credentialVersion(credentials)
+    ) {
+      state.job.refreshRequested = true;
+      if (resume) {
         state.job.paused = false;
         state.job.attempts = 0;
         state.job.failures = 0;
-        for (const work of state.job.publication?.work ?? []) {
-          if (!work.done) {
-            work.attempts = 0;
-            work.exhausted = false;
-            work.dueAt = 0;
-          }
-        }
-        state.status.phase = "queued";
-        state.status.error = undefined;
-      } else {
-        if (state.source !== credentials.listingSourceId) state.mappings = {};
-        state.source = credentials.listingSourceId;
-        nextSequence(state);
-        state.job = {
-          shop,
-          listingSourceId: credentials.listingSourceId,
-          credentialVersion: credentials.updatedAt,
-          sequence: state.sequence,
-          runId: crypto.randomUUID(),
-          acquisition: beginAcquisition(new Date().toISOString()),
-          refreshRequested: false,
-          attempts: 0,
-        };
-        state.status = { ...idle(), phase: "queued" };
       }
-      // Arm before persisting work, so a crash cannot leave accepted work asleep.
-      await this.ctx.storage.setAlarm(Date.now() + 1000);
-      await this.save(state);
+      for (const work of resume ? (state.job.publication?.work ?? []) : []) {
+        if (!work.done) {
+          work.attempts = 0;
+          work.exhausted = false;
+          work.dueAt = 0;
+        }
+      }
+      state.status.phase = "queued";
+      state.status.error = undefined;
+    } else {
+      if (state.source !== credentials.listingSourceId) {
+        state.mappings = {};
+        state.memberships = [];
+        state.lastAcquiredAt = undefined;
+      }
+      state.source = credentials.listingSourceId;
+      nextSequence(state);
+      state.job = {
+        shop,
+        listingSourceId: credentials.listingSourceId,
+        credentialVersion: credentialVersion(credentials),
+        sequence: state.sequence,
+        runId: crypto.randomUUID(),
+        acquisition: beginAcquisition(new Date().toISOString()),
+        refreshRequested: false,
+        attempts: 0,
+      };
+      state.status = {
+        ...idle(),
+        cleanup: state.status.cleanup,
+        tokenRevoked: state.status.tokenRevoked,
+        phase: "queued",
+      };
+    }
+    state.status.nextReconciliationAt = new Date(
+      state.reconcileAt,
+    ).toISOString();
+  }
+
+  async admitShippingHint(shop: string, hint: ShippingHint) {
+    if (
+      !SHIPPING_TOPICS.includes(hint.topic) ||
+      !/^[A-Za-z0-9-]{1,128}$/.test(hint.deliveryId) ||
+      (hint.topic !== "APP_SCOPES_UPDATE" &&
+        !/^gid:\/\/shopify\/DeliveryProfile\/[1-9]\d*$/.test(
+          hint.profileId ?? "",
+        ))
+    )
+      throw new Error("INVALID_SHIPPING_HINT");
+    const credentials = await loadShopCredentials(this.env.KV, shop);
+    if (
+      !credentials ||
+      (await isShopCredentialsDisconnected(this.env.KV, shop))
+    )
+      return false;
+    // Admission uses its own durable inbox, so a 20-second provider call in
+    // the worker cannot hold up the webhook's acknowledgement. Transactions
+    // serialize it with connection fences and alarm scheduling.
+    return this.ctx.storage.transaction(async (transaction) => {
+      const raw = await transaction.get<string>("admission");
+      const admission = raw
+        ? (JSON.parse(raw) as Pick<CoordinatorState, "binding" | "stopped">)
+        : undefined;
+      const binding = admission?.binding;
+      if (
+        !binding ||
+        admission?.stopped ||
+        binding.shop !== shop ||
+        credentials.listingSourceId !== binding.listingSourceId ||
+        credentialVersion(credentials) !== binding.credentialVersion
+      )
+        return false;
+      const now = Date.now();
+      const stored = await transaction.get<{
+        binding: string;
+        deliveries: Record<string, number>;
+      }>("receipts");
+      const namespace = `${binding.listingSourceId}:${binding.credentialVersion}`;
+      const deliveries = Object.fromEntries(
+        Object.entries(
+          stored?.binding === namespace ? stored.deliveries : {},
+        ).filter(([, time]) => time > now - DELIVERY_RETENTION),
+      );
+      const key = `${hint.topic}:${hint.deliveryId}`;
+      if (deliveries[key]) return true;
+      // A full deduplication window applies backpressure instead of silently
+      // dropping delivery receipts that Shopify might still retry.
+      if (Object.keys(deliveries).length >= 512)
+        throw new Error("SHIPPING_ADMISSION_FULL");
+      deliveries[key] = now;
+      const version = ((await transaction.get<number>("hintVersion")) ?? 0) + 1;
+      await transaction.put({
+        receipts: { binding: namespace, deliveries },
+        hintVersion: version,
+        ...(hint.topic === "APP_SCOPES_UPDATE"
+          ? { scopeVersion: version }
+          : {}),
+      });
+      await transaction.setAlarm(now + 1000);
       return true;
     });
   }
@@ -239,19 +450,323 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       else {
         const state = await this.load();
         state.job = undefined;
+        state.stopped = true;
+        state.reconcileAt = undefined;
         state.status = idle();
         await this.save(state);
       }
     });
   }
 
+  // Called by the authenticated OAuth callback before replacing a connection.
+  // The same durable gate fences old publication and catalog token refresh.
+  async prepareConnection(shop: string) {
+    return this.serialize(async () => {
+      const state = await this.load();
+      const credentials = await loadShopCredentials(this.env.KV, shop);
+      if (credentials && state.binding && !state.stopped)
+        await this.startCleanup(state, shop, credentials, false, true);
+      state.stopped = true;
+      state.job = undefined;
+      state.reconcileAt = undefined;
+      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      await this.save(state);
+    });
+  }
+
+  async saveConnection(shop: string, values: ShopCredentialsValues) {
+    return this.serialize(async () => {
+      const record = await saveShopCredentials(this.env.KV, shop, values);
+      await clearShopCredentialsDisconnected(this.env.KV, shop);
+      const state = await this.load();
+      state.job = undefined;
+      state.seenHintVersion =
+        (await this.ctx.storage.get<number>("hintVersion")) ?? 0;
+      state.stopped = false;
+      state.binding = {
+        shop,
+        listingSourceId: record.listingSourceId,
+        credentialVersion: credentialVersion(record),
+      };
+      // A reconnect always performs new acquisition, never relabels old data.
+      this.enqueue(state, shop, record, true);
+      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      await this.save(state);
+      return record;
+    });
+  }
+
+  private async startCleanup(
+    state: CoordinatorState,
+    shop: string,
+    credentials: ShopCredentialsRecord,
+    erase: boolean,
+    revoke: boolean,
+  ) {
+    const existing = [state.cleanup, ...(state.cleanupQueue ?? [])].find(
+      (job) =>
+        job?.listingSourceId === credentials.listingSourceId &&
+        job.credentialVersion === credentialVersion(credentials),
+    );
+    if (existing) {
+      existing.erase ||= erase;
+      existing.revoke ||= revoke;
+      return;
+    }
+    if ((state.cleanupQueue?.length ?? 0) >= 4)
+      throw new Error("SHIPPING_CLEANUP_CAPACITY");
+    const mappings = { ...state.mappings };
+    const memberships = new Set(state.memberships ?? []);
+    for (const work of state.job?.publication?.work ?? []) {
+      if (work.resource.kind === "profile") {
+        // A create may have committed without returning its ID. Resolve the
+        // stable object identity in the cleanup worker before retiring it.
+        mappings[work.key] ??= {
+          id: "",
+          providerId: work.resource.value.providerId,
+        };
+      }
+      if (work.resource.kind === "membership")
+        memberships.add(work.resource.value.sourceListingId);
+    }
+    const now = Date.now();
+    const credentialKey = `aura-historia:shipping-cleanup:${shop}:${crypto.randomUUID()}`;
+    // Only Aura credentials are retained in protected KV, never in job state.
+    await this.env.KV.put(credentialKey, JSON.stringify(credentials), {
+      expirationTtl: PRIVATE_RETENTION / 1000,
+    });
+    const cleanup: CleanupJob = {
+      shop,
+      listingSourceId: credentials.listingSourceId,
+      credentialVersion: credentialVersion(credentials),
+      credentialKey,
+      deadline: now + PRIVATE_RETENTION,
+      attempts: 0,
+      erase,
+      revoke,
+      publication: beginWithdrawal(
+        mappings,
+        [...memberships],
+        crypto.randomUUID(),
+        nextSequence(state),
+        state.job?.publication?.acquiredAt ??
+          state.lastAcquiredAt ??
+          state.status.acquiredAt ??
+          new Date(now).toISOString(),
+      ),
+    };
+    if (state.cleanup) {
+      state.cleanupQueue ??= [];
+      state.cleanupQueue.push(cleanup);
+    } else state.cleanup = cleanup;
+    state.job = undefined;
+    state.status.cleanup = "pending";
+    state.status.tokenRevoked = false;
+  }
+
+  async disconnectShipping(shop: string, erase = false) {
+    return this.serialize(async () => {
+      const state = await this.load();
+      // The stop commits before any external cleanup. Unknown/late callbacks
+      // cannot reopen this binding even if KV returns an older connection.
+      state.stopped = true;
+      state.eraseAt = Date.now() + PRIVATE_RETENTION;
+      state.reconcileAt = undefined;
+      state.status.nextReconciliationAt = undefined;
+      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      await this.save(state);
+      const credentials = await loadShopCredentials(this.env.KV, shop);
+      if (credentials)
+        await this.startCleanup(state, shop, credentials, erase, true);
+      if (state.cleanup) state.cleanup.erase ||= erase;
+      state.job = undefined;
+      state.status.phase = "blocked";
+      state.status.error = "SHIPPING_LOCALLY_STOPPED";
+      if (
+        !credentials &&
+        !state.cleanup &&
+        state.status.cleanup !== "committed"
+      )
+        state.status.cleanup = "unconfirmed";
+      await this.save(state);
+      return state.status;
+    });
+  }
+
+  private async cleanupStep(state: CoordinatorState) {
+    const cleanup = state.cleanup;
+    if (!cleanup) return;
+    const now = Date.now();
+    const storedCredentials = await this.env.KV.get<ShopCredentialsRecord>(
+      cleanup.credentialKey,
+      "json",
+    );
+    const credentials =
+      storedCredentials?.listingSourceId === cleanup.listingSourceId &&
+      credentialVersion(storedCredentials) === cleanup.credentialVersion
+        ? storedCredentials
+        : null;
+    const apiBaseUrl = getAuraHistoriaApiBaseUrl(this.env);
+    const publication = cleanup.publication;
+    if (credentials && apiBaseUrl && now < cleanup.deadline) {
+      try {
+        await publishShippingStep(publication, {
+          apiBaseUrl,
+          listingSourceId: credentials.listingSourceId,
+          accessToken: credentials.accessToken,
+        });
+        cleanup.attempts = 0;
+      } catch {
+        cleanup.attempts++;
+      }
+    }
+    const remaining = publication.work.some((work) => !work.done);
+    const ready = readyPublicationWork(publication);
+    if (
+      credentials &&
+      apiBaseUrl &&
+      now < cleanup.deadline &&
+      remaining &&
+      ready.length &&
+      cleanup.attempts < SHIPPING_LIMITS.retries &&
+      !publication.reconcile
+    ) {
+      await this.save(state);
+      await this.ctx.storage.setAlarm(
+        Math.max(
+          now + 1000 * 2 ** cleanup.attempts,
+          Math.min(...ready.map((work) => work.dueAt)),
+        ),
+      );
+      return;
+    }
+    if (remaining || publication.failures || publication.reconcile)
+      state.cleanupHadFailure = true;
+    state.status.cleanup = state.cleanupHadFailure
+      ? "unconfirmed"
+      : state.cleanupQueue?.length
+        ? "pending"
+        : "committed";
+    // Persist confirmed removals before revoking the credential used to prove
+    // them. A restart must not turn known commits into failed replays with a
+    // now-revoked token.
+    await this.save(state);
+    if (cleanup.revoke && credentials) {
+      const config = getAuraHistoriaOAuthConfig(this.env);
+      if (getMissingAuraHistoriaOAuthConfig(config).length === 0) {
+        try {
+          await revokeAuraHistoriaAccessToken(config, credentials.accessToken);
+          state.status.tokenRevoked = true;
+        } catch {
+          state.status.tokenRevoked = false;
+        }
+      }
+    }
+    await this.save(state);
+    await this.env.KV.delete(cleanup.credentialKey);
+    if (cleanup.erase) {
+      state.mappings = {};
+      state.memberships = [];
+    }
+    state.cleanup = state.cleanupQueue?.shift();
+    if (state.status.cleanup === "unconfirmed")
+      state.status.error = "SHIPPING_CLEANUP_UNCONFIRMED";
+    await this.save(state);
+    if (state.cleanup || state.job) await this.schedule(state, now + 1000);
+    else if (!state.stopped && state.reconcileAt)
+      await this.schedule(state, state.reconcileAt);
+    else
+      await this.ctx.storage.setAlarm(state.eraseAt ?? now + PRIVATE_RETENTION);
+  }
+
   async alarm() {
     return this.serialize(async () => {
       const state = await this.load();
-      const job = state.job;
-      if (!job) return;
-      if (job.paused) {
+      if (state.cleanup) {
+        await this.ctx.storage.setAlarm(Date.now() + 60_000);
+        await this.cleanupStep(state);
+        return;
+      }
+      if (state.stopped) {
+        // Minimal stop/status tombstones outlive uninstall cleanup for seven
+        // days. Hints require a binding and can never recreate erased state.
+        if (state.eraseAt && state.eraseAt > Date.now()) {
+          await this.ctx.storage.setAlarm(state.eraseAt);
+          return;
+        }
+        await this.ctx.storage.deleteAll();
         await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      const hinted = (await this.ctx.storage.get<number>("hintVersion")) ?? 0;
+      if (state.binding && hinted > (state.seenHintVersion ?? 0)) {
+        const scopeChanged =
+          ((await this.ctx.storage.get<number>("scopeVersion")) ?? 0) >
+          (state.seenHintVersion ?? 0);
+        state.seenHintVersion = hinted;
+        const credentials = await loadShopCredentials(
+          this.env.KV,
+          state.binding.shop,
+        );
+        if (
+          credentials &&
+          credentials.listingSourceId === state.binding.listingSourceId &&
+          credentialVersion(credentials) === state.binding.credentialVersion
+        ) {
+          if (scopeChanged || state.job?.paused) {
+            // Scope notifications fence previously prepared writes before any
+            // replay. Remember ambiguous identities for a fresh comparison or
+            // owned withdrawal, then verify current access through S01.
+            rememberPublication(state);
+            state.job = undefined;
+          }
+          this.enqueue(state, state.binding.shop, credentials, false);
+        }
+      }
+      if (
+        (!state.job || state.job.paused) &&
+        state.binding &&
+        state.reconcileAt &&
+        state.reconcileAt <= Date.now()
+      ) {
+        const credentials = await loadShopCredentials(
+          this.env.KV,
+          state.binding.shop,
+        );
+        if (
+          credentials &&
+          credentials.listingSourceId === state.binding.listingSourceId &&
+          credentialVersion(credentials) === state.binding.credentialVersion
+        ) {
+          rememberPublication(state);
+          state.job = undefined;
+          state.reconcileAt = Date.now() + RECONCILIATION_INTERVAL;
+          this.enqueue(state, state.binding.shop, credentials, false);
+          await this.ctx.storage.setAlarm(Date.now() + 1000);
+          await this.save(state);
+        } else {
+          state.stopped = true;
+          state.eraseAt = Date.now() + PRIVATE_RETENTION;
+          rememberPublication(state);
+          state.job = undefined;
+          state.status.cleanup = "unconfirmed";
+          state.status.error = "CONNECTION_CHANGED_REACQUIRE";
+          state.status.phase = "blocked";
+          await this.save(state);
+          await this.ctx.storage.setAlarm(state.eraseAt);
+          return;
+        }
+      }
+      const job = state.job;
+      if (!job) {
+        if (state.reconcileAt)
+          await this.ctx.storage.setAlarm(state.reconcileAt);
+        return;
+      }
+      if (job.paused) {
+        if (state.reconcileAt)
+          await this.ctx.storage.setAlarm(state.reconcileAt);
+        else await this.ctx.storage.deleteAlarm();
         return;
       }
       // Persistent watchdog precedes external I/O. Retry even after a hard stop.
@@ -260,16 +775,20 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       if (
         !credentials ||
         credentials.listingSourceId !== job.listingSourceId ||
-        credentials.updatedAt !== job.credentialVersion
+        credentialVersion(credentials) !== job.credentialVersion
       ) {
+        rememberPublication(state);
         state.job = undefined;
+        state.stopped = true;
+        state.eraseAt = Date.now() + PRIVATE_RETENTION;
         state.status = {
           ...state.status,
           phase: "blocked",
           error: "CONNECTION_CHANGED_REACQUIRE",
+          cleanup: "unconfirmed",
         };
         await this.save(state);
-        await this.ctx.storage.deleteAlarm();
+        await this.ctx.storage.setAlarm(state.eraseAt);
         return;
       }
       let delay = 1000;
@@ -291,7 +810,9 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             state.status.phase = "blocked";
             state.status.error = "RECONCILIATION_REQUIRED";
             await this.save(state);
-            await this.ctx.storage.deleteAlarm();
+            if (state.reconcileAt)
+              await this.ctx.storage.setAlarm(state.reconcileAt);
+            else await this.ctx.storage.deleteAlarm();
             return;
           }
           job.refreshRequested = false;
@@ -300,7 +821,13 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
           job.runId = crypto.randomUUID();
           job.sequence = nextSequence(state);
           job.failures = 0;
-          state.status = { ...idle(), phase: "queued" };
+          state.status = {
+            ...idle(),
+            cleanup: state.status.cleanup,
+            tokenRevoked: state.status.tokenRevoked,
+            nextReconciliationAt: state.status.nextReconciliationAt,
+            phase: "queued",
+          };
         }
       }
       try {
@@ -318,6 +845,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             const mapping = mapShipping(next.snapshot);
             state.status.limitations = mapping.limitations;
             state.status.acquiredAt = next.snapshot.acquiredAt;
+            state.lastAcquiredAt = next.snapshot.acquiredAt;
             job.publication = beginPublication(
               mapping,
               job.runId,
@@ -329,12 +857,30 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
               job.publication,
               Object.keys(next.snapshot.profiles).map(profileObjectKey),
             );
+            addConfirmedMembershipRemovals(
+              job.publication,
+              state.memberships ?? [],
+              mapping.memberships.map(
+                (membership) => membership.sourceListingId,
+              ),
+            );
             job.acquisition = undefined;
             state.status.phase = "publishing";
             state.status.pending = job.publication.work.length;
           }
         } else if (job.publication) {
           const publication = job.publication;
+          if (publication.retainUntil && publication.retainUntil < Date.now()) {
+            rememberPublication(state);
+            job.paused = true;
+            job.publication = undefined;
+            state.status.phase = "blocked";
+            state.status.error = "SHIPPING_RETRY_RETENTION_REACHED";
+            await this.save(state);
+            if (state.reconcileAt)
+              await this.ctx.storage.setAlarm(state.reconcileAt);
+            return;
+          }
           const apiBaseUrl = getAuraHistoriaApiBaseUrl(this.env);
           if (!apiBaseUrl)
             throw new ShippingReadError("AURA_CONFIGURATION_REQUIRED");
@@ -345,6 +891,34 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             accessToken: credentials.accessToken,
           });
           state.mappings = publication.mappings;
+          const removalCounts = new Map<string, number>();
+          for (const work of publication.work) {
+            if (
+              work.resource.kind === "removeMembership" &&
+              work.done &&
+              !work.failed
+            ) {
+              const id = work.resource.sourceListingId;
+              removalCounts.set(id, (removalCounts.get(id) ?? 0) + 1);
+            }
+          }
+          const removed = new Set(
+            [...removalCounts]
+              .filter(([, count]) => count === 2)
+              .map(([id]) => id),
+          );
+          state.memberships = [
+            ...new Set([
+              ...(state.memberships ?? []).filter((id) => !removed.has(id)),
+              ...publication.work.flatMap((work) =>
+                work.done && !work.failed && work.resource.kind === "membership"
+                  ? [work.resource.value.sourceListingId]
+                  : [],
+              ),
+            ]),
+          ];
+          if (state.memberships.length > SHIPPING_LIMITS.products * 2)
+            throw new ShippingReadError("ACQUISITION_LIMIT_EXCEEDED");
           const remaining = publication.work.filter((work) => !work.done);
           state.status = {
             ...state.status,
@@ -365,6 +939,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
                 ? "partial"
                 : "applied";
             state.job = undefined;
+            state.reconcileAt = Date.now() + RECONCILIATION_INTERVAL;
+            state.status.nextReconciliationAt = new Date(
+              state.reconcileAt,
+            ).toISOString();
             if (!publication.failures) state.status.error = undefined;
           } else if (
             remaining.length &&
@@ -390,7 +968,15 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             ? error.code
             : "SHIPPING_REQUEST_FAILED";
         state.status.error = code;
-        if (code === "SHOPIFY_CHANGED_DURING_READ" && ++job.attempts <= 3) {
+        if (code === "SHIPPING_PERMISSION_REQUIRED") {
+          // Withdrawing owned shipping components leaves catalog sync and
+          // manual shipping/collection assertions independent.
+          await this.startCleanup(state, job.shop, credentials, false, false);
+          state.status.phase = "blocked";
+        } else if (
+          code === "SHOPIFY_CHANGED_DURING_READ" &&
+          ++job.attempts <= 3
+        ) {
           job.acquisition = beginAcquisition(new Date().toISOString());
           job.runId = crypto.randomUUID();
           job.sequence = nextSequence(state);
@@ -414,8 +1000,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         }
       }
       await this.save(state);
-      if (state.job && !state.job.paused)
-        await this.ctx.storage.setAlarm(Date.now() + delay);
+      if (state.cleanup) await this.schedule(state, Date.now() + 1000);
+      else if (state.job && !state.job.paused)
+        await this.schedule(state, Date.now() + delay);
+      else if (state.reconcileAt) await this.schedule(state, state.reconcileAt);
       else await this.ctx.storage.deleteAlarm();
     });
   }

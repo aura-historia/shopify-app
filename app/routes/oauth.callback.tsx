@@ -17,7 +17,11 @@ import {
   loadOAuthPendingContext,
   summarizeOAuthError,
 } from "../oauth.server";
-import { offlineGraphql, queueShipping } from "../shipping/runtime.server";
+import {
+  offlineGraphql,
+  queueShipping,
+  shopCoordinator,
+} from "../shipping/runtime.server";
 import { isValidListingSourceId } from "../shop-credentials.server";
 import styles from "../styles/public-page.module.css";
 
@@ -130,6 +134,9 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
       },
       config,
       async () => {
+        await shopCoordinator(context, shopDomain).prepareConnection(
+          shopDomain,
+        );
         const graphqlRequest = offlineGraphql(context, shopDomain);
         const metadata = await configureShopifyListingSource(
           graphqlRequest,
@@ -152,6 +159,14 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
         ))
           ? "queued"
           : "not_queued",
+      () =>
+        shopCoordinator(context, shopDomain).saveConnection(shopDomain, {
+          listingSourceId,
+          accessToken: token.access_token,
+          tokenType: token.token_type,
+          scope: token.scope,
+          shopifyStoreName,
+        }),
     );
 
     const shippingQueued = await queueShipping(context, shopDomain);

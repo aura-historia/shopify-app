@@ -27,6 +27,12 @@ export function shippingIssueMessage(code: string) {
       return "Some catalog listings are not available yet. Their shipping assignments will be retried automatically.";
     case "SHIPPING_RETRY_LIMIT_REACHED":
       return "Automatic retries have paused. Import again to resume pending work after resolving the connection or catalog issue.";
+    case "SHIPPING_RETRY_RETENTION_REACHED":
+      return "The pending request retention period ended. Import again to acquire current settings.";
+    case "SHIPPING_CLEANUP_UNCONFIRMED":
+      return "Removal of prior shipping assertions could not be confirmed. Reconnect and import current settings or contact support. Prior terms remain available until explicitly removed or their authority changes.";
+    case "SHIPPING_LOCALLY_STOPPED":
+      return "Shipping synchronization has stopped for this connection.";
     case "SHOPIFY_CHANGED_DURING_READ":
     case "RECONCILIATION_REQUIRED":
       return "Shipping settings changed during import. Import again to read the current configuration.";

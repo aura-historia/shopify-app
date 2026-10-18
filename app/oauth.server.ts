@@ -42,11 +42,12 @@ export async function connectAuraHistoriaShop<T>(
   config: AuraHistoriaOAuthConfig,
   configureProvider: () => Promise<T>,
   queueInitialBackfill: (metadata: T) => Promise<InitialBackfillStatus>,
+  persistCredentials = () => saveShopCredentials(kv, shopDomain, credentials),
 ): Promise<InitialBackfillStatus> {
   let credentialsSaved = false;
   try {
     const metadata = await configureProvider();
-    await saveShopCredentials(kv, shopDomain, credentials);
+    await persistCredentials();
     credentialsSaved = true;
     try {
       return await queueInitialBackfill(metadata);
@@ -454,6 +455,7 @@ export async function revokeAuraHistoriaAccessToken(
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body,
+    signal: AbortSignal.timeout(20_000),
   });
 
   if (!response.ok) {

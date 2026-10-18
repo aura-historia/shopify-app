@@ -51,6 +51,11 @@ export interface PublishWork {
   resource:
     | { kind: "profile"; value: MappedProfile }
     | { kind: "membership"; value: MappedMembership }
+    | {
+        kind: "removeMembership";
+        sourceListingId: string;
+        component: "selection" | "rateInputs";
+      }
     | { kind: "default"; objectKey: string | null }
     | { kind: "retire"; objectKey: string; id: string };
   pending?: PendingWrite;
@@ -72,6 +77,7 @@ export interface Publication {
   failures: number;
   lastError?: string;
   reconcile: boolean;
+  retainUntil?: number;
 }
 
 export interface AuraShippingContext {
@@ -126,7 +132,48 @@ export function beginPublication(
     protected: 0,
     failures: 0,
     reconcile: false,
+    retainUntil: Date.now() + 7 * 86_400_000,
   };
+}
+
+// Explicit removals touch only components this producer imports. Backend
+// ownership checks preserve manual assertions, including equal-value edits.
+export function beginWithdrawal(
+  mappings: Record<string, ResourceMapping>,
+  memberships: string[],
+  runId: string,
+  sequence: number,
+  acquiredAt: string,
+): Publication {
+  const publication = beginPublication(
+    { profiles: [], memberships: [], limitations: [] },
+    runId,
+    sequence,
+    acquiredAt,
+    mappings,
+  );
+  addConfirmedMembershipRemovals(publication, memberships, []);
+  addConfirmedRemovals(publication, []);
+  return publication;
+}
+
+export function addConfirmedMembershipRemovals(
+  publication: Publication,
+  previous: string[],
+  observed: string[],
+) {
+  const present = new Set(observed);
+  for (const sourceListingId of new Set(previous)) {
+    if (present.has(sourceListingId)) continue;
+    for (const component of ["selection", "rateInputs"] as const) {
+      publication.work.push({
+        key: `remove:${sourceListingId}:${component}`,
+        resource: { kind: "removeMembership", sourceListingId, component },
+        attempts: 0,
+        dueAt: 0,
+      });
+    }
+  }
 }
 
 export function addConfirmedRemovals(
@@ -516,16 +563,50 @@ export async function publishShippingStep(
             import: metadata(publication, work, false),
           },
         };
-  } else if (resource.kind === "membership") {
+  } else if (
+    resource.kind === "membership" ||
+    resource.kind === "removeMembership"
+  ) {
+    const sourceListingId =
+      resource.kind === "membership"
+        ? resource.value.sourceListingId
+        : resource.sourceListingId;
     const result = await getProductListingDelivery({
       ...common,
       path: {
         ...sourcePath,
-        source_listing_id: resource.value.sourceListingId,
+        source_listing_id: sourceListingId,
       },
     });
     if (!result.data || !revision(result.data.expectedVersion)) {
       fail(publication, work, result, now);
+      return;
+    }
+    if (resource.kind === "removeMembership") {
+      work.pending = {
+        kind: "membership",
+        sourceListingId,
+        body: {
+          expectedVersion: result.data.expectedVersion,
+          import: metadata(publication, work, false),
+          delivery: {
+            state: "SET",
+            value: {
+              integration: SHOPIFY_SHIPPING_INTEGRATION,
+              selection: {
+                state:
+                  resource.component === "selection" ? "CLEAR" : "UNCHANGED",
+              },
+              rateInputs: {
+                state:
+                  resource.component === "rateInputs" ? "CLEAR" : "UNCHANGED",
+              },
+              shipping: { state: "UNCHANGED" },
+              collection: { state: "UNCHANGED" },
+            },
+          },
+        },
+      };
       return;
     }
     const profile = availableProfile(resource.value.profileObjectKey);
@@ -557,17 +638,47 @@ export async function publishShippingStep(
       },
     };
   } else {
-    const result = await getShippingProfile({
-      ...common,
-      path: { ...sourcePath, shipping_profile_id: resource.id },
-    });
+    const result = resource.id
+      ? await getShippingProfile({
+          ...common,
+          path: { ...sourcePath, shipping_profile_id: resource.id },
+        })
+      : await listShippingProfiles({
+          ...common,
+          path: sourcePath,
+          query: {
+            objectKey: resource.objectKey,
+            integrationMethod: "SHOPIFY",
+            size: 1,
+          },
+        }).then((result) => {
+          // An ambiguous create can only be forgotten after an authoritative
+          // empty list. Malformed/queued successes do not establish absence.
+          if (
+            result.error === undefined &&
+            (result.response?.status !== 200 ||
+              !Array.isArray(result.data) ||
+              result.data.some((profile) => !validProfile(profile)))
+          )
+            return {
+              ...result,
+              data: undefined,
+              error: { code: "AURA_RESPONSE_INVALID" },
+            };
+          return { ...result, data: result.data?.[0] };
+        });
+    if (!resource.id && !result.error && result.response?.ok && !result.data) {
+      work.done = true;
+      delete publication.mappings[resource.objectKey];
+      return;
+    }
     if (!result.data || !validProfile(result.data)) {
       fail(publication, work, result, now);
       return;
     }
     work.pending = {
       kind: "retire",
-      id: resource.id,
+      id: result.data.shippingProfileId,
       body: {
         expectedRevision: result.data.managementRevision,
         import: metadata(publication, work, false),
