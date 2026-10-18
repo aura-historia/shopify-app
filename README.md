@@ -6,9 +6,9 @@
 
 <p align="center">
   <a href="https://github.com/aura-historia/shopify-app/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/aura-historia/shopify-app/ci.yml?branch=main&label=checks&style=flat-square" alt="Continuous integration" /></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-42120f?style=flat-square" alt="MIT License" /></a>
-  <a href="./package.json"><img src="https://img.shields.io/badge/node-%E2%89%A522.18-5d2722?style=flat-square" alt="Node.js 22.18 or later" /></a>
-  <a href="https://shopify.dev/docs/api/usage/versioning"><img src="https://img.shields.io/badge/Shopify_API-2026--10-8a6433?style=flat-square" alt="Shopify API version 2026-10" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-4a1520?style=flat-square" alt="MIT License" /></a>
+  <a href="./package.json"><img src="https://img.shields.io/badge/node-%E2%89%A522.18-170d0e?style=flat-square" alt="Node.js 22.18 or later" /></a>
+  <a href="https://shopify.dev/docs/api/usage/versioning"><img src="https://img.shields.io/badge/Shopify_API-2026--10-7a5c30?style=flat-square" alt="Shopify API version 2026-10" /></a>
 </p>
 
 <p align="center">

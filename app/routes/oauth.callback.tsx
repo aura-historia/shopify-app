@@ -228,7 +228,7 @@ export default function OAuthCallbackResult() {
         </header>
 
         <main className={styles.hero}>
-          <section className={styles.introPanel}>
+          <section className={styles.introPanel} data-theme="dark">
             <span className={styles.tag}>Connection failed</span>
             <h1 className={`${styles.title} ${styles.wideTitle}`}>
               Aura Historia OAuth could not finish.

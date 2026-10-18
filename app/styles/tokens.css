@@ -1,0 +1,63 @@
+/*
+ * Aura Historia design system tokens.
+ * Mirrors ds/aurahistoria/tokens.css from the design canvas; keep values in sync.
+ */
+:root,
+[data-theme="light"] {
+  --surface: #f4eee3;
+  --surface-raised: #fbf8f2;
+  --surface-sunken: #ede5d7;
+  --ink: #170d0e;
+  --ink-secondary: #4f4441;
+  --ink-muted: #6b5e58;
+  --oxblood: #4a1520;
+  --on-oxblood: #fbf8f2;
+  --brass: #b8935a;
+  --brass-ink: #7a5c30;
+  --brass-light: #e2c9a0;
+  --line: rgba(23, 13, 14, 0.14);
+  --line-subtle: rgba(23, 13, 14, 0.08);
+  --line-strong: rgba(23, 13, 14, 0.25);
+  --shadow-ring: 0 0 0 1px rgba(23, 13, 14, 0.07);
+}
+
+[data-theme="dark"] {
+  --surface: #170d0e;
+  --surface-raised: #2a0e12;
+  --surface-sunken: rgba(244, 238, 227, 0.06);
+  --ink: #f4eee3;
+  --ink-secondary: #d8cabe;
+  --ink-muted: #a8988d;
+  --brass-ink: #b8935a;
+  --line: rgba(244, 238, 227, 0.14);
+  --line-subtle: rgba(244, 238, 227, 0.1);
+  --line-strong: rgba(244, 238, 227, 0.3);
+  --shadow-ring: 0 0 0 1px rgba(244, 238, 227, 0.12);
+}
+
+:root {
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-card: 18px;
+  --radius-pill: 999px;
+  --font-serif: Newsreader, Georgia, serif;
+  --font-sans: Geist, "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, Menlo, monospace;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
