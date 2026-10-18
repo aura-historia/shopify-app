@@ -70,7 +70,7 @@ export default function SuccessPage() {
         </header>
 
         <main className={styles.hero}>
-          <section className={styles.introPanel}>
+          <section className={styles.introPanel} data-theme="dark">
             <span className={styles.tag}>
               {oauthConfigMissing ? "Action required" : "Success"}
             </span>
@@ -172,7 +172,7 @@ export default function SuccessPage() {
           </aside>
         </main>
 
-        <footer className={styles.footer}>
+        <footer className={styles.footer} data-theme="dark">
           <p className={styles.footerTitle}>Aura Historia policies</p>
           <div className={styles.footerLinks}>
             {legalLinks.map((link) => (
