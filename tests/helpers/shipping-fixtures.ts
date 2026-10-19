@@ -10,7 +10,6 @@ export const fixture = JSON.parse(
 ) as Acquisition;
 // Mirrors the backend's import preparation (shipping-postgres imports.rs):
 // only profile creation carries the stable object key, and creation needs it.
-// Success-only fakes accepted any import metadata and hid the 400.
 export function importIdentityRejection(
   method: string,
   path: string,

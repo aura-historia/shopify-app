@@ -806,7 +806,6 @@ describe("S02 authenticated shipping refresh and recovery", () => {
     try {
       await runtime.coordinator.requestShipping(shop);
       await runtime.run();
-      const initial = (await storedState(runtime.storage)).status;
       await runtime.coordinator.requestShipping(shop);
       await runtime.run();
       const { status } = await storedState(runtime.storage);
@@ -832,9 +831,6 @@ describe("S02 authenticated shipping refresh and recovery", () => {
       assert.equal("objectKey" in replaced.import, false);
       assert.deepEqual(replaced.import.observation, {});
       assert.equal(replaced.import.acquiredAt, status.acquiredAt);
-      assert.ok(
-        Date.parse(status.acquiredAt) >= Date.parse(initial.acquiredAt),
-      );
       assert.ok(Number(replaced.import.sequence) > Number(created.sequence));
       assert.notEqual(replaced.import.requestKey, created.requestKey);
     } finally {

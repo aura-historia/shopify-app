@@ -371,6 +371,7 @@ export async function publishShippingStep(
       // Earlier releases persisted replacements with the creation-only key,
       // which the backend rejects before recording the request. Drop only that
       // key; acquisition, sequence, observation and request key stay as-is.
+      // Removable once one publication retention window follows deployment.
       const { objectKey: _creationOnly, ...replacement } = pending.body.import;
       pending.body.import = replacement;
     }
