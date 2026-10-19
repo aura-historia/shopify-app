@@ -374,10 +374,12 @@ export async function buildAuraHistoriaOAuthAuthorizeUrl(
 // echo submitted values. Only the status and a well-formed error code are
 // kept, so upstream text never reaches redirects or logs.
 async function readOAuthProblem(response: Response) {
-  const code = await response.json().then(
-    (payload) => (payload as { error?: unknown } | null)?.error,
-    () => undefined,
-  );
+  let code: unknown;
+  try {
+    code = ((await response.json()) as { error?: unknown } | null)?.error;
+  } catch {
+    // A body that is not JSON only reports the status.
+  }
 
   return typeof code === "string" && OAUTH_ERROR_CODE_PATTERN.test(code)
     ? `HTTP ${response.status}, ${code}`
@@ -467,12 +469,9 @@ export function summarizeOAuthError(
   credentials: readonly (string | undefined)[] = [],
 ) {
   let message = error instanceof Error ? error.message : String(error);
-  // Redact before truncating so no credential prefix survives the cut, and
-  // longest first so a credential containing another is fully removed.
-  for (const credential of credentials
-    .filter((value): value is string => Boolean(value))
-    .sort((a, b) => b.length - a.length)) {
-    message = message.replaceAll(credential, "[redacted]");
+  // Redact before truncating so no credential prefix survives the cut.
+  for (const credential of credentials) {
+    if (credential) message = message.replaceAll(credential, "[redacted]");
   }
   return message.replace(/\s+/g, " ").slice(0, 180);
 }

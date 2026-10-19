@@ -8,10 +8,14 @@ import {
 
 // Node cannot load the route's CSS module, which the loader does not use.
 registerHooks({
-  resolve: (specifier, context, nextResolve) =>
-    specifier.endsWith(".module.css")
-      ? { url: "data:text/javascript,export default {}", shortCircuit: true }
-      : nextResolve(specifier, context),
+  resolve(specifier, context, next) {
+    if (specifier.endsWith(".module.css"))
+      return {
+        url: "data:text/javascript,export default {}",
+        shortCircuit: true,
+      };
+    return next(specifier, context);
+  },
 });
 const { loader } = await import("../app/routes/oauth.callback");
 
@@ -129,7 +133,7 @@ describe("Aura Historia OAuth callback error boundary", () => {
   });
 
   it("keeps token-exchange problem details out of the Admin redirect and logs", async () => {
-    mock.method(
+    const fetchMock = mock.method(
       globalThis,
       "fetch",
       async (_input: unknown, init?: RequestInit) =>
@@ -138,6 +142,13 @@ describe("Aura Historia OAuth callback error boundary", () => {
 
     const { location, oauthError, codeVerifier } = await runCallback(makeEnv());
 
+    // The endpoint must have had the secret to echo for this test to bite.
+    assert.equal(
+      new URLSearchParams(
+        fetchMock.mock.calls[0]?.arguments[1]?.body as URLSearchParams,
+      ).get("client_secret"),
+      clientSecret,
+    );
     assertNoCredentials(
       [location, oauthError, ...logged],
       [clientSecret, codeVerifier],
