@@ -54,10 +54,7 @@ export async function connectAuraHistoriaShop<T>(
     } catch (error) {
       console.error(
         "Failed to queue initial backfill:",
-        summarizeOAuthError(error).replaceAll(
-          credentials.accessToken,
-          "[redacted]",
-        ),
+        summarizeOAuthError(error, [credentials.accessToken]),
       );
       return "not_queued";
     }
@@ -68,10 +65,10 @@ export async function connectAuraHistoriaShop<T>(
       } catch (revokeError) {
         console.warn(
           "Failed to revoke token after connection setup failure:",
-          summarizeOAuthError(revokeError).replaceAll(
+          summarizeOAuthError(revokeError, [
             credentials.accessToken,
-            "[redacted]",
-          ),
+            config.clientSecret,
+          ]),
         );
       }
     }
@@ -104,6 +101,7 @@ const OAUTH_PENDING_CONTEXT_KEY_PREFIX = "aura-historia:oauth-pending:";
 const OAUTH_PENDING_CONTEXT_TTL_SECONDS = 10 * 60;
 const SHOPIFY_STORE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const OAUTH_CLIENT_ID_PATTERN = /^oc_[0-7][0-9a-hjkmnp-tv-z]{25}$/;
+const OAUTH_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 export function isValidOAuthClientId(value: string) {
   return OAUTH_CLIENT_ID_PATTERN.test(value);
@@ -372,23 +370,18 @@ export async function buildAuraHistoriaOAuthAuthorizeUrl(
   return { isReady: true, url: authorizeUrl, state, shopifyStoreName };
 }
 
+// The token endpoint receives the client secret, and its problem text can
+// echo submitted values. Only the status and a well-formed error code are
+// kept, so upstream text never reaches redirects or logs.
 async function readOAuthProblem(response: Response) {
-  try {
-    const payload = (await response.json()) as {
-      title?: string;
-      error?: string;
-      detail?: string;
-    };
+  const code = await response.json().then(
+    (payload) => (payload as { error?: unknown } | null)?.error,
+    () => undefined,
+  );
 
-    return (
-      payload.detail ??
-      payload.error ??
-      payload.title ??
-      `OAuth token exchange failed with HTTP ${response.status}`
-    );
-  } catch {
-    return `OAuth token exchange failed with HTTP ${response.status}`;
-  }
+  return typeof code === "string" && OAUTH_ERROR_CODE_PATTERN.test(code)
+    ? `HTTP ${response.status}, ${code}`
+    : `HTTP ${response.status}`;
 }
 
 export class OAuthTokenExchangeError extends Error {
@@ -424,13 +417,16 @@ export async function exchangeOAuthCodeForToken(
 
   if (!response.ok) {
     throw new OAuthTokenExchangeError(
-      await readOAuthProblem(response),
+      `OAuth token exchange failed (${await readOAuthProblem(response)})`,
       response.status,
     );
   }
 
-  const tokenResponse = (await response.json()) as OAuthTokenResponseData;
-  if (!tokenResponse.access_token) {
+  // A JSON syntax error would quote part of the response body.
+  const tokenResponse = (await response
+    .json()
+    .catch(() => null)) as OAuthTokenResponseData | null;
+  if (!tokenResponse?.access_token) {
     throw new OAuthTokenExchangeError(
       "OAuth token response did not include an access token",
       response.status,
@@ -460,13 +456,23 @@ export async function revokeAuraHistoriaAccessToken(
 
   if (!response.ok) {
     throw new OAuthTokenExchangeError(
-      await readOAuthProblem(response),
+      `OAuth token revocation failed (${await readOAuthProblem(response)})`,
       response.status,
     );
   }
 }
 
-export function summarizeOAuthError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+export function summarizeOAuthError(
+  error: unknown,
+  credentials: readonly (string | undefined)[] = [],
+) {
+  let message = error instanceof Error ? error.message : String(error);
+  // Redact before truncating so no credential prefix survives the cut, and
+  // longest first so a credential containing another is fully removed.
+  for (const credential of credentials
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => b.length - a.length)) {
+    message = message.replaceAll(credential, "[redacted]");
+  }
   return message.replace(/\s+/g, " ").slice(0, 180);
 }
