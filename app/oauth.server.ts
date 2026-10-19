@@ -469,16 +469,17 @@ export async function revokeAuraHistoriaAccessToken(
 /**
  * Shortens an error for logs and the `oauth_error` redirect parameter.
  * Upstream messages can echo submitted credentials, so every known secret is
- * redacted before truncation could split one.
+ * redacted before truncation could split one. Longer secrets go first so a
+ * secret containing another is still matched whole.
  */
 export function summarizeOAuthError(
   error: unknown,
   secrets: readonly (string | undefined)[] = [],
 ) {
   const message = error instanceof Error ? error.message : String(error);
-  const redacted = secrets.reduce<string>(
-    (text, secret) => (secret ? text.replaceAll(secret, "[redacted]") : text),
-    message,
-  );
+  const redacted = secrets
+    .filter((secret): secret is string => Boolean(secret))
+    .sort((a, b) => b.length - a.length)
+    .reduce((text, secret) => text.replaceAll(secret, "[redacted]"), message);
   return redacted.replace(/\s+/g, " ").slice(0, 180);
 }

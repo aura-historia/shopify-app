@@ -121,6 +121,11 @@ describe("public install flow", () => {
       /summarizeOAuthError\(error, \[\s*issuedToken,\s*config\.clientSecret,\s*pending\.codeVerifier,\s*code,\s*\]\)/,
     );
     assert.equal(oauthCallbackRoute.includes(".replaceAll("), false);
+    assert.match(
+      appIndexRoute,
+      /summarizeOAuthError\(error, \[credentials\.accessToken\]\)/,
+    );
+    assert.equal(appIndexRoute.includes(".replaceAll("), false);
   });
 
   it("keeps review links and contact details on the success page", () => {

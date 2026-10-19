@@ -281,6 +281,16 @@ describe("Aura Historia OAuth flow helpers", () => {
     assert.equal(summarizeOAuthError("plain  text", [""]), "plain text");
   });
 
+  it("redacts a longer secret whole when it contains a shorter one", () => {
+    const shortSecret = "qa-synthetic-short";
+    const longSecret = `${shortSecret}-and-longer-secret`;
+
+    assert.equal(
+      summarizeOAuthError(`echo ${longSecret}`, [shortSecret, longSecret]),
+      "echo [redacted]",
+    );
+  });
+
   it("rejects noncanonical OAuth client IDs before creating an authorize URL", async () => {
     for (const invalid of [
       "019eb09e-563a-7ad2-8e71-1ae86f8430ab",
