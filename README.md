@@ -305,8 +305,9 @@ continuations and retry/DLQ controls.
 
 ### External services and privacy
 
-With the merchant's installation approval, Shopify provides shipping profile names/IDs, location-group
-identities, destination areas, advertised methods/conditions/prices and complete
+With the merchant's installation approval, Shopify provides shipping profile
+names/IDs, location-group identities, destination areas, advertised
+methods/conditions/prices and complete
 product/variant membership. Cloudflare stores bounded private job checkpoints,
 resource mappings and immutable pending typed requests. Aura Historia receives only
 the canonical terms, source-scoped membership and acquisition metadata through its

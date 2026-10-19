@@ -7,18 +7,18 @@ const appConfig = readFileSync(
   resolve(process.cwd(), "shopify.app.toml"),
   "utf8",
 );
+const fixture = JSON.parse(
+  readFileSync(
+    new URL(
+      "./fixtures/shopify-shipping-webhooks-2026-10.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
 
 describe("shopify.app.toml", () => {
   it("delivers all profile hints and scope changes to the app in every environment", () => {
-    const fixture = JSON.parse(
-      readFileSync(
-        new URL(
-          "./fixtures/shopify-shipping-webhooks-2026-10.json",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
-    );
     for (const name of [
       "shopify.app.toml",
       "shopify.app.prod.toml",
@@ -59,15 +59,6 @@ describe("shopify.app.toml", () => {
     }
   });
   it("requires the shipping scope of the static profile subscriptions in every environment", () => {
-    const fixture = JSON.parse(
-      readFileSync(
-        new URL(
-          "./fixtures/shopify-shipping-webhooks-2026-10.json",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
-    );
     const wrangler = readFileSync(
       resolve(process.cwd(), "wrangler.jsonc"),
       "utf8",
@@ -78,23 +69,13 @@ describe("shopify.app.toml", () => {
       "shopify.app.tunnel.toml",
     ]) {
       const config = readFileSync(resolve(process.cwd(), path), "utf8");
+      const scopes = config.match(/^scopes = "([^"]*)"$/m)?.[1];
+      assert.equal(scopes, "read_products,read_locales,read_shipping");
       // Shopify rejects static subscriptions whose scope is only optional.
-      assert.match(
-        config,
-        /^scopes = "read_products,read_locales,read_shipping"$/m,
-      );
-      assert.ok(
-        config
-          .match(/^scopes = "([^"]*)"$/m)?.[1]
-          .split(",")
-          .includes(fixture.requiredScope),
-      );
+      assert.ok(scopes.split(",").includes(fixture.requiredScope));
       assert.doesNotMatch(config, /^optional_scopes\b/m);
+      assert.ok(wrangler.includes(`"SCOPES": "${scopes}"`));
     }
-    assert.match(
-      wrangler,
-      /"SCOPES": "read_products,read_locales,read_shipping"/,
-    );
   });
 
   it("uses the review-facing Aura Historia app name", () => {

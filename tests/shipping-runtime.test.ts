@@ -1180,6 +1180,45 @@ describe("S02 authenticated shipping refresh and recovery", () => {
     }
   });
 
+  it("imports shipping once an existing installation approves the required scope", async () => {
+    const runtime = refreshRuntime();
+    await runtime.installed();
+    const backend = backendFixture();
+    const original = globalThis.fetch;
+    globalThis.fetch = backend.fetcher;
+    try {
+      runtime.controls.denied = true;
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+      await runtime.run();
+      let status = await runtime.coordinator.status();
+      assert.equal(status.phase, "blocked");
+      assert.equal(status.error, "SHIPPING_PERMISSION_REQUIRED");
+      assert.equal(
+        backend.calls.some(
+          (call) =>
+            call.path.includes("shipping-profiles") && call.method !== "GET",
+        ),
+        false,
+      );
+      runtime.controls.denied = false;
+      const response = await receiveShippingWebhook(
+        shippingCallback("app/scopes_update", crypto.randomUUID(), {
+          current: ["read_products", "read_locales", "read_shipping"],
+          previous: ["read_products", "read_locales"],
+        }),
+        runtime.context,
+      );
+      assert.equal(response.status, 200);
+      await runtime.run();
+      status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.ok(status.committed > 0);
+      assert.equal(backend.profile?.lifecycle, "ACTIVE");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("records unreachable uninstall cleanup separately, retains terms beyond 30 days, and reacquires on reconnect", async () => {
     const runtime = refreshRuntime();
     const backend = backendFixture();

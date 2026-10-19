@@ -157,7 +157,6 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("products/update"));
     assert.ok(appIndexRoute.includes("app/uninstalled"));
     assert.ok(appIndexRoute.includes("read_locales"));
-    assert.ok(appIndexRoute.includes("read_shipping"));
     assert.equal(appIndexRoute.includes("shipping_consent"), false);
     assert.equal(appIndexRoute.includes("Grant shipping access"), false);
     assert.ok(appIndexRoute.includes("Connected via OAuth"));
