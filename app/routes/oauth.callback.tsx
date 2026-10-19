@@ -184,9 +184,12 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     });
   } catch (error) {
     return fail(
-      issuedToken
-        ? summarizeOAuthError(error).replaceAll(issuedToken, "[redacted]")
-        : summarizeOAuthError(error),
+      summarizeOAuthError(error, [
+        issuedToken,
+        config.clientSecret,
+        pending.codeVerifier,
+        code,
+      ]),
     );
   }
 };

@@ -54,10 +54,10 @@ export async function connectAuraHistoriaShop<T>(
     } catch (error) {
       console.error(
         "Failed to queue initial backfill:",
-        summarizeOAuthError(error).replaceAll(
+        summarizeOAuthError(error, [
           credentials.accessToken,
-          "[redacted]",
-        ),
+          config.clientSecret,
+        ]),
       );
       return "not_queued";
     }
@@ -68,10 +68,10 @@ export async function connectAuraHistoriaShop<T>(
       } catch (revokeError) {
         console.warn(
           "Failed to revoke token after connection setup failure:",
-          summarizeOAuthError(revokeError).replaceAll(
+          summarizeOAuthError(revokeError, [
             credentials.accessToken,
-            "[redacted]",
-          ),
+            config.clientSecret,
+          ]),
         );
       }
     }
@@ -466,7 +466,19 @@ export async function revokeAuraHistoriaAccessToken(
   }
 }
 
-export function summarizeOAuthError(error: unknown) {
+/**
+ * Shortens an error for logs and the `oauth_error` redirect parameter.
+ * Upstream messages can echo submitted credentials, so every known secret is
+ * redacted before truncation could split one.
+ */
+export function summarizeOAuthError(
+  error: unknown,
+  secrets: readonly (string | undefined)[] = [],
+) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s+/g, " ").slice(0, 180);
+  const redacted = secrets.reduce<string>(
+    (text, secret) => (secret ? text.replaceAll(secret, "[redacted]") : text),
+    message,
+  );
+  return redacted.replace(/\s+/g, " ").slice(0, 180);
 }

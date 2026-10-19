@@ -115,6 +115,14 @@ describe("public install flow", () => {
     assert.match(appIndexRoute, /name="intent" value="retry_backfill"/);
   });
 
+  it("redacts OAuth credentials from callback failure redirects", () => {
+    assert.match(
+      oauthCallbackRoute,
+      /summarizeOAuthError\(error, \[\s*issuedToken,\s*config\.clientSecret,\s*pending\.codeVerifier,\s*code,\s*\]\)/,
+    );
+    assert.equal(oauthCallbackRoute.includes(".replaceAll("), false);
+  });
+
   it("keeps review links and contact details on the success page", () => {
     assert.ok(successRoute.includes("https://aura-historia.com"));
     assert.ok(successRoute.includes("https://aura-historia.com/privacy"));

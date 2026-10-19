@@ -10,6 +10,7 @@ import {
   getMissingAuraHistoriaOAuthConfig,
   isValidOAuthClientId,
   loadOAuthPendingContext,
+  summarizeOAuthError,
 } from "../app/oauth.server";
 import {
   getShopCredentialsStorageKey,
@@ -219,6 +220,65 @@ describe("Aura Historia OAuth flow helpers", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("redacts the client secret when a rejected token exchange echoes it", async () => {
+    const clientSecret = "qa-synthetic-client-secret-not-real";
+    const codeVerifier = "qa-synthetic-code-verifier-not-real";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            status: 401,
+            error: "INVALID_CREDENTIALS",
+            detail: `RawToken '${clientSecret}' is invalid; verifier ${codeVerifier}`,
+          }),
+          {
+            status: 401,
+            headers: { "Content-Type": "application/problem+json" },
+          },
+        ),
+    ) as typeof fetch;
+
+    try {
+      const error = await exchangeOAuthCodeForToken(
+        { ...config, clientSecret },
+        "oauth-code",
+        codeVerifier,
+      ).then(
+        () => assert.fail("token exchange should fail"),
+        (reason: unknown) => reason,
+      );
+
+      const summary = summarizeOAuthError(error, [
+        undefined,
+        clientSecret,
+        codeVerifier,
+        "oauth-code",
+      ]);
+      assert.equal(
+        summary,
+        "RawToken '[redacted]' is invalid; verifier [redacted]",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("redacts secrets before truncating and ignores empty secrets", () => {
+    const secret =
+      "aurahistoria_accesstoken_abcdefghijk_abcdefghijklmnopqrstuvwxyz1234567";
+    const message = `${"x".repeat(160)} ${secret}`;
+
+    const summary = summarizeOAuthError(new Error(message), ["", secret]);
+
+    assert.equal(summary, `${"x".repeat(160)} [redacted]`);
+    assert.equal(
+      summarizeOAuthError(new Error(message)).includes("aurahistoria_acc"),
+      true,
+    );
+    assert.equal(summarizeOAuthError("plain  text", [""]), "plain text");
   });
 
   it("rejects noncanonical OAuth client IDs before creating an authorize URL", async () => {
