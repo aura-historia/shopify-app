@@ -58,16 +58,43 @@ describe("shopify.app.toml", () => {
       }
     }
   });
-  it("requests shipping access only through optional consent in every environment", () => {
+  it("requires the shipping scope of the static profile subscriptions in every environment", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "./fixtures/shopify-shipping-webhooks-2026-10.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const wrangler = readFileSync(
+      resolve(process.cwd(), "wrangler.jsonc"),
+      "utf8",
+    );
     for (const path of [
       "shopify.app.toml",
       "shopify.app.prod.toml",
       "shopify.app.tunnel.toml",
     ]) {
       const config = readFileSync(resolve(process.cwd(), path), "utf8");
-      assert.match(config, /^scopes = "read_products,read_locales"$/m);
-      assert.match(config, /^optional_scopes = \["read_shipping"\]$/m);
+      // Shopify rejects static subscriptions whose scope is only optional.
+      assert.match(
+        config,
+        /^scopes = "read_products,read_locales,read_shipping"$/m,
+      );
+      assert.ok(
+        config
+          .match(/^scopes = "([^"]*)"$/m)?.[1]
+          .split(",")
+          .includes(fixture.requiredScope),
+      );
+      assert.doesNotMatch(config, /^optional_scopes\b/m);
     }
+    assert.match(
+      wrangler,
+      /"SCOPES": "read_products,read_locales,read_shipping"/,
+    );
   });
 
   it("uses the review-facing Aura Historia app name", () => {

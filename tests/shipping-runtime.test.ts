@@ -105,7 +105,7 @@ function isolatedRuntime() {
     SHOPIFY_API_KEY: "test-shipping-runtime",
     SHOPIFY_API_SECRET: "private-shopify-secret",
     SHOPIFY_APP_URL: "https://app.invalid",
-    SCOPES: "read_products,read_locales",
+    SCOPES: "read_products,read_locales,read_shipping",
   } as CloudflareShopifyEnv;
   return {
     storage,

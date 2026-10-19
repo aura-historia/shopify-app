@@ -11,7 +11,7 @@ export const SHIPPING_PHASE_LABELS = {
 export function shippingIssueMessage(code: string) {
   switch (code) {
     case "SHIPPING_PERMISSION_REQUIRED":
-      return "Grant optional shipping access, then import again.";
+      return "Reopen the Shopify app and approve the updated shipping access, then import again.";
     case "SHOPIFY_OFFLINE_ACCESS_REQUIRED":
       return "Reopen the Shopify app to renew access, then import again.";
     case "MARKET_DRIVEN_SHIPPING_UNSUPPORTED":

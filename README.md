@@ -79,7 +79,7 @@ flowchart LR
 | `products/create`, `products/update`, `products/delete` | Aura Historia Amazon EventBridge partner source | Keep merchant product discovery records current |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia Amazon EventBridge partner source | Required public-app privacy and compliance handling |
 | `profiles/create`, `profiles/update`, `profiles/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current shipping acquisition |
-| `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access and withdraw owned assertions on permission loss |
+| `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access, import once updated access is approved, and withdraw owned assertions on permission loss |
 | `app/uninstalled` | This app’s deployed HTTPS endpoint | Stop shipping, admit owned cleanup, then remove Shopify sessions and connection data |
 | `bulk_operations/finish` | This app’s deployed HTTPS endpoint | Complete the initial catalog backfill workflow |
 
@@ -138,13 +138,16 @@ The repository uses separate Shopify configuration files to keep stage-specific 
 | `shopify.app.prod.toml` | Production configuration using the production EventBridge partner source |
 | `shopify.app.tunnel.toml` | Development tunnel mode; exposes backfill completion and shipping receivers through the active tunnel |
 
-The required Shopify scopes are `read_products` and `read_locales`; `read_shipping` is optional and requested from the embedded app for advertised shipping imports. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
+The required Shopify scopes are `read_products`, `read_locales` and `read_shipping`. `read_shipping` must stay required: the profile webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
 
 ## Advertised shipping imports
 
 Initial Aura connection queues a shipping import independently of the catalog backfill.
-The embedded app offers **Grant shipping access** (renewed optional consent) and
-**Import shipping settings** (new acquisition or resume). Existing Aura connections
+The embedded app offers **Import shipping settings** (new acquisition or resume).
+Installations approved before `read_shipping` became required are asked by Shopify
+to approve the updated access the next time the app is opened. Until then shipping
+status reports the missing permission and catalog sync continues; the resulting
+`app/scopes_update` notification starts a new acquisition. Existing Aura connections
 need reconnection with the additional `listing-sources:read` and `product-listings:read`
 OAuth permissions. Register those permissions on both OAuth clients before rollout.
 
@@ -194,7 +197,7 @@ methods; all method pages are consumed. A preflight checks the required schema a
 granted scope. `read_assigned_shipping` cannot read the complete shop profile/item
 membership, so it is insufficient. No shipping write, order, customer or checkout
 scope is requested. Any Shopify approval required for `read_shipping` must be
-completed in the Partner Dashboard before enabling consent; denial is reported in
+completed in the Partner Dashboard before release; missing access is reported in
 shipping status and does not fail catalog sync. Profile webhook subscriptions
 belong to this app and use the same shipping read permission. The pinned
 [2026-10 WebhookSubscriptionTopic reference](https://shopify.dev/docs/api/admin-graphql/2026-10/enums/WebhookSubscriptionTopic)
@@ -302,7 +305,7 @@ continuations and retry/DLQ controls.
 
 ### External services and privacy
 
-With merchant consent, Shopify provides shipping profile names/IDs, location-group
+With the merchant's installation approval, Shopify provides shipping profile names/IDs, location-group
 identities, destination areas, advertised methods/conditions/prices and complete
 product/variant membership. Cloudflare stores bounded private job checkpoints,
 resource mappings and immutable pending typed requests. Aura Historia receives only
@@ -319,7 +322,7 @@ canonical typed removal requests and resource identities, then discards them.
 Minimal stop/status tombstones are erased after seven days; unknown installations
 and hints cannot recreate a binding.
 The linked Aura privacy policy and App Store access disclosure must reflect this
-optional processing when the feature is released.
+processing when the feature is released.
 
 ## Quality checks
 

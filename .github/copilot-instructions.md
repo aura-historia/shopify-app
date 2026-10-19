@@ -34,6 +34,7 @@
 - Keep `app/shopify.server.ts` API version aligned with `shopify.app.toml`.
 - Keep production-only webhook differences in `shopify.app.prod.toml` instead of trying to drive EventBridge ARNs from `shopify.web.toml`.
 - Do not widen Shopify access scopes unless there is a documented product requirement.
+- Static webhook subscriptions need their topic's scope in `access_scopes.scopes`; Shopify rejects topics whose scope is only in `optional_scopes`. Keep `read_shipping` required for the profile subscriptions and mirror the scope list in the `SCOPES` variable of `wrangler.jsonc`.
 - If you change authentication behavior, keep `authPathPrefix = "/auth"` and ensure the redirect URLs still include the callback route.
 - Prefer Shopify-provided install context such as `shop` and `host` query parameters. Treat manual `myshopify.com` entry as a fallback only.
 - Preserve the post-install redirect from the auth callback flow to `/success` unless the onboarding flow changes deliberately.

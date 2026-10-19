@@ -39,14 +39,14 @@ import styles from "../styles/app-home.module.css";
 
 const accessSections = [
   {
-    title: "Advertised shipping (optional)",
+    title: "Advertised shipping",
     description:
       "Read shipping settings and product membership to publish supported advertised terms to Aura Historia. Cloudflare stores private import progress; precise fulfillment addresses and customer data are not read. Shipping prices are determined at merchant checkout.",
     items: [
       {
         name: "read_shipping",
         description:
-          "Optional merchant consent. Shipping profiles, destinations, rates and variant membership are translated by this app and sent to Aura Historia.",
+          "Approved at installation. Shipping profiles, destinations, rates and variant membership are translated by this app and sent to Aura Historia.",
       },
     ],
   },
@@ -202,8 +202,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
   const url = new URL(request.url);
-  const { session, scopes: scopeManager } =
-    await getShopify(context).authenticate.admin(request);
+  const { session } = await getShopify(context).authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
   const redirectParams = new URLSearchParams(url.searchParams);
@@ -213,11 +212,6 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   redirectParams.delete("oauth_error");
   redirectParams.delete("backfill");
   redirectParams.delete("shipping");
-
-  if (intent === "shipping_consent") {
-    await scopeManager.request(["read_shipping"]);
-    return redirect(`/app?${redirectParams.toString()}`);
-  }
 
   if (intent === "import_shipping") {
     if (!(await queueShipping(context, session.shop)))
@@ -397,10 +391,10 @@ export default function AppIndex() {
             </ul>
           )}
           <p className={styles.cardBody}>
-            Shipping access is optional. Grant read-only shipping access, then
-            import your current settings. Profile changes refresh automatically;
-            periodic checks repair missed changes. Product synchronization
-            continues independently.
+            Read-only shipping access is approved with the Shopify installation.
+            Current settings are imported after connection; profile changes
+            refresh automatically and periodic checks repair missed changes.
+            Product synchronization continues independently.
           </p>
           <div className={styles.buttonRow}>
             {integration.shippingQueueError && (
@@ -408,16 +402,6 @@ export default function AppIndex() {
                 The shipping import could not be queued. Try again.
               </p>
             )}
-            <Form method="post">
-              <button
-                className={styles.secondaryButton}
-                type="submit"
-                name="intent"
-                value="shipping_consent"
-              >
-                Grant shipping access
-              </button>
-            </Form>
             <Form method="post">
               <button
                 className={styles.secondaryButton}
