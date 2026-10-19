@@ -8,6 +8,28 @@ export const fixture = JSON.parse(
     "utf8",
   ),
 ) as Acquisition;
+// Mirrors the backend's import preparation (shipping-postgres imports.rs):
+// only profile creation carries the stable object key, and creation needs it.
+// Success-only fakes accepted any import metadata and hid the 400.
+export function importIdentityRejection(
+  method: string,
+  path: string,
+  body: { import?: { objectKey?: unknown } } | null,
+) {
+  if (!body?.import) return undefined;
+  const create = method === "POST" && path.endsWith("/shipping-profiles");
+  if (create === (body.import.objectKey != null)) return undefined;
+  return Response.json(
+    {
+      status: 400,
+      title: "Bad Request",
+      error: "BAD_BODY_VALUE",
+      detail: "Invalid advertised shipping input.",
+    },
+    { status: 400 },
+  );
+}
+
 function page<T>(nodes: T[], after: unknown): Connection<T> {
   const start = after ? Number(after) : 0;
   return {

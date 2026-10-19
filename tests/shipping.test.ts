@@ -19,7 +19,11 @@ import {
   beginWithdrawal,
   publishShippingStep,
 } from "../app/shipping/publisher.server";
-import { fixture, fixtureGraphql } from "./helpers/shipping-fixtures";
+import {
+  fixture,
+  fixtureGraphql,
+  importIdentityRejection,
+} from "./helpers/shipping-fixtures";
 
 const contract = JSON.parse(
   readFileSync(
@@ -94,6 +98,12 @@ function auraMock(
     const raw = await request.text();
     const body = raw ? JSON.parse(raw) : null;
     calls.push({ path: url.pathname, method: request.method, body, raw });
+    const rejected = importIdentityRejection(
+      request.method,
+      url.pathname,
+      body,
+    );
+    if (rejected) return rejected;
     if (
       request.method === "GET" &&
       url.pathname.endsWith("shipping-profiles")
@@ -577,6 +587,45 @@ describe("typed shipping publication", () => {
       /freshUntil|expiresAt|validityDeadline|myshopify|callback|accessToken/,
     );
     assert.equal(state.failures, 0);
+  });
+
+  it("omits the creation-only key from new and previously persisted profile replacements", async () => {
+    const mock = auraMock();
+    const initial = publication();
+    await finish(initial, mock);
+    const refresh = beginPublication(
+      mapShipping(fixture),
+      "run-2",
+      2,
+      fixture.acquiredAt,
+      initial.mappings,
+    );
+    await publishShippingStep(refresh, context, 0, mock.fetcher);
+    const pending = refresh.work[0].pending;
+    if (pending?.kind !== "replace") assert.fail("expected a replacement");
+    const expected = structuredClone(pending.body);
+    assert.deepEqual(expected.import, {
+      integration: contract.providerCreate.import.integration,
+      sequence: 5,
+      acquiredAt: fixture.acquiredAt,
+      requestKey: `run-2:${refresh.work[0].key}`,
+      observation: {},
+    });
+    // Earlier releases persisted the same request with the creation key.
+    pending.body.import = {
+      ...expected.import,
+      objectKey: refresh.work[0].key,
+    };
+    const restarted = JSON.parse(JSON.stringify(refresh));
+    await publishShippingStep(restarted, context, 0, mock.fetcher);
+    const sent = mock.calls.at(-1);
+    assert.equal(sent?.method, "PUT");
+    assert.deepEqual(sent?.body, expected);
+    matchesContract("ReplaceShippingProfileData", sent?.body);
+    assert.deepEqual(restarted.work[0].pending.body, expected);
+    assert.equal(restarted.work[0].done, true);
+    assert.equal(restarted.failures, 0);
+    assert.equal(restarted.lastError, undefined);
   });
 
   it("persists immutable create identity after a lost response and a process restart", async () => {

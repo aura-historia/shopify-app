@@ -14,7 +14,11 @@ import {
 import { receiveShippingWebhook } from "../app/shipping/webhooks.server";
 import { markShopCredentialsDisconnected } from "../app/shop-credentials.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
-import { fixture, fixtureGraphql } from "./helpers/shipping-fixtures";
+import {
+  fixture,
+  fixtureGraphql,
+  importIdentityRejection,
+} from "./helpers/shipping-fixtures";
 
 // Run the actual coordinator against isolated storage and the platform base
 // class shim. No live Shopify installation, Cloudflare binding or Aura source.
@@ -266,6 +270,8 @@ function backendFixture() {
     const body = raw ? JSON.parse(raw) : null;
     calls.push({ method: request.method, path, body });
     if (controls.offline) return new Response(null, { status: 503 });
+    const rejected = importIdentityRejection(request.method, path, body);
+    if (rejected) return rejected;
     if (path.endsWith("shipping-profiles") && request.method === "GET")
       return Response.json(profile ? [profile] : []);
     if (path.includes("shipping-profiles")) {
@@ -786,6 +792,51 @@ describe("S02 authenticated shipping refresh and recovery", () => {
         JSON.stringify(backend.calls),
         /private-shopify-token|freshUntil|expiresAt/,
       );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("refreshes the created profile on an unchanged re-import without its creation-only key", async () => {
+    const runtime = refreshRuntime();
+    await runtime.installed();
+    const backend = backendFixture();
+    const original = globalThis.fetch;
+    globalThis.fetch = backend.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      const initial = (await storedState(runtime.storage)).status;
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      const { status } = await storedState(runtime.storage);
+      assert.equal(status.failures, 0);
+      assert.equal(status.error, undefined);
+      assert.ok(status.committed > 0);
+      assert.equal(backend.profile?.managementRevision, 2);
+      const profileWrite = (method: string) => {
+        const writes = backend.calls.filter(
+          (call) =>
+            call.method === method && call.path.includes("shipping-profiles"),
+        );
+        assert.equal(writes.length, 1);
+        return writes[0].body as {
+          import: Record<string, unknown>;
+          expectedRevision?: number;
+        };
+      };
+      const created = profileWrite("POST").import;
+      const replaced = profileWrite("PUT");
+      assert.equal(created.objectKey, "shopify:delivery-profile:1");
+      assert.equal(replaced.expectedRevision, 1);
+      assert.equal("objectKey" in replaced.import, false);
+      assert.deepEqual(replaced.import.observation, {});
+      assert.equal(replaced.import.acquiredAt, status.acquiredAt);
+      assert.ok(
+        Date.parse(status.acquiredAt) >= Date.parse(initial.acquiredAt),
+      );
+      assert.ok(Number(replaced.import.sequence) > Number(created.sequence));
+      assert.notEqual(replaced.import.requestKey, created.requestKey);
     } finally {
       globalThis.fetch = original;
     }
