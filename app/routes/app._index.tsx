@@ -265,10 +265,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     } catch (error) {
       console.error(
         "Failed to retry initial backfill:",
-        summarizeOAuthError(error).replaceAll(
-          credentials.accessToken,
-          "[redacted]",
-        ),
+        summarizeOAuthError(error, [credentials.accessToken]),
       );
       redirectParams.set("backfill", "not_queued");
     }
