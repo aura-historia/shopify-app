@@ -367,6 +367,14 @@ export async function publishShippingStep(
   if (!work) return;
   if (work.pending) {
     const pending = work.pending;
+    if (pending.kind === "replace" && pending.body.import?.objectKey != null) {
+      // Earlier releases persisted replacements with the creation-only key,
+      // which the backend rejects before recording the request. Drop only that
+      // key; acquisition, sequence, observation and request key stay as-is.
+      // Removable once one publication retention window follows deployment.
+      const { objectKey: _creationOnly, ...replacement } = pending.body.import;
+      pending.body.import = replacement;
+    }
     const profilePath =
       "id" in pending
         ? { ...sourcePath, shipping_profile_id: pending.id }
@@ -495,10 +503,6 @@ export async function publishShippingStep(
       return;
     }
     const existing = result.data[0];
-    const imported = {
-      ...metadata(publication, work, true),
-      objectKey: resource.value.objectKey,
-    };
     if (!existing) {
       work.pending = {
         kind: "create",
@@ -506,7 +510,12 @@ export async function publishShippingStep(
           creationKey: resource.value.objectKey,
           content: resource.value.content,
           evidence: [],
-          import: imported,
+          // The stable identity is creation-only. Later imports address the
+          // profile by id and the backend rejects an object key there.
+          import: {
+            ...metadata(publication, work, true),
+            objectKey: resource.value.objectKey,
+          },
         },
       };
     } else {
@@ -531,7 +540,7 @@ export async function publishShippingStep(
                 expectedRevision: existing.managementRevision,
                 content: resource.value.content,
                 evidence: [],
-                import: imported,
+                import: metadata(publication, work, true),
               },
             };
     }
