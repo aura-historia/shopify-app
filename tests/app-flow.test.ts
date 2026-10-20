@@ -157,6 +157,8 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("products/update"));
     assert.ok(appIndexRoute.includes("app/uninstalled"));
     assert.ok(appIndexRoute.includes("read_locales"));
+    assert.equal(appIndexRoute.includes("shipping_consent"), false);
+    assert.equal(appIndexRoute.includes("Grant shipping access"), false);
     assert.ok(appIndexRoute.includes("Connected via OAuth"));
     assert.ok(appIndexRoute.includes("Aura Historia sales channel status"));
     assert.ok(successRoute.includes("Shopify sales channel connection"));

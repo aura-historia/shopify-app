@@ -7,8 +7,7 @@ application_url = "https://partner-connect.aura-historia.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,read_locales"
-optional_scopes = ["read_shipping"]
+scopes = "read_products,read_locales,read_shipping"
 use_legacy_install_flow = false
 
 [webhooks]
