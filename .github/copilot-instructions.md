@@ -1,4 +1,4 @@
-# GitHub Copilot instructions for Aura Historia Partner Connect
+# GitHub Copilot instructions for the Aura Historia Shopify app
 
 ## Product context
 

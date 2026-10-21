@@ -205,7 +205,7 @@ export default function OAuthCallbackResult() {
       <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brandBlock}>
-            <p className={styles.eyebrow}>Shopify partner connect</p>
+            <p className={styles.eyebrow}>Shopify sales channel</p>
             <a className={styles.brand} href="https://aura-historia.com">
               Aura Historia
             </a>
