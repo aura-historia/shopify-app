@@ -3,7 +3,9 @@
 # Default localhost/stage uses `shopify.app.toml`; production uses `shopify.app.prod.toml`.
 
 client_id = "c16ab3575bcbffd285d378b5caaeb0f8"
-name = "Aura Historia Partner Connect"
+name = "Aura Historia"
+# Keep the original admin URL handle: changing it breaks existing Shopify admin links.
+handle = "aura-historia-partner-connect"
 application_url = "https://partner-connect.aura-historia.com"
 embedded = true
 

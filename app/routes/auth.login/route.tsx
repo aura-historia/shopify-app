@@ -27,7 +27,7 @@ export default function AuthLogin() {
       <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brandBlock}>
-            <p className={styles.eyebrow}>Shopify partner connect</p>
+            <p className={styles.eyebrow}>Shopify sales channel</p>
             <a className={styles.brand} href="https://aura-historia.com">
               Aura Historia
             </a>
@@ -58,10 +58,10 @@ export default function AuthLogin() {
               Start installation from Shopify.
             </h1>
             <p className={styles.lead}>
-              Aura Historia Partner Connect does not collect store domains on
-              this public page. Open the app from the Shopify App Store, Shopify
-              Admin, or the Partner Dashboard install action so Shopify can send
-              the required store context and begin OAuth approval.
+              Aura Historia does not collect store domains on this public page.
+              Open the app from the Shopify App Store, Shopify Admin, or the
+              Partner Dashboard install action so Shopify can send the required
+              store context and begin OAuth approval.
             </p>
 
             {errors.shop ? (

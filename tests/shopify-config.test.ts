@@ -79,7 +79,26 @@ describe("shopify.app.toml", () => {
   });
 
   it("uses the review-facing Aura Historia app name", () => {
-    assert.match(appConfig, /name = "Aura Historia Partner Connect"/);
+    assert.match(appConfig, /^name = "Aura Historia"$/m);
+  });
+
+  it("pins the admin URL handle used by app links in every environment", () => {
+    const linkSources = [
+      "app/shopify-admin-url.ts",
+      "app/routes/auth.$.tsx",
+    ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8"));
+    for (const name of [
+      "shopify.app.toml",
+      "shopify.app.prod.toml",
+      "shopify.app.tunnel.toml",
+    ]) {
+      const config = readFileSync(resolve(process.cwd(), name), "utf8");
+      const handle = config.match(/^handle = "([^"]*)"$/m)?.[1];
+      assert.equal(handle, "aura-historia-partner-connect", name);
+      for (const source of linkSources) {
+        assert.ok(source.includes(`/apps/${handle}`));
+      }
+    }
   });
 
   it("routes product lifecycle topics to EventBridge", () => {

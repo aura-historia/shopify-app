@@ -1,4 +1,4 @@
-<h1 align="center">Aura Historia Partner Connect</h1>
+<h1 align="center">Aura Historia for Shopify</h1>
 
 <p align="center">
   A quiet, reliable bridge between Shopify product catalogs and the Aura Historia sales channel.
@@ -22,7 +22,7 @@
 
 ## In brief
 
-**Aura Historia Partner Connect** is a public, embedded Shopify sales-channel app. It lets approved merchants connect their shops to Aura Historia, makes product discovery possible on Aura Historia, and returns shoppers to the merchant’s Shopify store for checkout.
+The **Aura Historia** app is a public, embedded Shopify sales-channel app. It lets approved merchants connect their shops to Aura Historia, makes product discovery possible on Aura Historia, and returns shoppers to the merchant’s Shopify store for checkout.
 
 The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, advertised shipping imports, and uninstall cleanup. Amazon EventBridge routing and downstream catalog consumers are maintained separately.
 
@@ -37,7 +37,7 @@ The app intentionally owns only the integration edge: authentication, merchant c
 
 ```mermaid
 flowchart LR
-    M[Merchant in Shopify Admin] --> I[Embedded Partner Connect app]
+    M[Merchant in Shopify Admin] --> I[Embedded Aura Historia app]
     I --> S[Shopify OAuth]
     I --> O[Aura Historia OAuth]
     O --> K[Cloudflare KV]

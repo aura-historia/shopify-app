@@ -1,4 +1,4 @@
-name = "Aura Historia Partner Connect"
+name = "Aura Historia"
 roles = ["frontend", "backend"]
 # App-specific webhook subscriptions are declared in shopify.app.toml.
 # Localhost development keeps the app/uninstalled subscription on the deployed
