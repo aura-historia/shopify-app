@@ -481,8 +481,8 @@ export default function AppIndex() {
       <s-section heading="Terms and support">
         <s-stack gap="base">
           <s-paragraph>
-            Review your Aura Historia partner agreement for pricing and any
-            commission before connecting.
+            The Aura Historia Shopify app is free to install and use. There are
+            no charges or commissions.
           </s-paragraph>
           <s-stack direction="inline" gap="base">
             <s-link

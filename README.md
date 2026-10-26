@@ -24,6 +24,8 @@
 
 The **Aura Historia** app is a public, embedded Shopify sales-channel app. It lets approved merchants connect their shops to Aura Historia, makes product discovery possible on Aura Historia, and returns shoppers to the merchant’s Shopify store for checkout.
 
+The app is free to install and use, with no charges or commissions. Shopify has already approved the app. Making it publicly visible in the Shopify App Store is a separate action planned for later.
+
 The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, advertised shipping imports, and uninstall cleanup. Amazon EventBridge routing and downstream catalog consumers are maintained separately.
 
 | Shopify | Aura Historia |
@@ -367,63 +369,11 @@ See [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) for the rel
 
 The Worker keeps OAuth/authenticated responses private and uncached, uses `Referrer-Policy: no-referrer`, and redacts query strings from Cloudflare invocation logs. Catalog progress stores only phase/counts for seven days and is cleared on disconnect/uninstall; access tokens remain only in the separate existing credential stores. Publication counts come from the current Shopify app publication and retain the API's lower-bound indicator. The bulk editor link targets that publication. Import acceptance is distinct from search visibility.
 
-## Release review (26 October 2026)
+## Production OAuth
 
-The production OAuth client is registered for exactly `https://partner-connect.aura-historia.com/oauth/callback` with the four scopes in `wrangler.jsonc`. Its secret is installed in the production Worker. A limited live check authenticated the confidential client using an intentionally nonexistent authorization code (`400 invalid_grant`); the ordinary consent metadata endpoint returned the exact registration without a secret. No merchant authorization or Shopify store was created.
+The production Aura Historia client ID is `oc_01m5vyyghjecx8c43drb05hh4n`. Its registered callback is exactly `https://partner-connect.aura-historia.com/oauth/callback`, and its four scopes are configured in `wrangler.jsonc`. The client secret is installed in the production Worker's `AURA_HISTORIA_OAUTH_CLIENT_SECRET` secret binding.
 
-The current webapp `develop` (`160a0f38`) already forwards `/v1` approval, preserves S256/state, validates registered callbacks, and returns `listing_source_id`. Older local webapp checkouts still use partner-shop IDs and `/api/v1` and must not be deployed. No webapp protocol change is required for this app.
-
-### Before App Store submission
-
-- **Pricing/commission:** confirm the merchant terms and show the exact app price and channel fees/commission in the account section and listing. No app billing is implemented. App charges need Shopify App Pricing/Billing; a channel platform's existing commercial relationship can have its own fee structure, as described in Shopify's [sales-channel billing guidance](https://shopify.dev/docs/apps/build/sales-channels#billing-for-your-app). Classify the actual commercial model before deciding whether billing code is missing. A free connector does not by itself require a billing implementation.
-- **Sales attribution:** product links currently lead to merchant product pages; neither this app nor the reviewed backend establishes Storefront-token cart attribution. Confirm or implement channel attribution in the shopper-to-checkout flow before submission (requirement 5.7.16). UTM referral parameters alone do not establish Shopify channel attribution.
-- **Product eligibility and publication:** the initial backfill and backend product-event consumer import active products; a Shopify publication count does not prove that Aura discovery follows channel publication changes. Validate merchant-selected channel availability, rejection feedback and any required approval state together; do not label a connected account as product approval.
-- **Privacy processing:** the mandatory topics are declared on EventBridge, but the reviewed backend consumer handles only product lifecycle topics and acknowledges other topics without a privacy workflow. Implement/verify customer-request responses and shop redaction across the backend and app storage. Uninstall cleanup alone does not establish completion of a Shopify privacy request. The `task/shopify-production-oauth` webapp worktree prepares all five privacy locales for the actual catalog/shipping processing, Cloudflare job storage, and bounded cleanup retention. Obtain policy review before publishing that draft, per webapp `docs/legal-content-guidelines.md`.
-- **App Store material:** finish the public listing, matching pricing/access disclosures, screenshots, support details and reviewer instructions in Shopify's dashboard. These account-side fields are not represented in this repository.
-- **Deferred store verification:** installation/reinstallation, consent and denied consent, initial catalog/shipping imports, publication changes, disconnect/uninstall and privacy callbacks still require the later Shopify test store run. None was performed during this preparation.
-
-### Local pre-submission review
-
-Source: Shopify's live [AI self-review requirements](https://shopify.dev/docs/apps/launch/app-store-review/app-store-ai-self-review-requirements), fetched 26 October 2026. The current Polaris web-component equivalents replace the older React component names in that checklist.
-
-✅ **Likely passing:** 36
-
-❌ **Likely failing:** 1
-
-⚠️ **Needs review:** 8
-
-⏭️ **Groups skipped:** 9
-
-Shopify's checklist is a subset of App Store requirements checkable from source; it is not submission approval. Code-level checks do not replace the deferred installation test.
-
-#### Requirements that need review
-
-- **1.2.1 Use Shopify App Pricing or the Shopify Billing API; 1.2.2 Implement billing correctly; 1.2.3 Allow pricing plan changes.** No app billing exists. Confirm whether there are app charges or a separate channel-platform commercial relationship. App charges require Shopify billing and the corresponding approval, decline, reinstall and plan-change flows. A free connector does not require these billing flows merely because a merchant has an existing commercial relationship with the channel platform.
-- **5.7.4 Provide details in the publishing section.** The app displays a channel-specific Shopify count and links its bulk editor. Confirm the count and downstream publication eligibility in a real channel installation.
-- **5.7.6 Communicate commission.** Exact commercial terms have not yet been supplied; the current UI links to the partner agreement.
-- **5.7.8 Use banners for approval/rejection of products; 5.7.15 Communicate account approval process.** Polaris banners cover connection and import failures; actual product review decisions and pending account states are owned outside this app and need verification.
-- **5.7.11 Provide publishing errors.** The UI exposes export/submission failures and retries. Async backend processing/search failures are not yet reported back to this UI.
-#### Requirement that is likely failing
-
-❌ **5.7.16 Use Sales Attribution.**
-
-**Why this matters:** merchant sales must be attributed to this channel.
-
-**What was found:** backfill and backend outbound links point to merchant product pages, with optional ordinary referral/UTM parameters. No Storefront-token cart attribution is established in the reviewed shopper flow.
-
-#### Skipped groups
-
-- **5.1 Online store** — no theme extension.
-- **5.2 Payment** — no payment extension or gateway scopes.
-- **5.3 Payment facilitator** — opt-in not requested.
-- **5.4 Purchase option** — no subscription/deferred-payment scopes.
-- **5.5 Product sourcing** — opt-in not requested.
-- **5.6 Checkout customization** — no checkout UI extension.
-- **5.8 Post purchase** — no post-purchase extension.
-- **5.9 Mobile app builders** — opt-in not requested.
-- **5.10 Donation** — opt-in not requested.
-
-Resources: [App Store requirements](https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), [app best practices](https://shopify.dev/docs/apps/launch/shopify-app-store/best-practices), [billing](https://shopify.dev/docs/apps/launch/billing), [submission](https://shopify.dev/docs/apps/launch/app-store-review/submit-app-for-review).
+The webapp consent flow supports `/v1`, S256 PKCE, registered callback validation, and `listing_source_id`. Use a current webapp version; older checkouts using `/api/v1` and partner-shop IDs are incompatible with the production backend.
 
 ## Public app information
 
