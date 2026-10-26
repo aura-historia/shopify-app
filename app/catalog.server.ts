@@ -16,20 +16,40 @@ export async function saveCatalogImportStatus(
   shop: string,
   status: Omit<CatalogImportStatus, "updatedAt">,
 ) {
-  await kv.put(
-    STATUS_PREFIX + shop.toLowerCase(),
-    JSON.stringify({ ...status, updatedAt: new Date().toISOString() }),
-    { expirationTtl: 7 * 24 * 60 * 60 },
+  const value = JSON.stringify({
+    ...status,
+    updatedAt: new Date().toISOString(),
+  });
+  await updateCatalogImportStatus(() =>
+    kv.put(STATUS_PREFIX + shop.toLowerCase(), value, {
+      expirationTtl: 7 * 24 * 60 * 60,
+    }),
   );
+}
+
+async function updateCatalogImportStatus(write: () => Promise<void>) {
+  // KV permits one write per key per second. A small catalog can finish
+  // immediately after its processing status was saved. Retry boundedly, and
+  // never let optional progress reporting change the import's actual outcome.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await write();
+      return;
+    } catch {
+      if (attempt < 2)
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  console.warn("Catalog import status could not be updated");
 }
 
 export async function loadCatalogImportStatus(
   kv: Pick<KV, "get">,
   shop: string,
 ) {
-  const raw = await kv.get(STATUS_PREFIX + shop.toLowerCase());
-  if (!raw) return null;
   try {
+    const raw = await kv.get(STATUS_PREFIX + shop.toLowerCase());
+    if (!raw) return null;
     const value = JSON.parse(raw) as CatalogImportStatus;
     if (
       ["queued", "processing", "submitted", "failed"].includes(value.phase) &&
@@ -37,6 +57,7 @@ export async function loadCatalogImportStatus(
       value.total >= 0 &&
       Number.isSafeInteger(value.failed) &&
       value.failed >= 0 &&
+      value.failed <= value.total &&
       typeof value.updatedAt === "string" &&
       Number.isFinite(Date.parse(value.updatedAt))
     ) {
@@ -54,7 +75,7 @@ export async function loadCatalogImportStatus(
       };
     }
   } catch {
-    /* Invalid state is unavailable, never success. */
+    /* Invalid or unavailable progress never prevents access to the app. */
   }
   return null;
 }
@@ -63,7 +84,10 @@ export async function clearCatalogImportStatus(
   kv: Pick<KV, "delete">,
   shop: string,
 ) {
-  await kv.delete(STATUS_PREFIX + shop.toLowerCase());
+  // Progress cleanup must not prevent credential/session teardown.
+  await updateCatalogImportStatus(() =>
+    kv.delete(STATUS_PREFIX + shop.toLowerCase()),
+  );
 }
 
 export async function getChannelPublication(

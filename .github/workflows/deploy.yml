@@ -6,6 +6,10 @@ on:
     tags:
       - "*.*.*"
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Deploy ${{ github.ref_name }}

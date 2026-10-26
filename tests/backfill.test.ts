@@ -1183,6 +1183,42 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     );
     assert.equal(kv.put.mock.callCount(), 0);
   });
+
+  it("keeps an accepted export usable when optional progress writes fail", async () => {
+    const kv = makeKv();
+    const put = kv.put;
+    let statusWrites = 0;
+    kv.put = mock.fn(async (key, value, options) => {
+      if (key.startsWith("aura-historia:catalog-status:")) {
+        statusWrites++;
+        throw new Error("KV unavailable");
+      }
+      await put(key, value, options);
+    });
+    assert.equal(
+      await triggerBackfill(
+        async () => ({
+          data: {
+            bulkOperationRunQuery: {
+              bulkOperation: { id: bulkOperationId, status: "CREATED" },
+            },
+          },
+        }),
+        kv,
+        shopDomain,
+        listingSourceId,
+        accessToken,
+        apiBaseUrl,
+        validatedMetadata,
+      ),
+      true,
+    );
+    assert.equal(statusWrites, 3);
+    assert.equal(
+      (await loadBackfillContext(kv, shopDomain))?.bulkOperationId,
+      bulkOperationId,
+    );
+  });
 });
 
 describe("backfill configuration", () => {

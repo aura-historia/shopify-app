@@ -9,6 +9,10 @@ const prodConfig = readFileSync(
 );
 
 describe("shopify.app.prod.toml", () => {
+  it("prevents development commands from rewriting production URLs", () => {
+    assert.match(prodConfig, /automatically_update_urls_on_dev = false/);
+  });
+
   it("uses the review-facing Aura Historia app name", () => {
     assert.match(prodConfig, /^name = "Aura Historia"$/m);
   });

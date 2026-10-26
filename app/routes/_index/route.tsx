@@ -239,7 +239,7 @@ export default function MarketingIndex() {
             ))}
           </div>
           <p className={styles.footerMeta}>
-            Need help with the integration? Email
+            Need help with the integration? Email{" "}
             <a
               className={styles.contact}
               href="mailto:contact@aura-historia.com"

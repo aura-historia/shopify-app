@@ -249,6 +249,13 @@ export default function AppIndex() {
     catalogImport,
   } = useLoaderData<typeof loader>();
   const isConnected = integration.status === "connected";
+  const catalogPhase =
+    catalogImport?.phase ??
+    (integration.backfill === "queued"
+      ? "queued"
+      : integration.backfill === "not_queued"
+        ? "failed"
+        : null);
   const manualConnectUrl = createShopifyAdminAppUrl(getShopifyStoreName(shop), {
     manual_connect: "1",
   }).toString();
@@ -347,7 +354,7 @@ export default function AppIndex() {
             <>
               <s-paragraph>
                 {publication
-                  ? `${publication.atLeast ? "At least " : ""}${publication.count} active products published to this channel in Shopify.`
+                  ? `${publication.atLeast ? "At least " : ""}${publication.count} active products included in this Shopify channel.`
                   : "The current Shopify publication count is unavailable. Refresh this page or contact support if the issue continues."}
               </s-paragraph>
               <s-paragraph>
@@ -356,7 +363,7 @@ export default function AppIndex() {
                 search.
               </s-paragraph>
               {(integration.backfill === "not_queued" ||
-                catalogImport?.phase === "failed") && (
+                catalogPhase === "failed") && (
                 <s-banner
                   tone="critical"
                   heading="Catalog import needs attention"
@@ -368,11 +375,10 @@ export default function AppIndex() {
                   </s-paragraph>
                 </s-banner>
               )}
-              {(integration.backfill === "queued" ||
-                catalogImport?.phase === "queued") && (
+              {catalogPhase === "queued" && (
                 <s-paragraph>Initial product backfill was queued.</s-paragraph>
               )}
-              {catalogImport?.phase === "processing" && (
+              {catalogPhase === "processing" && (
                 <s-paragraph>
                   The catalog is being submitted to Aura Historia. Refresh this
                   page for an update.

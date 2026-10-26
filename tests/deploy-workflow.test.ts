@@ -9,6 +9,25 @@ const deployWorkflow = readFileSync(
 );
 
 describe("deploy workflow", () => {
+  it("serializes production deploys without canceling an active release", () => {
+    assert.match(
+      deployWorkflow,
+      /concurrency:\s+group: production-deploy\s+cancel-in-progress: false/,
+    );
+  });
+
+  it("permits manual Worker deployments and gates Shopify releases on tag pushes", () => {
+    assert.match(deployWorkflow, /on:\s+workflow_dispatch:/);
+    assert.match(
+      deployWorkflow,
+      /name: Validate semver tag\s+if: github.event_name == 'push'/,
+    );
+    assert.match(
+      deployWorkflow,
+      /name: Deploy & release Shopify app version\s+if: github.event_name == 'push'/,
+    );
+  });
+
   it("runs on semver-like tags and validates the tag format", () => {
     assert.match(deployWorkflow, /tags:\s+- "\*\.\*\.\*"/);
     assert.match(

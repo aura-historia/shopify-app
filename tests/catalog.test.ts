@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { transformProduct } from "../app/backfill.server";
 import {
+  clearCatalogImportStatus,
   getChannelPublication,
   loadCatalogImportStatus,
+  saveCatalogImportStatus,
 } from "../app/catalog.server";
 import { exactMoney } from "../app/shipping/mapper";
 
@@ -72,6 +74,65 @@ describe("release catalog behavior", () => {
       await loadCatalogImportStatus({ get: async () => "null" } as never, shop),
       null,
     );
+  });
+  it("keeps unavailable or inconsistent progress from breaking the app", async () => {
+    assert.equal(
+      await loadCatalogImportStatus(
+        {
+          get: async () => {
+            throw new Error("KV unavailable");
+          },
+        } as never,
+        shop,
+      ),
+      null,
+    );
+    assert.equal(
+      await loadCatalogImportStatus(
+        {
+          get: async () =>
+            JSON.stringify({
+              phase: "submitted",
+              total: 1,
+              failed: 2,
+              updatedAt: new Date().toISOString(),
+            }),
+        } as never,
+        shop,
+      ),
+      null,
+    );
+  });
+  it("retries rapid status writes after KV's per-key write window", async () => {
+    const writes: { value: string; time: number }[] = [];
+    await saveCatalogImportStatus(
+      {
+        put: async (_key: string, value: string) => {
+          writes.push({ value, time: Date.now() });
+          if (writes.length === 1)
+            throw new Error("KV put failed: 429 Too Many Requests");
+        },
+      } as never,
+      shop,
+      { phase: "submitted", total: 1, failed: 0 },
+    );
+    assert.equal(writes.length, 2);
+    assert.ok(writes[1].time - writes[0].time >= 950);
+    assert.equal(writes[1].value, writes[0].value);
+    assert.equal(JSON.parse(writes[1].value).phase, "submitted");
+  });
+  it("keeps failed progress cleanup from preventing disconnection or uninstall", async () => {
+    let attempts = 0;
+    await clearCatalogImportStatus(
+      {
+        delete: async () => {
+          attempts++;
+          throw new Error("KV unavailable");
+        },
+      } as never,
+      shop,
+    );
+    assert.equal(attempts, 3);
   });
   it("reports interrupted background imports as failures after their processing window", async () => {
     const status = await loadCatalogImportStatus(

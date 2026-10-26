@@ -36,8 +36,11 @@ export function addDocumentResponseHeaders(
 }
 
 export function protectPrivateResponse(request: Request, response: Response) {
-  const path = new URL(request.url).pathname;
-  if (/^\/(?:app|auth|oauth|webhooks)(?:\/|$)/.test(path)) {
+  const url = new URL(request.url);
+  if (
+    /^\/(?:app|auth|oauth|webhooks)(?:\/|\.data$|$)/.test(url.pathname) ||
+    url.searchParams.has("id_token")
+  ) {
     const headers = new Headers(response.headers);
     headers.set("Cache-Control", "private, no-store");
     headers.set("Referrer-Policy", "no-referrer");

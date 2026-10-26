@@ -49,15 +49,14 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     return new Response(null, { status: 200 });
   }
 
-  await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-    phase: "processing",
-    total: 0,
-    failed: 0,
-  });
-
   context.cloudflare.ctx.waitUntil(
     (async () => {
       try {
+        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
+          phase: "processing",
+          total: 0,
+          failed: 0,
+        });
         const graphqlRequest = offlineGraphql(context, shop);
         const jsonlUrl = await fetchBulkOperationResultUrl(
           graphqlRequest,
