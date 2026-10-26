@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { clearBackfillContext } from "../backfill.server";
+import { clearCatalogImportStatus } from "../catalog.server";
 import { shopCoordinator } from "../shipping/runtime.server";
 import {
   clearShopCredentials,
@@ -23,6 +24,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   await clearShopCredentials(context.cloudflare.env.KV, shop);
   await clearShopCredentialsDisconnected(context.cloudflare.env.KV, shop);
   await clearBackfillContext(context.cloudflare.env.KV, shop);
+  await clearCatalogImportStatus(context.cloudflare.env.KV, shop);
 
   const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
   await shopify.sessionStorage.deleteSessions(

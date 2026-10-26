@@ -1,8 +1,27 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { addDocumentResponseHeaders } from "../app/iframe-protection.server";
+import {
+  addDocumentResponseHeaders,
+  protectPrivateResponse,
+} from "../app/iframe-protection.server";
 
 describe("iframe protection", () => {
+  it("prevents OAuth redirects and errors from being cached or leaking callback URLs through referrers", () => {
+    for (const path of [
+      "/oauth/callback?code=private-code&state=private-state",
+      "/app",
+      "/auth/callback",
+    ]) {
+      const response = protectPrivateResponse(
+        new Request(`https://app.example${path}`),
+        new Response(null, { status: 302, headers: { Location: "/app" } }),
+      );
+      assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+      assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("Location"), "/app");
+    }
+  });
   it("allows the authenticated shop and Shopify admin to frame the app", () => {
     const headers = new Headers();
 

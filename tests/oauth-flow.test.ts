@@ -23,8 +23,8 @@ const credentials = {
   accessToken: "aurahistoria_partner_token",
 };
 const config = {
-  authorizeUrl: "https://stage.aura-historia.com/oauth/authorize",
-  tokenUrl: "https://api.test.com/api/v1/oauth/token",
+  authorizeUrl: "https://stage.aura-historia.com/en/oauth/authorize",
+  tokenUrl: "https://api.test.com/v1/oauth/token",
   redirectUri: "https://shopify.test/callback",
   clientId,
   clientSecret: "client-secret",
@@ -67,19 +67,19 @@ describe("Aura Historia OAuth flow helpers", () => {
 
     assert.equal(
       devConfig.authorizeUrl,
-      "https://stage.aura-historia.com/oauth/authorize",
+      "https://stage.aura-historia.com/en/oauth/authorize",
     );
     assert.equal(
       prodConfig.authorizeUrl,
-      "https://aura-historia.com/oauth/authorize",
+      "https://aura-historia.com/en/oauth/authorize",
     );
     assert.equal(
       devConfig.tokenUrl,
-      "https://api.stage.aura-historia.com/api/v1/oauth/token",
+      "https://api.stage.aura-historia.com/v1/oauth/token",
     );
     assert.equal(
       prodConfig.tokenUrl,
-      "https://api.aura-historia.com/api/v1/oauth/token",
+      "https://api.aura-historia.com/v1/oauth/token",
     );
     assert.equal(
       devConfig.scope,
@@ -107,7 +107,7 @@ describe("Aura Historia OAuth flow helpers", () => {
 
     assert.equal(
       authorization.url.origin + authorization.url.pathname,
-      "https://stage.aura-historia.com/oauth/authorize",
+      "https://stage.aura-historia.com/en/oauth/authorize",
     );
     assert.equal(
       authorization.url.searchParams.get("requires_listing_source_id"),
@@ -163,7 +163,7 @@ describe("Aura Historia OAuth flow helpers", () => {
       async (request: RequestInfo | URL, init?: RequestInit) => {
         const received =
           request instanceof Request ? request : new Request(request, init);
-        assert.equal(received.url, "https://api.test.com/api/v1/oauth/token");
+        assert.equal(received.url, "https://api.test.com/v1/oauth/token");
         assert.equal(received.method, "POST");
         assert.equal(
           received.headers.get("Content-Type"),
@@ -199,8 +199,8 @@ describe("Aura Historia OAuth flow helpers", () => {
     try {
       const token = await exchangeOAuthCodeForToken(
         {
-          authorizeUrl: "https://stage.aura-historia.com/oauth/authorize",
-          tokenUrl: "https://api.test.com/api/v1/oauth/token",
+          authorizeUrl: "https://stage.aura-historia.com/en/oauth/authorize",
+          tokenUrl: "https://api.test.com/v1/oauth/token",
           redirectUri: "https://shopify.test/callback",
           clientId,
           clientSecret: "client-secret",
@@ -335,7 +335,7 @@ describe("Aura Historia OAuth flow helpers", () => {
       assert.equal(revoke.mock.callCount(), 1);
       assert.equal(
         new URL(revoke.mock.calls[0]?.arguments[0] as string).pathname,
-        "/api/v1/oauth/revoke",
+        "/v1/oauth/revoke",
       );
       assert.equal(
         new URLSearchParams(

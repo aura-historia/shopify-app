@@ -1,10 +1,15 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, redirect, useLoaderData } from "react-router";
-
+import { Form, redirect, useLoaderData, useNavigation } from "react-router";
 import {
+  clearBackfillContext,
   configureShopifyListingSource,
   triggerBackfill,
 } from "../backfill.server";
+import {
+  clearCatalogImportStatus,
+  getChannelPublication,
+  loadCatalogImportStatus,
+} from "../catalog.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
   getAuraHistoriaApiBaseUrl,
@@ -35,85 +40,6 @@ import {
   createShopifyAdminAppUrl,
   getShopifyStoreName,
 } from "../shopify-admin-url";
-import styles from "../styles/app-home.module.css";
-
-const accessSections = [
-  {
-    title: "Advertised shipping",
-    description:
-      "Read shipping settings and product membership to publish supported advertised terms to Aura Historia. Cloudflare stores private import progress; precise fulfillment addresses and customer data are not read. Shipping prices are determined at merchant checkout.",
-    items: [
-      {
-        name: "read_shipping",
-        description:
-          "Approved at installation. Shipping profiles, destinations, rates and variant membership are translated by this app and sent to Aura Historia.",
-      },
-    ],
-  },
-  {
-    title: "Products",
-    description:
-      "Product lifecycle events publish merchant catalogs to the Aura Historia sales channel.",
-    items: [
-      {
-        name: "products/create",
-        description: "New catalog entries are published without manual export.",
-      },
-      {
-        name: "products/update",
-        description:
-          "Edits stay in sync as merchants refine their sales channel listings.",
-      },
-      {
-        name: "products/delete",
-        description:
-          "Removals are passed on so sales channel records can close.",
-      },
-    ],
-  },
-  {
-    title: "Compliance & uninstall",
-    description: "Mandatory public-app webhooks are in place.",
-    items: [
-      {
-        name: "customers/data_request",
-        description: "Required for Shopify privacy and compliance handling.",
-      },
-      {
-        name: "customers/redact",
-        description: "Required when customer data must be erased.",
-      },
-      {
-        name: "shop/redact",
-        description: "Required when shop-level data must be erased.",
-      },
-      {
-        name: "app/uninstalled",
-        description:
-          "Used so uninstall cleanup can remove stored sessions and connection data.",
-      },
-    ],
-  },
-  {
-    title: "Locale & shop context",
-    description:
-      "Read-only shop data keeps sales channel product sync mapped correctly.",
-    items: [
-      {
-        name: "read_locales",
-        description: "Used to map product content to the shop language.",
-      },
-      {
-        name: "shop domain",
-        description: "Used to associate this installation with the right shop.",
-      },
-      {
-        name: "currency",
-        description: "Used so partner-side pricing stays aligned with Shopify.",
-      },
-    ],
-  },
-];
 
 type IntegrationStatus =
   | "connected"
@@ -179,6 +105,15 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
 
   return {
     shipping: await shopCoordinator(context, session.shop).status(),
+    catalogImport: credentials
+      ? await loadCatalogImportStatus(context.cloudflare.env.KV, session.shop)
+      : null,
+    publication: credentials
+      ? await getChannelPublication(
+          offlineGraphql(context, session.shop),
+          session.shop,
+        )
+      : null,
     credentials: credentials
       ? toPublicShopCredentialsRecord(credentials)
       : null,
@@ -272,6 +207,8 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   }
 
   await shopCoordinator(context, session.shop).disconnectShipping(session.shop);
+  await clearBackfillContext(context.cloudflare.env.KV, session.shop);
+  await clearCatalogImportStatus(context.cloudflare.env.KV, session.shop);
   await clearShopCredentials(context.cloudflare.env.KV, session.shop);
   await markShopCredentialsDisconnected(
     context.cloudflare.env.KV,
@@ -284,322 +221,288 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   return redirect(`/app?${redirectParams.toString()}`);
 };
 
+function IntentButton({
+  intent,
+  children,
+}: {
+  intent: string;
+  children: string;
+}) {
+  const navigation = useNavigation();
+  return (
+    <Form method="post">
+      <input type="hidden" name="intent" value={intent} />
+      <s-button type="submit" disabled={navigation.state !== "idle"}>
+        {children}
+      </s-button>
+    </Form>
+  );
+}
+
 export default function AppIndex() {
-  const { credentials, integration, shop, scopes, shipping } =
-    useLoaderData<typeof loader>();
+  const {
+    credentials,
+    integration,
+    shop,
+    shipping,
+    publication,
+    catalogImport,
+  } = useLoaderData<typeof loader>();
   const isConnected = integration.status === "connected";
-  const isDisconnected = integration.status === "disconnected";
-  const isNotConnected = integration.status === "not_connected";
-  const canManualConnect =
-    isNotConnected || isDisconnected || integration.status === "failed";
-  const canDisconnect = isConnected;
   const manualConnectUrl = createShopifyAdminAppUrl(getShopifyStoreName(shop), {
     manual_connect: "1",
   }).toString();
   const statusLabel = isConnected
     ? "Connected via OAuth"
     : integration.status === "config_missing"
-      ? "OAuth environment incomplete"
-      : isNotConnected
-        ? "Ready to connect"
-        : isDisconnected
-          ? "Disconnected"
-          : "OAuth connection failed";
-  const statusDescription = isConnected
-    ? "This Shopify installation is mapped to the Aura Historia sales channel."
-    : integration.status === "config_missing"
-      ? "The app cannot start Aura Historia OAuth until the required OAuth client environment variables are configured."
-      : isNotConnected
-        ? "Shopify installation is approved. Connect Aura Historia from this merchant UI to finish sales channel authorization."
-        : isDisconnected
-          ? "Aura Historia is disconnected for this shop until you reconnect it."
-          : "The OAuth flow did not finish. Retry the Aura Historia connection once the issue below is resolved.";
-  const connectButtonLabel = isNotConnected
-    ? "Connect Aura Historia"
-    : isDisconnected
+      ? "Connection temporarily unavailable"
+      : integration.status === "disconnected"
+        ? "Disconnected"
+        : integration.status === "failed"
+          ? "OAuth connection failed"
+          : "Ready to connect";
+  const connectButtonLabel =
+    integration.status === "disconnected"
       ? "Reconnect Aura Historia"
-      : "Retry Aura Historia connection";
+      : integration.status === "failed"
+        ? "Retry Aura Historia connection"
+        : "Connect Aura Historia";
 
   return (
-    <div className={styles.page}>
-      <section className={styles.hero}>
-        <div>
-          <p className={styles.eyebrow}>Shopify sales channel</p>
-          <h1 className={styles.heading}>
-            Connect Aura Historia Sales Channel.
-          </h1>
-          <p className={styles.lead}>
-            Publish Shopify products to Aura Historia, where shoppers can
-            discover them and continue checkout in your Shopify store. Start
-            Aura Historia authorization from this embedded app, disconnect the
-            integration, or uninstall the Shopify app at any time.
-          </p>
-        </div>
+    <s-page heading="Aura Historia">
+      <s-section heading="Aura Historia account">
+        <s-stack gap="base">
+          <s-banner
+            heading={statusLabel}
+            tone={
+              isConnected
+                ? "success"
+                : integration.status === "failed"
+                  ? "critical"
+                  : "info"
+            }
+          >
+            <s-paragraph>
+              {isConnected
+                ? "Your Shopify store is connected to Aura Historia. Shoppers discover your products there and complete checkout in your Shopify store."
+                : "Connect an Aura Historia account with permission to manage a listing source. If you do not have access yet, complete partner onboarding on Aura Historia before connecting."}
+            </s-paragraph>
+          </s-banner>
+          <s-paragraph>{shop}</s-paragraph>
+          {credentials && (
+            <s-paragraph>
+              Listing source: {credentials.listingSourceId}. Last configured:{" "}
+              {credentials.updatedAt}.
+            </s-paragraph>
+          )}
+          {integration.status === "config_missing" && (
+            <s-paragraph>
+              Contact support to restore the connection service.
+            </s-paragraph>
+          )}
+          {integration.status === "failed" && (
+            <s-paragraph>
+              The connection could not finish. Try connecting again or contact
+              support.
+            </s-paragraph>
+          )}
+          <s-stack direction="inline" gap="base">
+            {isConnected ? (
+              <IntentButton intent="disconnect">
+                Disconnect Aura Historia
+              </IntentButton>
+            ) : (
+              integration.status !== "config_missing" && (
+                <s-button
+                  variant="primary"
+                  href={manualConnectUrl}
+                  target="_top"
+                >
+                  {connectButtonLabel}
+                </s-button>
+              )
+            )}
+            <s-link
+              href="https://aura-historia.com/en/partner-program"
+              target="_blank"
+            >
+              Aura Historia partner onboarding
+            </s-link>
+          </s-stack>
+          <s-paragraph>
+            Connecting authorizes catalog and advertised shipping imports. You
+            can disconnect here or uninstall the channel in Shopify at any time.
+          </s-paragraph>
+        </s-stack>
+      </s-section>
 
-        <aside className={styles.sidePanel}>
-          <section className={styles.panelMuted}>
-            <h2 className={styles.cardTitle}>Installed for</h2>
-            <p className={styles.cardBody}>
-              <span className={styles.shopName}>{shop}</span>
-            </p>
-            <div className={styles.tagList}>
-              {(scopes.length > 0 ? scopes : ["read_products"]).map(
-                (scope: string) => (
-                  <span key={scope} className={styles.tag}>
-                    {scope}
-                  </span>
-                ),
+      <s-section heading="Publishing">
+        <s-stack gap="base">
+          {!isConnected ? (
+            <s-paragraph>
+              Connect your Aura Historia account to start importing your
+              catalog.
+            </s-paragraph>
+          ) : (
+            <>
+              <s-paragraph>
+                {publication
+                  ? `${publication.atLeast ? "At least " : ""}${publication.count} active products published to this channel in Shopify.`
+                  : "The current Shopify publication count is unavailable. Refresh this page or contact support if the issue continues."}
+              </s-paragraph>
+              <s-paragraph>
+                Catalog imports are processed in the background. Acceptance by
+                Aura Historia does not mean an item is already visible in
+                search.
+              </s-paragraph>
+              {(integration.backfill === "not_queued" ||
+                catalogImport?.phase === "failed") && (
+                <s-banner
+                  tone="critical"
+                  heading="Catalog import needs attention"
+                >
+                  <s-paragraph>
+                    {catalogImport?.failed
+                      ? `${catalogImport.failed} products could not be submitted. Review their product data and retry the import.`
+                      : "The catalog import did not finish. Retry the import or contact support."}
+                  </s-paragraph>
+                </s-banner>
               )}
-            </div>
-          </section>
-
-          <section className={styles.panel}>
-            <h2 className={styles.cardTitle}>Configuration status</h2>
-            <p className={styles.cardBody}>
-              <strong>{statusLabel}.</strong> {statusDescription}
-            </p>
-          </section>
-        </aside>
-      </section>
+              {(integration.backfill === "queued" ||
+                catalogImport?.phase === "queued") && (
+                <s-paragraph>Initial product backfill was queued.</s-paragraph>
+              )}
+              {catalogImport?.phase === "processing" && (
+                <s-paragraph>
+                  The catalog is being submitted to Aura Historia. Refresh this
+                  page for an update.
+                </s-paragraph>
+              )}
+              {catalogImport?.phase === "submitted" && (
+                <s-paragraph>
+                  Last import: {catalogImport.total} products processed,{" "}
+                  {catalogImport.failed} submission failures.
+                </s-paragraph>
+              )}
+              <s-stack direction="inline" gap="base">
+                {publication && (
+                  <s-button href={publication.editorUrl} target="_top">
+                    Manage products in Shopify bulk editor
+                  </s-button>
+                )}
+                <IntentButton intent="retry_backfill">
+                  Import catalog again
+                </IntentButton>
+              </s-stack>
+            </>
+          )}
+          <s-link href="https://aura-historia.com" target="_blank">
+            View the Aura Historia marketplace
+          </s-link>
+        </s-stack>
+      </s-section>
 
       {isConnected && (
-        <section className={styles.panel} aria-label="Advertised shipping">
-          <h2 className={styles.cardTitle}>Advertised shipping</h2>
-          <p className={styles.cardBody}>
-            {SHIPPING_PHASE_LABELS[shipping?.phase ?? "idle"]}:{" "}
-            {shipping?.committed ?? 0} operations applied,{" "}
-            {shipping?.pending ?? 0} pending, {shipping?.protected ?? 0} partner
-            edits preserved, {shipping?.failures ?? 0} failed. Applied changes
-            can take time to appear in search. These are advertised terms;
-            checkout determines the shipping quote.
-          </p>
-          {shipping?.error && (
-            <p className={styles.cardBody}>
-              {shippingIssueMessage(shipping.error)}
-            </p>
-          )}
-          {!!shipping?.limitations.length && (
-            <ul className={styles.topicList}>
-              {shipping.limitations.map((code) => (
-                <li key={code} className={styles.cardBody}>
-                  {shippingLimitationMessage(code)}
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className={styles.cardBody}>
-            Read-only shipping access is approved with the Shopify installation.
-            Current settings are imported after connection; profile changes
-            refresh automatically and periodic checks repair missed changes.
-            Product synchronization continues independently.
-          </p>
-          <div className={styles.buttonRow}>
-            {integration.shippingQueueError && (
-              <p className={styles.cardBody}>
-                The shipping import could not be queued. Try again.
-              </p>
+        <s-section heading="Advertised shipping">
+          <s-stack gap="base">
+            <s-paragraph>
+              {SHIPPING_PHASE_LABELS[shipping?.phase ?? "idle"]}:{" "}
+              {shipping?.committed ?? 0} operations applied,{" "}
+              {shipping?.pending ?? 0} pending, {shipping?.protected ?? 0}{" "}
+              partner edits preserved, {shipping?.failures ?? 0} failed. Applied
+              changes can take time to appear in search. Checkout determines the
+              shipping quote.
+            </s-paragraph>
+            {shipping?.error && (
+              <s-banner
+                tone="warning"
+                heading="Shipping import needs attention"
+              >
+                <s-paragraph>
+                  {shippingIssueMessage(shipping.error)}
+                </s-paragraph>
+              </s-banner>
             )}
-            <Form method="post">
-              <button
-                className={styles.secondaryButton}
-                type="submit"
-                name="intent"
-                value="import_shipping"
-              >
+            {!!shipping?.limitations.length && (
+              <s-unordered-list>
+                {shipping.limitations.map((code) => (
+                  <s-list-item key={code}>
+                    {shippingLimitationMessage(code)}
+                  </s-list-item>
+                ))}
+              </s-unordered-list>
+            )}
+            {integration.shippingQueueError && (
+              <s-banner tone="warning">
+                <s-paragraph>
+                  The shipping import could not be queued. Try again.
+                </s-paragraph>
+              </s-banner>
+            )}
+            <s-paragraph>
+              Current settings are imported after connection. Profile changes
+              refresh automatically, and periodic checks repair missed changes.
+              Product synchronization continues independently.
+            </s-paragraph>
+            <s-stack direction="inline" gap="base">
+              <IntentButton intent="import_shipping">
                 Import shipping settings
-              </button>
-            </Form>
-            <Form method="post">
-              <button
-                className={styles.secondaryButton}
-                type="submit"
-                name="intent"
-                value="shipping_status"
-              >
+              </IntentButton>
+              <IntentButton intent="shipping_status">
                 Refresh shipping status
-              </button>
-            </Form>
-          </div>
-        </section>
+              </IntentButton>
+            </s-stack>
+          </s-stack>
+        </s-section>
       )}
-
       {shipping?.cleanup && (
-        <p className={styles.cardBody}>
-          {shipping.cleanup === "pending"
-            ? "Shipping synchronization has stopped for the previous connection. Removal of its imported assertions is pending."
-            : shipping.cleanup === "committed"
-              ? "Removal of the previous connection's owned shipping assertions committed. Manual edits were preserved."
-              : "Shipping synchronization has stopped for the previous connection. Removal could not be confirmed. Prior imported terms may still be available; reconnect and import again or contact support to resolve them."}
-        </p>
+        <s-banner
+          tone={shipping.cleanup === "committed" ? "success" : "warning"}
+          heading="Previous connection cleanup"
+        >
+          <s-paragraph>
+            {shipping.cleanup === "pending"
+              ? "Shipping synchronization has stopped for the previous connection. Removal of its imported assertions is pending."
+              : shipping.cleanup === "committed"
+                ? "Removal of the previous connection's owned shipping assertions committed. Manual edits were preserved."
+                : "Shipping synchronization has stopped. Removal could not be confirmed. Prior imported terms may remain available; reconnect and import again or contact support."}
+          </s-paragraph>
+          {!isConnected &&
+            shipping.cleanup === "committed" &&
+            !shipping.tokenRevoked && (
+              <s-paragraph>
+                Authorization revocation could not be confirmed. Contact support
+                to review the remaining access.
+              </s-paragraph>
+            )}
+        </s-banner>
       )}
-      {!isConnected &&
-        shipping?.cleanup === "committed" &&
-        !shipping.tokenRevoked && (
-          <p className={styles.cardBody}>
-            Aura Historia authorization revocation could not be confirmed.
-            Contact support to review the remaining access.
-          </p>
-        )}
 
-      <section className={isConnected ? styles.panel : styles.panelMuted}>
-        <h2 className={styles.cardTitle}>Aura Historia sales channel status</h2>
-        <ul className={styles.topicList}>
-          <li className={styles.topicItem}>
-            <span className={styles.topicName}>Aura Historia access</span>
-            <span className={styles.topicDescription}>
-              {credentials?.hasAccessToken
-                ? "Secure token stored."
-                : "Not stored yet."}
-            </span>
-          </li>
-          <li className={styles.topicItem}>
-            <span className={styles.topicName}>
-              Aura Historia Listing Source ID
-            </span>
-            <span className={styles.topicDescription}>
-              {credentials?.listingSourceId ?? "Not mapped yet."}
-            </span>
-          </li>
-          <li className={styles.topicItem}>
-            <span className={styles.topicName}>Last configured</span>
-            <span className={styles.topicDescription}>
-              {credentials?.updatedAt ?? "Not configured yet."}
-            </span>
-          </li>
-        </ul>
-
-        {integration.status === "failed" && integration.error ? (
-          <p className={styles.errorText}>OAuth error: {integration.error}</p>
-        ) : null}
-
-        {integration.status === "config_missing" ? (
-          <p className={styles.errorText}>
-            Missing environment variables:{" "}
-            {integration.missingConfig.join(", ")}
-          </p>
-        ) : null}
-
-        {isConnected && integration.backfill === "queued" ? (
-          <p className={styles.successText}>
-            Initial product backfill was queued.
-          </p>
-        ) : null}
-        {isConnected && integration.backfill === "not_queued" ? (
-          <p className={styles.errorText}>
-            Connected, but initial product backfill could not be queued. You can
-            retry without reconnecting.
-          </p>
-        ) : null}
-
-        <div className={styles.linkRow}>
-          {canManualConnect ? (
-            <a
-              className={styles.primaryButton}
-              href={manualConnectUrl}
-              target="_top"
+      <s-section heading="Terms and support">
+        <s-stack gap="base">
+          <s-paragraph>
+            Review your Aura Historia partner agreement for pricing and any
+            commission before connecting.
+          </s-paragraph>
+          <s-stack direction="inline" gap="base">
+            <s-link
+              href="https://aura-historia.com/en/terms-and-conditions"
+              target="_blank"
             >
-              {connectButtonLabel}
-            </a>
-          ) : (
-            <button
-              className={`${styles.primaryButton} ${styles.disabledButton}`}
-              type="button"
-              disabled
-            >
-              {isConnected
-                ? "Aura Historia already connected"
-                : "Connection retry unavailable"}
-            </button>
-          )}
-
-          {isConnected ? (
-            <Form method="post">
-              <input type="hidden" name="intent" value="retry_backfill" />
-              <button className={styles.secondaryButton} type="submit">
-                Retry initial backfill
-              </button>
-            </Form>
-          ) : null}
-
-          <Form method="post">
-            <input type="hidden" name="intent" value="disconnect" />
-            <button
-              className={`${styles.secondaryButton} ${!canDisconnect ? styles.disabledButton : ""}`}
-              type="submit"
-              disabled={!canDisconnect}
-            >
-              Disconnect Aura Historia
-            </button>
-          </Form>
-        </div>
-
-        {integration.disconnected ? (
-          <p className={styles.successText}>
-            Aura Historia was disconnected for this shop.
-          </p>
-        ) : null}
-        {integration.disconnectError ? (
-          <p className={styles.errorText}>{integration.disconnectError}</p>
-        ) : null}
-      </section>
-
-      <section className={styles.grid}>
-        {accessSections.map((section, index) => (
-          <article
-            key={section.title}
-            className={index === 1 ? styles.panelMuted : styles.panel}
-          >
-            <h2 className={styles.cardTitle}>{section.title}</h2>
-            <p className={styles.cardBody}>{section.description}</p>
-            <ul className={styles.topicList}>
-              {section.items.map((topic) => (
-                <li key={topic.name} className={styles.topicItem}>
-                  <span className={styles.topicName}>{topic.name}</span>
-                  <span className={styles.topicDescription}>
-                    {topic.description}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </article>
-        ))}
-
-        <article className={styles.panel}>
-          <h2 className={styles.cardTitle}>Further information and policies</h2>
-          <div className={styles.linkRow}>
-            <a className={styles.link} href="https://aura-historia.com">
-              Main website
-            </a>
-            <a
-              className={styles.link}
-              href="https://apps.shopify.com/aura-historia-partner-connect"
-            >
-              Further information
-            </a>
-            <a className={styles.link} href="https://aura-historia.com/privacy">
+              Terms &amp; conditions
+            </s-link>
+            <s-link href="https://aura-historia.com/en/privacy" target="_blank">
               Privacy
-            </a>
-            <a className={styles.link} href="https://aura-historia.com/imprint">
+            </s-link>
+            <s-link href="https://aura-historia.com/en/imprint" target="_blank">
               Imprint
-            </a>
-            <a
-              className={styles.link}
-              href="https://aura-historia.com/terms-and-conditions"
-            >
-              Terms & conditions
-            </a>
-          </div>
-          <p className={styles.cardBody}>
-            Direct contact:{" "}
-            <a
-              className={styles.contact}
-              href="mailto:contact@aura-historia.com"
-            >
+            </s-link>
+            <s-link href="mailto:contact@aura-historia.com">
               contact@aura-historia.com
-            </a>
-          </p>
-        </article>
-      </section>
-    </div>
+            </s-link>
+          </s-stack>
+        </s-stack>
+      </s-section>
+    </s-page>
   );
 }

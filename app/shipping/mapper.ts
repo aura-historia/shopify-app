@@ -1,3 +1,4 @@
+import { CURRENCY_MINOR_UNITS as CURRENCIES } from "../currency";
 import type {
   ShippingApplicabilityData,
   ShippingAreaData,
@@ -18,37 +19,6 @@ import {
 } from "./model";
 
 const RELEASE = "iso-codes-4.20.1" as const;
-const CURRENCIES: Record<ShippingCurrencyCode, number> = {
-  EUR: 2,
-  GBP: 2,
-  USD: 2,
-  AUD: 2,
-  CAD: 2,
-  NZD: 2,
-  CNY: 2,
-  BRL: 2,
-  PLN: 2,
-  TRY: 2,
-  JPY: 0,
-  CZK: 2,
-  RUB: 2,
-  AED: 2,
-  SAR: 2,
-  HKD: 2,
-  SGD: 2,
-  CHF: 2,
-  ZAR: 2,
-  SEK: 2,
-  DKK: 2,
-  NOK: 2,
-  KRW: 0,
-  INR: 2,
-  TWD: 2,
-  HUF: 2,
-  RON: 2,
-  MXN: 2,
-  THB: 2,
-};
 
 export function exactMoney(money: Money): ShippingMoneyData {
   if (!Object.hasOwn(CURRENCIES, money.currencyCode)) {

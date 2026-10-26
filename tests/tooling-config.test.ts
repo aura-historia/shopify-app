@@ -82,7 +82,7 @@ describe("tooling configuration", () => {
       "utf8",
     );
     assert.equal(packageJson.scripts["openapi:generate"], "openapi-ts");
-    assert.match(config, /8f39fcd549ebc49608bb2722bb219e623c6742e2/);
+    assert.match(config, /597425dcca064e7128072b988042ab3f9b1aedd1/);
     assert.match(config, /output: "app\/generated\/api"/);
   });
 

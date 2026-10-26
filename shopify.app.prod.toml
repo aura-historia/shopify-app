@@ -49,4 +49,4 @@ url = "https://partner-connect.aura-historia.com/app"
 
 [build]
 include_config_on_deploy = true
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
