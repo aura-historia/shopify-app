@@ -1,9 +1,14 @@
 name: Deploy
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "*.*.*"
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -17,6 +22,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Validate semver tag
+        if: github.event_name == 'push'
         run: |
           if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Expected a tag like 1.2.3, got ${GITHUB_REF_NAME}" >&2
@@ -46,6 +52,7 @@ jobs:
         run: npx wrangler deploy
 
       - name: Deploy & release Shopify app version
+        if: github.event_name == 'push'
         env:
           SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
         run: >

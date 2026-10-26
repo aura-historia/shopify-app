@@ -1,8 +1,59 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { addDocumentResponseHeaders } from "../app/iframe-protection.server";
+import {
+  addDocumentResponseHeaders,
+  protectPrivateResponse,
+} from "../app/iframe-protection.server";
 
 describe("iframe protection", () => {
+  it("prevents OAuth redirects and errors from being cached or leaking callback URLs through referrers", () => {
+    for (const path of [
+      "/oauth/callback?code=private-code&state=private-state",
+      "/app",
+      "/app.data",
+      "/auth/callback",
+      "/auth.data",
+      "/app.data?_routes=routes%2Fapp._index",
+      "/?shop=example.myshopify.com&id_token=private-token",
+    ]) {
+      const response = protectPrivateResponse(
+        new Request(`https://app.example${path}`),
+        new Response(null, { status: 302, headers: { Location: "/app" } }),
+      );
+      assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+      assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("Location"), "/app");
+    }
+  });
+  it("preserves response bodies, cookies, and public response caching", async () => {
+    const headers = new Headers({ "Cache-Control": "public, max-age=300" });
+    headers.append("Set-Cookie", "first=one; HttpOnly; Secure");
+    headers.append("Set-Cookie", "second=two; HttpOnly; Secure");
+    const response = new Response("private data", { headers, status: 401 });
+    const protectedResponse = protectPrivateResponse(
+      new Request("https://app.example/app.data"),
+      response,
+    );
+    assert.equal(protectedResponse.status, 401);
+    assert.equal(await protectedResponse.text(), "private data");
+    assert.deepEqual(
+      protectedResponse.headers.getSetCookie(),
+      headers.getSetCookie(),
+    );
+    const publicResponse = new Response("public page", { headers });
+    assert.equal(
+      protectPrivateResponse(
+        new Request("https://app.example/"),
+        publicResponse,
+      ),
+      publicResponse,
+    );
+    assert.equal(
+      publicResponse.headers.get("Cache-Control"),
+      "public, max-age=300",
+    );
+  });
   it("allows the authenticated shop and Shopify admin to frame the app", () => {
     const headers = new Headers();
 

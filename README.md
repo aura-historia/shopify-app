@@ -24,6 +24,8 @@
 
 The **Aura Historia** app is a public, embedded Shopify sales-channel app. It lets approved merchants connect their shops to Aura Historia, makes product discovery possible on Aura Historia, and returns shoppers to the merchant’s Shopify store for checkout.
 
+The app is free to install and use, with no charges or commissions. Shopify has already approved the app. Making it publicly visible in the Shopify App Store is a separate action planned for later.
+
 The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, advertised shipping imports, and uninstall cleanup. Amazon EventBridge routing and downstream catalog consumers are maintained separately.
 
 | Shopify | Aura Historia |
@@ -92,7 +94,7 @@ The required public-app compliance subscriptions and product subscriptions are d
 - [Node.js](https://nodejs.org/) **22.18 or later**
 - A Shopify Partner account and app credentials
 - A Cloudflare KV namespace for session storage
-- Aura Historia OAuth client credentials
+- Aura Historia OAuth client ID and secret (confidential client)
 
 ### Start the app
 
@@ -112,7 +114,7 @@ AURA_HISTORIA_OAUTH_CLIENT_SECRET=
 AURA_HISTORIA_OAUTH_ENV=dev
 ```
 
-These values override the built-in environment defaults when needed. The committed production `wrangler.jsonc` also contains an intentionally invalid placeholder client ID: replace it with the registered production `oc_...` ID before deployment. The stage and production OAuth clients must each allow `listing-sources:read listing-sources:write product-listings:read product-listings:write` and their respective Shopify callback redirect URI. OAuth refuses to start with either placeholder. The backend development API base URL is `https://api.stage.aura-historia.com` (production: `https://api.aura-historia.com`). For the Shopify connection, request the Aura Historia OAuth scopes `listing-sources:read listing-sources:write product-listings:read product-listings:write` (separate from the Shopify access scopes below). Set `AURA_HISTORIA_API_BASE_URL` and `AURA_HISTORIA_OAUTH_SCOPE` to match the target backend and registered OAuth client:
+Use `.dev.vars` for local Cloudflare binding overrides; shell variables do not override bindings in `wrangler.jsonc`. Production uses the registered client `oc_01m5vyyghjecx8c43drb05hh4n`; its secret is stored as `AURA_HISTORIA_OAUTH_CLIENT_SECRET` in Cloudflare, never in source. Both the client ID and secret are required (`client_secret_post` plus S256 PKCE). The stage and production OAuth clients must each allow `listing-sources:read listing-sources:write product-listings:read product-listings:write` and their respective Shopify callback redirect URI. OAuth refuses to start with a placeholder ID or missing secret. The backend development API base URL is `https://api.stage.aura-historia.com` (production: `https://api.aura-historia.com`). For the Shopify connection, request the Aura Historia OAuth scopes `listing-sources:read listing-sources:write product-listings:read product-listings:write` (separate from the Shopify access scopes below). Set `AURA_HISTORIA_API_BASE_URL` and `AURA_HISTORIA_OAUTH_SCOPE` to match the target backend and registered OAuth client:
 
 ```bash
 AURA_HISTORIA_API_BASE_URL=https://api.stage.aura-historia.com
@@ -233,12 +235,12 @@ permissions, capabilities or a bounded failure. **Refresh shipping status** dist
 committed operations from pending work; search indexing remains eventual.
 
 The official generated Aura client is pinned in `openapi-ts.config.ts` to backend
-commit `8f39fcd549ebc49608bb2722bb219e623c6742e2` (B05, PR #2146).
+commit `597425dcca064e7128072b988042ab3f9b1aedd1` (the production `/v1` contract).
 Run `npm run openapi:generate` to reproduce it; review later contract changes
-explicitly. `tests/fixtures/shipping-contract.json` is the executable contract
-fixture from the same commit. Ordinary typed shipping writes carry `import` metadata
+explicitly. Backend URLs use `/v1`, including `/v1/oauth/token` and `/v1/oauth/revoke`; the former `/api/v1` routes have no compatibility aliases. Browser consent starts at `/en/oauth/authorize`. Catalog and shipping imports share the current currency registry, including ARS and zero-decimal JPY/KRW. `tests/fixtures/shipping-contract.json` is the executable contract
+fixture from that contract (its command examples remain unchanged). Ordinary typed shipping writes carry `import` metadata
 with `observation: {}` for successful acquisitions, and no expiry/freshness fields.
-Returned assertion evidence uses `verifiedAt`.
+Protected shipping evidence is excluded from management responses. The strict import/write contract remains separate from the public shipping read projection.
 
 ### Continuous refresh and recovery
 
@@ -248,8 +250,7 @@ destinations; localhost development therefore uses the deployed receiver. Tunnel
 configuration declares `/webhooks/shipping`, resolved to the active HTTPS tunnel.
 The product/compliance EventBridge destinations and uninstall/bulk endpoints retain
 their existing destinations. No additional product notification or catalog mutation
-is submitted by shipping. Shopify configuration activation, deployment and live
-exports require separate authorization.
+is submitted by shipping. A Worker deployment does not activate a new Shopify configuration version. Shopify configuration is released separately with a semver tag; live merchant exports are initiated only by the authorized installation.
 
 The per-shop Durable Object has a transactional hint inbox independent of provider
 I/O. It retains up to 512 delivery receipts per source/connection for 48 hours,
@@ -364,7 +365,15 @@ The GitHub Actions workflow requires these repository secrets:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `SHOPIFY_APP_AUTOMATION_TOKEN`
 
-See [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) for the release definition.
+See [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) for the release definition. A manual workflow dispatch runs the same checks and deploys only the Worker. A semver tag also releases the production Shopify app configuration. Production URL rewriting by Shopify development commands is disabled.
+
+The Worker keeps OAuth/authenticated responses private and uncached, uses `Referrer-Policy: no-referrer`, and redacts query strings from Cloudflare invocation logs. Catalog progress stores only phase/counts for seven days and is cleared on disconnect/uninstall; access tokens remain only in the separate existing credential stores. Publication counts come from the current Shopify app publication and retain the API's lower-bound indicator. The bulk editor link targets that publication. Import acceptance is distinct from search visibility.
+
+## Production OAuth
+
+The production Aura Historia client ID is `oc_01m5vyyghjecx8c43drb05hh4n`. Its registered callback is exactly `https://partner-connect.aura-historia.com/oauth/callback`, and its four scopes are configured in `wrangler.jsonc`. The client secret is installed in the production Worker's `AURA_HISTORIA_OAUTH_CLIENT_SECRET` secret binding.
+
+The webapp consent flow supports `/v1`, S256 PKCE, registered callback validation, and `listing_source_id`. Use a current webapp version; older checkouts using `/api/v1` and partner-shop IDs are incompatible with the production backend.
 
 ## Public app information
 

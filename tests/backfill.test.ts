@@ -144,7 +144,8 @@ describe("Shopify IDs, locale, currency and domain", () => {
   it("accepts supported currencies and normalizes the shop domain", () => {
     assert.equal(mapShopifyCurrencyCode("JPY"), "JPY");
     assert.equal(mapShopifyCurrencyCode("EUR"), "EUR");
-    assert.equal(mapShopifyCurrencyCode("SEK"), undefined);
+    assert.equal(mapShopifyCurrencyCode("SEK"), "SEK");
+    assert.equal(mapShopifyCurrencyCode("ARS"), "ARS");
     assert.equal(mapShopifyCurrencyCode(undefined), undefined);
     assert.equal(normalizeShopifyDomain(" My-Shop.MyShopify.com "), shopDomain);
     assert.equal(normalizeShopifyDomain("  "), undefined);
@@ -158,8 +159,8 @@ describe("Shopify IDs, locale, currency and domain", () => {
       /missing Shopify currency/,
     );
     assert.throws(
-      () => requireSupportedShopifyCurrency("SEK"),
-      /Shopify currency: SEK/,
+      () => requireSupportedShopifyCurrency("XXX"),
+      /Shopify currency: XXX/,
     );
   });
 
@@ -180,8 +181,8 @@ describe("Shopify IDs, locale, currency and domain", () => {
     );
     assert.throws(
       () =>
-        buildShopifyIngestionConfiguration({ currencyCode: "SEK" }, shopDomain),
-      /Shopify currency: SEK/,
+        buildShopifyIngestionConfiguration({ currencyCode: "XXX" }, shopDomain),
+      /Shopify currency: XXX/,
     );
   });
 });
@@ -228,7 +229,7 @@ describe("Shopify product transformation", () => {
       null,
     );
     assert.equal(
-      transformProduct(makeProduct(), [], "10.00", "en", "SEK", shopDomain)
+      transformProduct(makeProduct(), [], "10.00", "en", "XXX", shopDomain)
         .price,
       null,
     );
@@ -375,7 +376,7 @@ describe("Shopify JSONL and KV context", () => {
     assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
     kv.entries.set(
       `aura-historia:backfill:${shopDomain}`,
-      JSON.stringify(makeContext({ currencyCode: "SEK" as never })),
+      JSON.stringify(makeContext({ currencyCode: "XXX" as never })),
     );
     assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
   });
@@ -467,6 +468,27 @@ describe("Shopify GraphQL", () => {
       await fetchBulkOperationResultUrl(request, bulkOperationId),
       "https://cdn.shopify.com/result.jsonl",
     );
+    for (const node of [
+      null,
+      { status: "RUNNING" },
+      { status: "COMPLETED", url: null, objectCount: "3" },
+    ]) {
+      await assert.rejects(() =>
+        fetchBulkOperationResultUrl(
+          async () => ({ data: { node } }),
+          bulkOperationId,
+        ),
+      );
+    }
+    assert.equal(
+      await fetchBulkOperationResultUrl(
+        async () => ({
+          data: { node: { status: "COMPLETED", url: null, objectCount: "0" } },
+        }),
+        bulkOperationId,
+      ),
+      null,
+    );
     await assert.rejects(
       () =>
         fetchBulkOperationResultUrl(
@@ -486,7 +508,7 @@ describe("listing source ingestion configuration", () => {
         assert.equal(request.method, "PUT");
         assert.equal(
           request.url,
-          `${apiBaseUrl}/api/v1/listing-sources/${listingSourceId}/ingestion-configurations/shopify`,
+          `${apiBaseUrl}/v1/listing-sources/${listingSourceId}/ingestion-configurations/shopify`,
         );
         assert.equal(
           request.headers.get("Authorization"),
@@ -593,7 +615,7 @@ describe("async product listing batches", () => {
         assert.equal(request.method.toLowerCase(), verb);
         assert.equal(
           request.url,
-          `${apiBaseUrl}/api/v1/listing-sources/${listingSourceId}/product-listings/async`,
+          `${apiBaseUrl}/v1/listing-sources/${listingSourceId}/product-listings/async`,
         );
         assert.equal(
           request.headers.get("Authorization"),
@@ -1053,7 +1075,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
   }
 
   it("refuses missing or unsupported currency before provider PUT or bulk submission", async () => {
-    for (const currencyCode of [undefined, "SEK"]) {
+    for (const currencyCode of [undefined, "XXX"]) {
       const kv = makeKv();
       const graphql = mock.fn(async () => ({
         data: { shop: { currencyCode } },
@@ -1160,6 +1182,42 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       false,
     );
     assert.equal(kv.put.mock.callCount(), 0);
+  });
+
+  it("keeps an accepted export usable when optional progress writes fail", async () => {
+    const kv = makeKv();
+    const put = kv.put;
+    let statusWrites = 0;
+    kv.put = mock.fn(async (key, value, options) => {
+      if (key.startsWith("aura-historia:catalog-status:")) {
+        statusWrites++;
+        throw new Error("KV unavailable");
+      }
+      await put(key, value, options);
+    });
+    assert.equal(
+      await triggerBackfill(
+        async () => ({
+          data: {
+            bulkOperationRunQuery: {
+              bulkOperation: { id: bulkOperationId, status: "CREATED" },
+            },
+          },
+        }),
+        kv,
+        shopDomain,
+        listingSourceId,
+        accessToken,
+        apiBaseUrl,
+        validatedMetadata,
+      ),
+      true,
+    );
+    assert.equal(statusWrites, 3);
+    assert.equal(
+      (await loadBackfillContext(kv, shopDomain))?.bulkOperationId,
+      bulkOperationId,
+    );
   });
 });
 

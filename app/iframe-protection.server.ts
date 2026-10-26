@@ -21,6 +21,7 @@ export function addDocumentResponseHeaders(
   request: Request,
   responseHeaders: Headers,
 ) {
+  responseHeaders.set("Referrer-Policy", "no-referrer");
   const shop = getEmbeddedShopDomain(request);
 
   if (!shop) {
@@ -32,4 +33,22 @@ export function addDocumentResponseHeaders(
     "Content-Security-Policy",
     `frame-ancestors https://${shop} ${adminFrameAncestors.join(" ")};`,
   );
+}
+
+export function protectPrivateResponse(request: Request, response: Response) {
+  const url = new URL(request.url);
+  if (
+    /^\/(?:app|auth|oauth|webhooks)(?:\/|\.data$|$)/.test(url.pathname) ||
+    url.searchParams.has("id_token")
+  ) {
+    const headers = new Headers(response.headers);
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("Referrer-Policy", "no-referrer");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  return response;
 }

@@ -48,13 +48,13 @@ function makeEnv(prepareConnection = async () => {}) {
     KV: makeKv(),
     AURA_HISTORIA_OAUTH_CLIENT_ID: "oc_01h455vb4pex5vy7enb1p677vn",
     AURA_HISTORIA_OAUTH_CLIENT_SECRET: clientSecret,
-    AURA_HISTORIA_OAUTH_TOKEN_URL: "https://api.test.com/api/v1/oauth/token",
+    AURA_HISTORIA_OAUTH_TOKEN_URL: "https://api.test.com/v1/oauth/token",
     SHOPIFY_APP_URL: "https://partner-connect.test",
     SHOP_COORDINATOR: { getByName: () => ({ prepareConnection }) },
   };
 }
 
-// Mirrors the stage backend, which echoes submitted credentials in `detail`.
+// A deliberately hostile upstream response must never reflect credentials.
 function rejectEchoingCredentials(init?: RequestInit) {
   const body = new URLSearchParams(init?.body as URLSearchParams);
   return Response.json(
@@ -187,7 +187,7 @@ describe("Aura Historia OAuth callback error boundary", () => {
     assert.equal(fetchMock.mock.callCount(), 2);
     assert.equal(
       String(fetchMock.mock.calls[1]?.arguments[0]),
-      "https://api.test.com/api/v1/oauth/revoke",
+      "https://api.test.com/v1/oauth/revoke",
     );
     assert.deepEqual(logged, [
       "Failed to revoke token after connection setup failure: OAuth token revocation failed (HTTP 401, OAUTH_INVALID_CLIENT_SECRET)",

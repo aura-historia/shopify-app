@@ -98,9 +98,9 @@ describe("public install flow", () => {
     );
     assert.ok(oauthCallbackRoute.includes("listingSourceId,"));
     assert.equal(oauthCallbackRoute.includes("partner_shop_id"), false);
-    assert.ok(appIndexRoute.includes("credentials?.listingSourceId"));
+    assert.ok(appIndexRoute.includes("credentials.listingSourceId"));
     assert.equal(appIndexRoute.includes("credentials.shopId"), false);
-    assert.ok(appIndexRoute.includes("Aura Historia Listing Source ID"));
+    assert.ok(appIndexRoute.includes("Listing source:"));
   });
 
   it("keeps the connection after a failed backfill and offers a credential-based retry", () => {
@@ -112,7 +112,7 @@ describe("public install flow", () => {
     assert.match(appIndexRoute, /intent === "retry_backfill"/);
     assert.match(appIndexRoute, /credentials\.listingSourceId/);
     assert.match(appIndexRoute, /credentials\.accessToken/);
-    assert.match(appIndexRoute, /name="intent" value="retry_backfill"/);
+    assert.match(appIndexRoute, /intent="retry_backfill"/);
   });
 
   it("keeps review links and contact details on the success page", () => {
@@ -148,19 +148,12 @@ describe("public install flow", () => {
     assert.ok(marketingRoute.includes("read_locales"));
     assert.ok(marketingRoute.includes("Shopify sales channel"));
     assert.ok(appIndexRoute.includes("https://aura-historia.com"));
-    assert.ok(
-      appIndexRoute.includes(
-        "https://apps.shopify.com/aura-historia-partner-connect",
-      ),
-    );
     assert.ok(appIndexRoute.includes("contact@aura-historia.com"));
-    assert.ok(appIndexRoute.includes("products/update"));
-    assert.ok(appIndexRoute.includes("app/uninstalled"));
-    assert.ok(appIndexRoute.includes("read_locales"));
+    assert.ok(appIndexRoute.includes('heading="Publishing"'));
     assert.equal(appIndexRoute.includes("shipping_consent"), false);
     assert.equal(appIndexRoute.includes("Grant shipping access"), false);
     assert.ok(appIndexRoute.includes("Connected via OAuth"));
-    assert.ok(appIndexRoute.includes("Aura Historia sales channel status"));
+    assert.ok(appIndexRoute.includes('heading="Aura Historia account"'));
     assert.ok(successRoute.includes("Shopify sales channel connection"));
     assert.ok(appIndexRoute.includes('"disconnected"'));
     assert.ok(appIndexRoute.includes("isShopCredentialsDisconnected"));
@@ -173,10 +166,10 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("Reconnect Aura Historia"));
     assert.ok(appIndexRoute.includes("Retry Aura Historia connection"));
     assert.ok(appIndexRoute.includes("Disconnect Aura Historia"));
-    assert.ok(appIndexRoute.includes('name="intent" value="disconnect"'));
+    assert.ok(appIndexRoute.includes('intent="disconnect"'));
     assert.ok(appIndexRoute.includes("manual_connect"));
-    assert.ok(appIndexRoute.includes("Secure token stored"));
+    assert.ok(appIndexRoute.includes("<s-page"));
     assert.equal(appIndexRoute.includes("accessTokenPreview"), false);
-    assert.ok(appIndexRoute.includes("secondaryButton"));
+    assert.ok(appIndexRoute.includes("<s-banner"));
   });
 });

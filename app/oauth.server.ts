@@ -89,9 +89,9 @@ export type BuildOAuthAuthorizeUrlResult =
     };
 
 const AURA_HISTORIA_STAGE_AUTHORIZE_URL =
-  "https://stage.aura-historia.com/oauth/authorize";
+  "https://stage.aura-historia.com/en/oauth/authorize";
 const AURA_HISTORIA_PROD_AUTHORIZE_URL =
-  "https://aura-historia.com/oauth/authorize";
+  "https://aura-historia.com/en/oauth/authorize";
 const AURA_HISTORIA_STAGE_API_BASE_URL = "https://api.stage.aura-historia.com";
 const AURA_HISTORIA_PROD_API_BASE_URL = "https://api.aura-historia.com";
 const SHOPIFY_APP_PROD_URL = "https://partner-connect.aura-historia.com";
@@ -102,6 +102,18 @@ const OAUTH_PENDING_CONTEXT_TTL_SECONDS = 10 * 60;
 const SHOPIFY_STORE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const OAUTH_CLIENT_ID_PATTERN = /^oc_[0-7][0-9a-hjkmnp-tv-z]{25}$/;
 const OAUTH_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const OAUTH_PROTOCOL_ERRORS = new Set([
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unsupported_grant_type",
+  "unsupported_response_type",
+  "invalid_scope",
+  "invalid_target",
+  "access_denied",
+  "server_error",
+  "temporarily_unavailable",
+]);
 
 export function isValidOAuthClientId(value: string) {
   return OAUTH_CLIENT_ID_PATTERN.test(value);
@@ -177,7 +189,7 @@ export function getAuraHistoriaOAuthConfig(
     authorizeUrl,
     tokenUrl:
       envValue(env, "AURA_HISTORIA_OAUTH_TOKEN_URL") ??
-      `${apiBaseUrl}/api/v1/oauth/token`,
+      `${apiBaseUrl}/v1/oauth/token`,
     redirectUri,
     clientId: envValue(env, "AURA_HISTORIA_OAUTH_CLIENT_ID") ?? "",
     clientSecret: envValue(env, "AURA_HISTORIA_OAUTH_CLIENT_SECRET") ?? "",
@@ -381,7 +393,8 @@ async function readOAuthProblem(response: Response) {
     // A body that is not JSON only reports the status.
   }
 
-  return typeof code === "string" && OAUTH_ERROR_CODE_PATTERN.test(code)
+  return typeof code === "string" &&
+    (OAUTH_ERROR_CODE_PATTERN.test(code) || OAUTH_PROTOCOL_ERRORS.has(code))
     ? `HTTP ${response.status}, ${code}`
     : `HTTP ${response.status}`;
 }

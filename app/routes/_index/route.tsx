@@ -157,6 +157,10 @@ export default function MarketingIndex() {
               automatically.
             </p>
 
+            <p className={styles.lead}>
+              Free to install and use. No charges or commissions.
+            </p>
+
             <div className={styles.buttonRow}>
               <a
                 className={styles.primaryAction}
@@ -235,7 +239,7 @@ export default function MarketingIndex() {
             ))}
           </div>
           <p className={styles.footerMeta}>
-            Need a direct contact for Shopify review or merchant support? Email
+            Need help with the integration? Email{" "}
             <a
               className={styles.contact}
               href="mailto:contact@aura-historia.com"

@@ -1,3 +1,5 @@
+import { saveCatalogImportStatus } from "./catalog.server";
+import { CURRENCY_MINOR_UNITS } from "./currency";
 import { createClient } from "./generated/api/client";
 import {
   deleteAsyncPartnerProductListings,
@@ -91,32 +93,14 @@ query BulkOperationStatus($id: ID!) {
       id
       status
       errorCode
+      objectCount
       url
     }
   }
 }
 `;
 
-const SUPPORTED_CURRENCIES = new Set<CurrencyData>([
-  "EUR",
-  "GBP",
-  "USD",
-  "AUD",
-  "CAD",
-  "NZD",
-  "CNY",
-  "BRL",
-  "PLN",
-  "TRY",
-  "JPY",
-  "CZK",
-  "RUB",
-  "AED",
-  "SAR",
-  "HKD",
-  "SGD",
-  "CHF",
-]);
+const SUPPORTED_CURRENCIES = new Set(Object.keys(CURRENCY_MINOR_UNITS));
 
 const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
   de: "de",
@@ -361,7 +345,7 @@ export function transformProduct(
   const currency = mapShopifyCurrencyCode(currencyCode);
   const amount =
     currency && variantPrice !== null
-      ? toMinorUnits(variantPrice, currency === "JPY" ? 0 : 2)
+      ? toMinorUnits(variantPrice, CURRENCY_MINOR_UNITS[currency])
       : null;
   const handle = product.handle?.trim();
   const url =
@@ -606,6 +590,7 @@ interface BulkOperationNodeResponse {
       id: string;
       status: string;
       errorCode: string | null;
+      objectCount?: string;
       url: string | null;
     } | null;
   };
@@ -626,9 +611,10 @@ export async function fetchBulkOperationResultUrl(
   }
 
   const node = json.data?.node;
-  if (node?.status !== "COMPLETED") {
-    return null;
-  }
+  if (node?.status !== "COMPLETED" || node.errorCode)
+    throw new Error("Shopify catalog export did not complete");
+  if (!node.url && node.objectCount !== "0")
+    throw new Error("Shopify catalog export has no download URL");
 
   return node.url ?? null;
 }
@@ -889,6 +875,12 @@ export async function triggerBackfill(
       shopDomain,
       bulkOperationId,
       createdAt: new Date().toISOString(),
+    });
+
+    await saveCatalogImportStatus(kv, shopDomain, {
+      phase: "queued",
+      total: 0,
+      failed: 0,
     });
 
     console.log(

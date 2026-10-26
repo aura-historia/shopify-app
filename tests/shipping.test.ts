@@ -778,19 +778,15 @@ describe("typed shipping publication", () => {
     assert.equal(state.work[1].done, undefined);
   });
 
-  it("keeps canonical returned evidence free of expiry fields", () => {
+  it("keeps protected shipping evidence out of management responses", () => {
     const types = readFileSync(
       new URL("../app/generated/api/types.gen.ts", import.meta.url),
       "utf8",
     );
-    const evidence = /export type DeliveryAssertionEvidence = \{([^}]+)\}/.exec(
+    const profile = /export type ShippingProfileData = \{([^}]+)\}/.exec(
       types,
     )?.[1];
-    assert.ok(evidence);
-    assert.match(evidence, /verifiedAt: string/);
-    assert.doesNotMatch(
-      evidence,
-      /status|freshUntil|expiresAt|validityDeadline/,
-    );
+    assert.ok(profile);
+    assert.doesNotMatch(profile, /evidence|verifiedAt|freshUntil|expiresAt/);
   });
 });

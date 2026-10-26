@@ -5,6 +5,8 @@ import {
   loadBackfillContext,
   processBackfillResults,
 } from "../backfill.server";
+import { saveCatalogImportStatus } from "../catalog.server";
+import { summarizeOAuthError } from "../oauth.server";
 import { offlineGraphql } from "../shipping/runtime.server";
 import { getShopifyWebhook } from "../shopify.server";
 
@@ -19,7 +21,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   const { shop, payload } = await shopify.authenticate.webhook(request);
   const body = payload as BulkOperationPayload;
 
-  if (body.status !== "completed" || body.type !== "query") {
+  if (body.type !== "query") {
     return new Response(null, { status: 200 });
   }
 
@@ -37,9 +39,24 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     return new Response(null, { status: 200 });
   }
 
+  if (body.status !== "completed") {
+    await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
+      phase: "failed",
+      total: 0,
+      failed: 0,
+    });
+    await clearBackfillContext(context.cloudflare.env.KV, shop);
+    return new Response(null, { status: 200 });
+  }
+
   context.cloudflare.ctx.waitUntil(
     (async () => {
       try {
+        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
+          phase: "processing",
+          total: 0,
+          failed: 0,
+        });
         const graphqlRequest = offlineGraphql(context, shop);
         const jsonlUrl = await fetchBulkOperationResultUrl(
           graphqlRequest,
@@ -47,13 +64,20 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
         );
 
         if (!jsonlUrl) {
-          console.warn(
-            `Bulk operation ${bulkOpId} has no download URL for ${shop}`,
-          );
+          await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
+            phase: "submitted",
+            total: 0,
+            failed: 0,
+          });
           return;
         }
 
         const result = await processBackfillResults(jsonlUrl, backfillCtx);
+        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
+          phase: result.failures.length ? "failed" : "submitted",
+          total: result.total,
+          failed: result.failures.length,
+        });
 
         console.log(
           `Backfill complete for ${shop}: ${result.total} products, ${result.failures.length} failures`,
@@ -63,7 +87,15 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
           console.warn("Failed product IDs:", result.failures.join(", "));
         }
       } catch (error) {
-        console.error(`Backfill processing failed for ${shop}:`, error);
+        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
+          phase: "failed",
+          total: 0,
+          failed: 0,
+        });
+        console.error(
+          `Backfill processing failed for ${shop}:`,
+          summarizeOAuthError(error, [backfillCtx.accessToken]),
+        );
       } finally {
         await clearBackfillContext(context.cloudflare.env.KV, shop);
       }

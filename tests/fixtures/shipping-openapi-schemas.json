@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "commit": "8f39fcd549ebc49608bb2722bb219e623c6742e2",
+    "commit": "597425dcca064e7128072b988042ab3f9b1aedd1",
     "path": "docs/swagger.yaml"
   },
   "components": {
@@ -48,7 +48,7 @@
           "sequence": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9223372036854776000
+            "maximum": 9223372036854775807
           },
           "requestKey": {
             "type": "string",
@@ -321,12 +321,12 @@
           "minimum": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 18446744073709552000
+            "maximum": 18446744073709551615
           },
           "maximum": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 18446744073709552000
+            "maximum": 18446744073709551615
           }
         },
         "description": "Ordered inclusive bounds."
@@ -353,7 +353,7 @@
           "amount_minor": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 18446744073709552000
+            "maximum": 18446744073709551615
           },
           "currency": {
             "$ref": "#/components/schemas/ShippingCurrencyCode"
@@ -392,7 +392,8 @@
           "HUF",
           "RON",
           "MXN",
-          "THB"
+          "THB",
+          "ARS"
         ]
       },
       "ShippingAreaData": {
@@ -1302,7 +1303,7 @@
           "expectedRevision": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9223372036854776000
+            "maximum": 9223372036854775807
           },
           "content": {
             "$ref": "#/components/schemas/ShippingProfileContentData"
@@ -1329,7 +1330,7 @@
           "expectedRevision": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9223372036854776000
+            "maximum": 9223372036854775807
           }
         }
       },
@@ -1344,7 +1345,7 @@
           "expectedRevision": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9223372036854776000
+            "maximum": 9223372036854775807
           },
           "shippingProfileId": {
             "type": "string",
@@ -1363,7 +1364,7 @@
           "expectedRevision": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9223372036854776000
+            "maximum": 9223372036854775807
           }
         }
       },
@@ -1378,7 +1379,7 @@
           "expectedVersion": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9223372036854776000
+            "maximum": 9223372036854775807
           },
           "delivery": {
             "oneOf": [
