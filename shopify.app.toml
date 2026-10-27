@@ -9,14 +9,14 @@ application_url = "https://partner-connect.aura-historia.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,read_locales,read_shipping"
+scopes = "read_products,read_product_listings,read_locales,read_shipping"
 use_legacy_install_flow = false
 
 [webhooks]
 api_version = "2026-10"
 
   [[webhooks.subscriptions]]
-  topics = ["products/create", "products/update", "products/delete"]
+  topics = ["product_listings/add", "product_listings/update", "product_listings/remove"]
   uri = "arn:aws:events:eu-central-1::event-source/aws.partner/shopify.com/359227195393/aura-historia-backend-dev"
 
   [[webhooks.subscriptions]]

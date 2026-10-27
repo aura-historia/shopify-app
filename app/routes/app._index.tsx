@@ -6,6 +6,7 @@ import {
   triggerBackfill,
 } from "../backfill.server";
 import {
+  type CatalogImportError,
   clearCatalogImportStatus,
   getChannelPublication,
   loadCatalogImportStatus,
@@ -47,6 +48,21 @@ type IntegrationStatus =
   | "not_connected"
   | "failed"
   | "config_missing";
+
+const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
+  MISSING_SCOPE:
+    "Approve the updated Shopify permissions for Aura Historia, then import the catalog again.",
+  MISSING_PUBLICATION:
+    "The Aura Historia sales channel was not found in Shopify. Reinstall the channel or contact support.",
+  SHOPIFY_READ_FAILED:
+    "Shopify product data could not be read. Retry the import or contact support.",
+  PUBLICATION_CHANGED:
+    "The sales channel changed while the import ran. Import the catalog again.",
+  INCOMPLETE_EXPORT:
+    "Shopify's catalog export could not be verified as complete. Published products were updated, but nothing was withdrawn for being absent. Retry the import.",
+  RECONCILIATION_FAILED:
+    "Previously imported products that no longer exist in Shopify could not all be withdrawn. Retry the import.",
+};
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
@@ -352,13 +368,40 @@ export default function AppIndex() {
             </s-paragraph>
           ) : (
             <>
+              {publication?.state === "missing_scope" ? (
+                <s-banner
+                  tone="critical"
+                  heading="Approve updated Shopify permissions"
+                >
+                  <s-paragraph>
+                    Aura Historia imports only products published to this sales
+                    channel and needs access to its product listings. Approve
+                    the updated app permissions in Shopify, then import the
+                    catalog again. No catalog import runs until then.
+                  </s-paragraph>
+                </s-banner>
+              ) : publication?.state === "missing_publication" ? (
+                <s-banner tone="critical" heading="Sales channel not found">
+                  <s-paragraph>
+                    {CATALOG_ISSUE_MESSAGES.MISSING_PUBLICATION} No catalog
+                    import runs without it.
+                  </s-paragraph>
+                </s-banner>
+              ) : (
+                <s-paragraph>
+                  {publication?.state !== "ready"
+                    ? "The Aura Historia channel selection is unavailable. Refresh this page or contact support if the issue continues."
+                    : publication.count === null
+                      ? "The number of products selected for this channel is unavailable."
+                      : `${publication.atLeast ? "At least " : ""}${publication.count} active products are selected for the Aura Historia channel in Shopify. Selected products scheduled for later publication are imported once published.`}
+                </s-paragraph>
+              )}
               <s-paragraph>
-                {publication
-                  ? `${publication.atLeast ? "At least " : ""}${publication.count} active products included in this Shopify channel.`
-                  : "The current Shopify publication count is unavailable. Refresh this page or contact support if the issue continues."}
-              </s-paragraph>
-              <s-paragraph>
-                Catalog imports are processed in the background. Acceptance by
+                Only active products published to the Aura Historia sales
+                channel are imported. Publishing a product adds or restores it,
+                unpublishing withdraws it, and edits and stock changes follow
+                automatically; out-of-stock products stay listed as out of
+                stock. Imports are processed in the background, so acceptance by
                 Aura Historia does not mean an item is already visible in
                 search.
               </s-paragraph>
@@ -368,10 +411,17 @@ export default function AppIndex() {
                   tone="critical"
                   heading="Catalog import needs attention"
                 >
+                  {catalogImport?.phase === "failed" && catalogImport.error && (
+                    <s-paragraph>
+                      {CATALOG_ISSUE_MESSAGES[catalogImport.error]}
+                    </s-paragraph>
+                  )}
                   <s-paragraph>
                     {catalogImport?.failed
                       ? `${catalogImport.failed} products could not be submitted. Review their product data and retry the import.`
-                      : "The catalog import did not finish. Retry the import or contact support."}
+                      : catalogImport?.phase === "failed" && catalogImport.error
+                        ? "Nothing is reported as imported until a complete import succeeds."
+                        : "The catalog import did not finish. Retry the import or contact support."}
                   </s-paragraph>
                 </s-banner>
               )}
@@ -384,14 +434,22 @@ export default function AppIndex() {
                   page for an update.
                 </s-paragraph>
               )}
-              {catalogImport?.phase === "submitted" && (
-                <s-paragraph>
-                  Last import: {catalogImport.total} products processed,{" "}
-                  {catalogImport.failed} submission failures.
-                </s-paragraph>
-              )}
+              {catalogImport?.phase === "submitted" &&
+                (catalogImport.eligible === undefined ? (
+                  <s-paragraph>
+                    Last import: {catalogImport.total} products processed,{" "}
+                    {catalogImport.failed} submission failures.
+                  </s-paragraph>
+                ) : (
+                  <s-paragraph>
+                    Last import: {catalogImport.total} Shopify products checked,{" "}
+                    {catalogImport.eligible} published to Aura Historia
+                    submitted, {catalogImport.withdrawn ?? 0} withdrawals
+                    submitted, {catalogImport.failed} submission failures.
+                  </s-paragraph>
+                ))}
               <s-stack direction="inline" gap="base">
-                {publication && (
+                {publication?.state === "ready" && (
                   <s-button href={publication.editorUrl} target="_top">
                     Manage products in Shopify bulk editor
                   </s-button>

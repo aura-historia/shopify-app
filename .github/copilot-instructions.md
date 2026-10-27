@@ -3,7 +3,7 @@
 ## Product context
 
 - This is a minimal public Shopify app.
-- Merchants install it so Aura Historia receives Shopify product lifecycle events through Amazon EventBridge.
+- Merchants install it so Aura Historia receives Shopify product listing events for its own sales channel through Amazon EventBridge.
 - AWS infrastructure, EventBridge rules, and downstream consumers live in another repository.
 
 ## Architecture constraints
@@ -26,10 +26,11 @@
   - `customers/data_request`
   - `customers/redact`
   - `shop/redact`
-- Preserve the product EventBridge subscriptions:
-  - `products/create`
-  - `products/update`
-  - `products/delete`
+- Preserve the own-channel product listing EventBridge subscriptions (they require `read_product_listings`):
+  - `product_listings/add`
+  - `product_listings/update`
+  - `product_listings/remove`
+- Catalog imports admit only active products whose `publishedOnPublication` membership in the current app publication is explicitly true. Never fall back to all active products, `onlineStoreUrl`, generic Online Store filters or aggregate counts.
 - Preserve the `app/uninstalled` subscription so session cleanup continues to work.
 - Keep `app/shopify.server.ts` API version aligned with `shopify.app.toml`.
 - Keep production-only webhook differences in `shopify.app.prod.toml` instead of trying to drive EventBridge ARNs from `shopify.web.toml`.

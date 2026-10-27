@@ -1,12 +1,19 @@
-import { saveCatalogImportStatus } from "./catalog.server";
+import {
+  CHANNEL_PUBLICATION_ERRORS,
+  PUBLICATION_GID,
+  resolveChannelPublication,
+  saveCatalogImportStatus,
+} from "./catalog.server";
 import { CURRENCY_MINOR_UNITS } from "./currency";
 import { createClient } from "./generated/api/client";
 import {
   deleteAsyncPartnerProductListings,
+  listPartnerProductListings,
   putAsyncPartnerProductListings,
   putShopifyListingSourceIngestionConfiguration,
 } from "./generated/api/sdk.gen";
 import type {
+  AdminProductListingPage,
   AsyncProductListingBatchReport,
   CurrencyData,
   LanguageData,
@@ -24,8 +31,24 @@ import { isValidListingSourceId } from "./shop-credentials.server";
 const BATCH_SIZE = 100;
 const BACKFILL_CONTEXT_PREFIX = "aura-historia:backfill:";
 const BACKFILL_CONTEXT_TTL_SECONDS = 3600;
+// Bounds the absence reconciliation read to 100,000 active source listings.
+const MAX_RECONCILIATION_PAGES = 1000;
+// Listings changed shortly before the snapshot started may reflect a newer
+// listing event than the snapshot; leave them to the next reconciliation.
+const RECONCILIATION_CLOCK_MARGIN_MS = 5 * 60_000;
+const SHOPIFY_PRODUCT_ID = /^[1-9]\d*$/;
 
-const BULK_PRODUCTS_QUERY = `
+// Proposed batch-level ordering context for aura-historia/backend#2572: the
+// Shopify snapshot start time, a lower bound for every observation in the
+// batch. It is resent unchanged with each retry under the same idempotency key.
+export const SOURCE_OCCURRED_AT_HEADER = "Source-Occurred-At";
+
+// Bulk queries take no variables. The validated publication GID is embedded so
+// every product row carries explicit membership in Aura's own channel.
+export function buildBulkProductsQuery(publicationId: string): string {
+  if (!PUBLICATION_GID.test(publicationId))
+    throw new Error("Invalid Shopify publication ID");
+  return `
 {
   products {
     edges {
@@ -37,6 +60,7 @@ const BULK_PRODUCTS_QUERY = `
         totalInventory
         tracksInventory
         onlineStoreUrl
+        publishedOnPublication(publicationId: "${publicationId}")
         images {
           edges {
             node {
@@ -58,6 +82,7 @@ const BULK_PRODUCTS_QUERY = `
   }
 }
 `;
+}
 
 const SHOP_METADATA_QUERY = `
 query {
@@ -77,6 +102,7 @@ mutation BulkOperationRunQuery($query: String!) {
     bulkOperation {
       id
       status
+      createdAt
     }
     userErrors {
       field
@@ -94,6 +120,7 @@ query BulkOperationStatus($id: ID!) {
       status
       errorCode
       objectCount
+      rootObjectCount
       url
     }
   }
@@ -132,6 +159,10 @@ export interface BackfillContext {
   shopDomain: string;
 
   bulkOperationId: string;
+  // The app publication whose membership the snapshot reads.
+  publicationId: string;
+  // Shopify's creation time of the bulk operation (snapshot lower bound).
+  snapshotStartedAt: string;
   createdAt: string;
 }
 
@@ -170,6 +201,23 @@ export interface BulkJsonlProduct {
   totalInventory: number;
   tracksInventory: boolean;
   onlineStoreUrl: string | null;
+  publishedOnPublication?: boolean | null;
+}
+
+export interface BulkOperationResult {
+  url: string | null;
+  rootObjectCount: number | null;
+}
+
+export interface BackfillOutcome {
+  total: number;
+  eligible: number;
+  withdrawn: number;
+  failures: string[];
+  // The export was verified complete and every membership read was explicit.
+  complete: boolean;
+  // Absence-based withdrawal ran against the complete snapshot.
+  reconciled: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,12 +426,18 @@ export function transformWithdrawal(
   return { sourceListingId: extractShopifyNumericId(product.id) };
 }
 
-type ShopifyBackfillAction = "upsert" | "withdraw" | "ignore";
+type ShopifyBackfillAction = "upsert" | "withdraw" | "ignore" | "unknown";
 
-function classifyShopifyBackfillAction(status: string): ShopifyBackfillAction {
-  switch (status) {
+export function classifyShopifyBackfillAction(
+  product: BulkJsonlProduct,
+): ShopifyBackfillAction {
+  switch (product.status) {
     case "ACTIVE":
-      return "upsert";
+      // Only explicit membership in Aura's own publication admits a listing.
+      // A missing or malformed read is unknown, never eligible or ineligible.
+      if (product.publishedOnPublication === true) return "upsert";
+      if (product.publishedOnPublication === false) return "withdraw";
+      return "unknown";
     case "DRAFT":
     case "ARCHIVED":
       return "withdraw";
@@ -469,6 +523,10 @@ export async function loadBackfillContext(
       typeof value.apiBaseUrl === "string" &&
       typeof value.shopDomain === "string" &&
       typeof value.bulkOperationId === "string" &&
+      typeof value.publicationId === "string" &&
+      PUBLICATION_GID.test(value.publicationId) &&
+      typeof value.snapshotStartedAt === "string" &&
+      Number.isFinite(Date.parse(value.snapshotStartedAt)) &&
       (value.primaryLocale === undefined ||
         typeof value.primaryLocale === "string") &&
       mapShopifyCurrencyCode(value.currencyCode) &&
@@ -532,7 +590,11 @@ export async function fetchShopMetadata(
 interface BulkOperationSubmitResponse {
   data?: {
     bulkOperationRunQuery?: {
-      bulkOperation?: { id: string; status: string } | null;
+      bulkOperation?: {
+        id: string;
+        status: string;
+        createdAt?: string;
+      } | null;
       userErrors?: Array<{ field: string[]; message: string }>;
     };
   };
@@ -541,9 +603,13 @@ interface BulkOperationSubmitResponse {
 
 export async function submitBulkOperation(
   graphqlRequest: GraphqlRequestFn,
-): Promise<string> {
+  publicationId: string,
+): Promise<{ id: string; createdAt: string }> {
+  const query = buildBulkProductsQuery(publicationId);
+  // Fallback lower bound if Shopify omits its own creation time.
+  const requestedAt = new Date().toISOString();
   const response = (await graphqlRequest(SUBMIT_BULK_OPERATION_MUTATION, {
-    query: BULK_PRODUCTS_QUERY,
+    query,
   })) as BulkOperationSubmitResponse;
 
   const errorMessage = formatGraphqlErrors(response.errors);
@@ -563,8 +629,15 @@ export async function submitBulkOperation(
   if (!opId) {
     throw new Error("Bulk operation submission returned no operation ID");
   }
+  const createdAt = result?.bulkOperation?.createdAt;
 
-  return opId;
+  return {
+    id: opId,
+    createdAt:
+      typeof createdAt === "string" && Number.isFinite(Date.parse(createdAt))
+        ? new Date(createdAt).toISOString()
+        : requestedAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -591,16 +664,23 @@ interface BulkOperationNodeResponse {
       status: string;
       errorCode: string | null;
       objectCount?: string;
+      rootObjectCount?: string;
       url: string | null;
     } | null;
   };
   errors?: unknown;
 }
 
-export async function fetchBulkOperationResultUrl(
+function parseCount(value: unknown): number | null {
+  const count =
+    typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
+  return Number.isSafeInteger(count) ? count : null;
+}
+
+export async function fetchBulkOperationResult(
   graphqlRequest: GraphqlRequestFn,
   bulkOperationId: string,
-): Promise<string | null> {
+): Promise<BulkOperationResult> {
   const json = (await graphqlRequest(BULK_OPERATION_STATUS_QUERY, {
     id: bulkOperationId,
   })) as BulkOperationNodeResponse;
@@ -616,7 +696,10 @@ export async function fetchBulkOperationResultUrl(
   if (!node.url && node.objectCount !== "0")
     throw new Error("Shopify catalog export has no download URL");
 
-  return node.url ?? null;
+  return {
+    url: node.url ?? null,
+    rootObjectCount: parseCount(node.rootObjectCount),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +708,7 @@ export async function fetchBulkOperationResultUrl(
 
 export function createBackfillIdempotencyKey(
   bulkOperationId: string,
-  verb: "put" | "delete",
+  verb: "put" | "delete" | "reconcile",
   batchIndex: number,
 ): string {
   const operationId = /^gid:\/\/shopify\/BulkOperation\/(\d+)$/.exec(
@@ -677,6 +760,7 @@ export async function sendProductBatch(
   accessToken: string,
   verb: "put" | "delete",
   idempotencyKey: string,
+  sourceOccurredAt?: string,
 ): Promise<string[]> {
   if (items.length > BATCH_SIZE)
     throw new Error("Async batch exceeds 100 items");
@@ -684,6 +768,7 @@ export async function sendProductBatch(
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     "Idempotency-Key": idempotencyKey,
+    ...(sourceOccurredAt && { [SOURCE_OCCURRED_AT_HEADER]: sourceOccurredAt }),
   };
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -761,33 +846,117 @@ export async function putShopifyIngestionConfiguration(
 }
 
 // ---------------------------------------------------------------------------
+// Source-scoped reconciliation of absent listings
+// ---------------------------------------------------------------------------
+
+async function listActiveSourceListings(
+  context: BackfillContext,
+): Promise<AdminProductListingPage["items"]> {
+  const client = createClient({ baseUrl: context.apiBaseUrl });
+  const listings: AdminProductListingPage["items"] = [];
+  let searchAfter: string | undefined;
+  for (let page = 0; page < MAX_RECONCILIATION_PAGES; page++) {
+    let result: Awaited<ReturnType<typeof listPartnerProductListings>>;
+    let attempt = 0;
+    do {
+      result = await listPartnerProductListings({
+        client,
+        path: { listingSourceId: context.listingSourceId },
+        query: {
+          lifecycle: "ACTIVE",
+          sort: "created",
+          order: "asc",
+          size: BATCH_SIZE,
+          ...(searchAfter && { searchAfter }),
+        },
+        headers: { Authorization: `Bearer ${context.accessToken}` },
+      });
+    } while (
+      ++attempt < 3 &&
+      (!result.response || result.response.status === 503)
+    );
+    const data = result.data;
+    if (
+      result.response?.status !== 200 ||
+      !data ||
+      !Array.isArray(data.items) ||
+      data.items.some(
+        (item) =>
+          typeof item?.sourceListingId !== "string" ||
+          typeof item.updated !== "string",
+      )
+    )
+      throw new Error(
+        `ProductListing read failed (${result.response?.status ?? "transport"})`,
+      );
+    listings.push(...data.items);
+    if (!data.searchAfter) return listings;
+    searchAfter = data.searchAfter;
+  }
+  throw new Error("ProductListing reconciliation exceeds its page limit");
+}
+
+// Withdraws this source's active Shopify listings that are absent from a
+// verified complete snapshot, e.g. products deleted while unselected after
+// being imported under the former shop-wide product topics. Products present
+// in the snapshot are handled explicitly by their own membership instead.
+export async function findAbsentListings(
+  context: BackfillContext,
+  snapshotIds: ReadonlySet<string>,
+): Promise<WithdrawProductListingData[]> {
+  const cutoff =
+    Date.parse(context.snapshotStartedAt) - RECONCILIATION_CLOCK_MARGIN_MS;
+  return (await listActiveSourceListings(context))
+    .filter(
+      (listing) =>
+        listing.lifecycle === "ACTIVE" &&
+        // Non-Shopify identities are merchant data, not ours to withdraw.
+        SHOPIFY_PRODUCT_ID.test(listing.sourceListingId) &&
+        !snapshotIds.has(listing.sourceListingId) &&
+        // A listing changed after the snapshot began may be a newer
+        // publication; NaN comparisons also keep it.
+        Date.parse(listing.updated) < cutoff,
+    )
+    .map((listing) => ({ sourceListingId: listing.sourceListingId }));
+}
+
+// ---------------------------------------------------------------------------
 // Process bulk operation results (called from webhook handler)
 // ---------------------------------------------------------------------------
 
 export async function processBackfillResults(
-  jsonlUrl: string,
+  exportResult: BulkOperationResult,
   context: BackfillContext,
-): Promise<{ total: number; failures: string[] }> {
-  const response = await fetch(jsonlUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download JSONL: ${response.status}`);
+): Promise<BackfillOutcome> {
+  let jsonl = "";
+  if (exportResult.url) {
+    const response = await fetch(exportResult.url);
+    if (!response.ok) {
+      throw new Error(`Failed to download JSONL: ${response.status}`);
+    }
+    jsonl = await response.text();
   }
-
-  const jsonl = await response.text();
   const { products, images, variants } = parseProductsFromJsonl(jsonl);
 
-  if (products.length === 0) {
-    return { total: 0, failures: [] };
-  }
-
+  // Only an export whose product rows match Shopify's root count is an
+  // authoritative selection. A complete empty export is a valid selection.
+  let complete = exportResult.rootObjectCount === products.length;
+  let eligible = 0;
   const upserts: UpsertProductListingData[] = [];
   const withdrawals: WithdrawProductListingData[] = [];
   const allFailures: string[] = [];
   for (const product of products) {
-    const action = classifyShopifyBackfillAction(product.status);
+    const action = classifyShopifyBackfillAction(product);
     if (action === "withdraw") {
       withdrawals.push(transformWithdrawal(product));
+    } else if (action === "unknown") {
+      complete = false;
+      allFailures.push(extractShopifyNumericId(product.id));
+      console.error(
+        `Unknown Aura channel membership for Shopify product ${product.id}`,
+      );
     } else if (action === "upsert") {
+      eligible++;
       try {
         upserts.push(
           transformProduct(
@@ -811,37 +980,64 @@ export async function processBackfillResults(
 
   async function submitBatches(
     items: UpsertProductListingData[] | WithdrawProductListingData[],
-    verb: "put" | "delete",
-  ) {
+    kind: "put" | "delete" | "reconcile",
+  ): Promise<number> {
+    let failed = 0;
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
       const batch = items.slice(i, i + BATCH_SIZE);
+      let failures: string[];
       try {
-        allFailures.push(
-          ...(await sendProductBatch(
-            batch,
-            context.apiBaseUrl,
-            context.listingSourceId,
-            context.accessToken,
-            verb,
-            createBackfillIdempotencyKey(
-              context.bulkOperationId,
-              verb,
-              i / BATCH_SIZE,
-            ),
-          )),
+        failures = await sendProductBatch(
+          batch,
+          context.apiBaseUrl,
+          context.listingSourceId,
+          context.accessToken,
+          kind === "put" ? "put" : "delete",
+          createBackfillIdempotencyKey(
+            context.bulkOperationId,
+            kind,
+            i / BATCH_SIZE,
+          ),
+          context.snapshotStartedAt,
         );
       } catch (error) {
-        allFailures.push(...batch.map((item) => item.sourceListingId));
+        failures = batch.map((item) => item.sourceListingId);
         console.error(
-          `Backfill ${verb} batch ${i / BATCH_SIZE} failed:`,
+          `Backfill ${kind} batch ${i / BATCH_SIZE} failed:`,
           error,
         );
       }
+      allFailures.push(...failures);
+      failed += failures.length;
     }
+    return failed;
   }
   await submitBatches(upserts, "put");
-  await submitBatches(withdrawals, "delete");
-  return { total: products.length, failures: allFailures };
+  let withdrawn =
+    withdrawals.length - (await submitBatches(withdrawals, "delete"));
+
+  let reconciled = false;
+  if (complete) {
+    try {
+      const absent = await findAbsentListings(
+        context,
+        new Set(products.map((product) => extractShopifyNumericId(product.id))),
+      );
+      const failed = await submitBatches(absent, "reconcile");
+      withdrawn += absent.length - failed;
+      reconciled = failed === 0;
+    } catch (error) {
+      console.error("Backfill reconciliation could not read listings:", error);
+    }
+  }
+  return {
+    total: products.length,
+    eligible,
+    withdrawn,
+    failures: allFailures,
+    complete,
+    reconciled,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -864,7 +1060,25 @@ export async function triggerBackfill(
   validatedMetadata: ValidatedShopifyMetadata,
 ): Promise<boolean> {
   try {
-    const bulkOperationId = await submitBulkOperation(graphqlRequest);
+    // Missing access, a missing publication or a failed read is a recoverable
+    // sync state. It never falls back to importing every active product.
+    const publication = await resolveChannelPublication(graphqlRequest);
+    if (publication.state !== "ready") {
+      await saveCatalogImportStatus(kv, shopDomain, {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: CHANNEL_PUBLICATION_ERRORS[publication.state],
+      });
+      console.warn(
+        `Backfill not submitted for ${shopDomain}: publication ${publication.state}`,
+      );
+      return false;
+    }
+    const bulkOperation = await submitBulkOperation(
+      graphqlRequest,
+      publication.publicationId,
+    );
 
     await storeBackfillContext(kv, shopDomain, {
       listingSourceId,
@@ -873,7 +1087,9 @@ export async function triggerBackfill(
       primaryLocale: validatedMetadata.primaryLocale,
       currencyCode: validatedMetadata.currencyCode,
       shopDomain,
-      bulkOperationId,
+      bulkOperationId: bulkOperation.id,
+      publicationId: publication.publicationId,
+      snapshotStartedAt: bulkOperation.createdAt,
       createdAt: new Date().toISOString(),
     });
 
@@ -884,7 +1100,7 @@ export async function triggerBackfill(
     });
 
     console.log(
-      `Backfill bulk operation submitted for ${shopDomain}: ${bulkOperationId}`,
+      `Backfill bulk operation submitted for ${shopDomain}: ${bulkOperation.id}`,
     );
     return true;
   } catch (error) {

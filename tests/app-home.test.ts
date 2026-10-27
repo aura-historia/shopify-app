@@ -5,7 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import AppIndex from "../app/routes/app._index";
 
-function renderHome(phase: string | null, backfill: string) {
+function renderHome(
+  phase: string | null,
+  backfill: string,
+  overrides: { publication?: unknown; catalogImport?: unknown } = {},
+) {
   const router = createMemoryRouter(
     [{ id: "app", path: "/app", Component: AppIndex }],
     {
@@ -22,6 +26,7 @@ function renderHome(phase: string | null, backfill: string) {
             shipping: null,
             publication: null,
             catalogImport: phase ? { phase, total: 1, failed: 0 } : null,
+            ...overrides,
           },
         },
       },
@@ -63,5 +68,77 @@ describe("catalog progress in the embedded home", () => {
       renderHome(null, "not_queued"),
       /Catalog import needs attention/,
     );
+  });
+});
+
+describe("Aura channel selection in the embedded home", () => {
+  it("labels Shopify's selected count and links the channel's bulk editor", () => {
+    const html = renderHome(null, "", {
+      publication: {
+        state: "ready",
+        count: 12,
+        atLeast: false,
+        editorUrl:
+          "https://admin.shopify.com/store/example/bulk?edit=publications.1.published_at",
+      },
+    });
+    assert.match(
+      html,
+      /12 active products are selected for the Aura Historia channel/,
+    );
+    assert.match(html, /scheduled for later publication/);
+    assert.match(html, /Manage products in Shopify bulk editor/);
+    assert.match(html, /unpublishing withdraws it/);
+  });
+  it("asks for the updated permission instead of reporting a zero-product import", () => {
+    const html = renderHome(null, "not_queued", {
+      publication: { state: "missing_scope" },
+      catalogImport: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "MISSING_SCOPE",
+      },
+    });
+    assert.match(html, /Approve updated Shopify permissions/);
+    assert.match(html, /Catalog import needs attention/);
+    assert.doesNotMatch(html, /Manage products in Shopify bulk editor/);
+    assert.doesNotMatch(html, /Last import/);
+  });
+  it("reports a missing channel publication", () => {
+    const html = renderHome(null, "", {
+      publication: { state: "missing_publication" },
+    });
+    assert.match(html, /Sales channel not found/);
+  });
+  it("explains incomplete reconciliation as a retryable failure", () => {
+    const html = renderHome(null, "", {
+      catalogImport: {
+        phase: "failed",
+        total: 4,
+        failed: 0,
+        eligible: 2,
+        withdrawn: 2,
+        reconciled: false,
+        error: "RECONCILIATION_FAILED",
+      },
+    });
+    assert.match(html, /Catalog import needs attention/);
+    assert.match(html, /no longer exist in Shopify could not all be withdrawn/);
+  });
+  it("separates eligible submissions from withdrawals in the last import", () => {
+    const html = renderHome(null, "", {
+      catalogImport: {
+        phase: "submitted",
+        total: 5,
+        failed: 0,
+        eligible: 3,
+        withdrawn: 2,
+        reconciled: true,
+      },
+    });
+    assert.match(html, /5 Shopify products checked/);
+    assert.match(html, /3 published to Aura Historia\s+submitted/);
+    assert.match(html, /2 withdrawals\s+submitted/);
   });
 });

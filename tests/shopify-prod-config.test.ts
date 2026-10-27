@@ -17,10 +17,10 @@ describe("shopify.app.prod.toml", () => {
     assert.match(prodConfig, /^name = "Aura Historia"$/m);
   });
 
-  it("routes product lifecycle topics to the production EventBridge partner source", () => {
+  it("routes own-channel product listing topics to the production EventBridge partner source", () => {
     assert.match(
       prodConfig,
-      /topics = \["products\/create", "products\/update", "products\/delete"\]\s+uri = "arn:aws:events:eu-central-1::event-source\/aws\.partner\/shopify\.com\/359227195393\/aura-historia-backend-prod"/,
+      /topics = \["product_listings\/add", "product_listings\/update", "product_listings\/remove"\]\s+uri = "arn:aws:events:eu-central-1::event-source\/aws\.partner\/shopify\.com\/359227195393\/aura-historia-backend-prod"/,
     );
   });
 

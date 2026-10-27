@@ -18,6 +18,24 @@ describe("shopify runtime configuration", () => {
     assert.match(shopifyServer, /const apiVersion = ApiVersion\.October26;/);
   });
 
+  it("keeps runtime scopes aligned with every Shopify app configuration", () => {
+    const wrangler = readFileSync(
+      resolve(process.cwd(), "wrangler.jsonc"),
+      "utf8",
+    );
+    const runtimeScopes = wrangler.match(/"SCOPES": "([^"]*)"/)?.[1];
+    for (const name of [
+      "shopify.app.toml",
+      "shopify.app.prod.toml",
+      "shopify.app.tunnel.toml",
+    ]) {
+      const config = readFileSync(resolve(process.cwd(), name), "utf8");
+      assert.equal(config.match(/^scopes = "([^"]*)"$/m)?.[1], runtimeScopes);
+      assert.match(config, /api_version = "2026-10"/);
+    }
+    assert.match(wrangler, /"SHOPIFY_API_VERSION": "2026-10"/);
+  });
+
   it("keeps the auth path prefix on /auth", () => {
     assert.match(shopifyServer, /authPathPrefix: "\/auth"/);
   });

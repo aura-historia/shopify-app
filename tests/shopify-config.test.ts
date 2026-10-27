@@ -38,9 +38,9 @@ describe("shopify.app.toml", () => {
         assert.ok(subscriptions[0].includes(`uri = "${destination}"`));
       }
       for (const topic of [
-        "products/create",
-        "products/update",
-        "products/delete",
+        "product_listings/add",
+        "product_listings/update",
+        "product_listings/remove",
         "customers/data_request",
         "customers/redact",
         "shop/redact",
@@ -70,9 +70,13 @@ describe("shopify.app.toml", () => {
     ]) {
       const config = readFileSync(resolve(process.cwd(), path), "utf8");
       const scopes = config.match(/^scopes = "([^"]*)"$/m)?.[1];
-      assert.equal(scopes, "read_products,read_locales,read_shipping");
+      assert.equal(
+        scopes,
+        "read_products,read_product_listings,read_locales,read_shipping",
+      );
       // Shopify rejects static subscriptions whose scope is only optional.
       assert.ok(scopes.split(",").includes(fixture.requiredScope));
+      assert.ok(scopes.split(",").includes("read_product_listings"));
       assert.doesNotMatch(config, /^optional_scopes\b/m);
       assert.ok(wrangler.includes(`"SCOPES": "${scopes}"`));
     }
@@ -101,11 +105,22 @@ describe("shopify.app.toml", () => {
     }
   });
 
-  it("routes product lifecycle topics to EventBridge", () => {
+  it("routes own-channel product listing topics to EventBridge", () => {
     assert.match(
       appConfig,
-      /topics = \["products\/create", "products\/update", "products\/delete"\]\s+uri = "arn:aws:events:eu-central-1::event-source\/aws\.partner\/shopify\.com\/359227195393\/aura-historia-backend-dev"/,
+      /topics = \["product_listings\/add", "product_listings\/update", "product_listings\/remove"\]\s+uri = "arn:aws:events:eu-central-1::event-source\/aws\.partner\/shopify\.com\/359227195393\/aura-historia-backend-dev"/,
     );
+  });
+
+  it("replaces the shop-wide product topics in every environment", () => {
+    for (const name of [
+      "shopify.app.toml",
+      "shopify.app.prod.toml",
+      "shopify.app.tunnel.toml",
+    ]) {
+      const config = readFileSync(resolve(process.cwd(), name), "utf8");
+      assert.doesNotMatch(config, /"products\/(create|update|delete)"/, name);
+    }
   });
 
   it("includes mandatory public app compliance topics", () => {
