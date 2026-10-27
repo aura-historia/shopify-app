@@ -9,11 +9,13 @@
   "main": "workers/app.ts",
   "durable_objects": {
     "bindings": [
-      { "name": "SHOP_COORDINATOR", "class_name": "ShopCoordinator" }
+      { "name": "SHOP_COORDINATOR", "class_name": "ShopCoordinator" },
+      { "name": "CATALOG_IMPORTER", "class_name": "CatalogImporter" }
     ]
   },
   "migrations": [
-    { "tag": "shop-coordinator-v1", "new_sqlite_classes": ["ShopCoordinator"] }
+    { "tag": "shop-coordinator-v1", "new_sqlite_classes": ["ShopCoordinator"] },
+    { "tag": "catalog-importer-v1", "new_sqlite_classes": ["CatalogImporter"] }
   ],
   "assets": {
     "directory": "build/client"

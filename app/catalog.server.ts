@@ -5,8 +5,12 @@ type KV = Pick<CloudflareBindings["KV"], "get" | "put" | "delete">;
 const STATUS_PREFIX = "aura-historia:catalog-status:";
 
 // Shopify scope for the app's own channel listings: the listing webhooks and
-// per-publication membership reads depend on it.
+// per-publication membership reads depend on it. The write scope implies it.
 export const PRODUCT_LISTINGS_SCOPE = "read_product_listings";
+const PRODUCT_LISTINGS_SCOPES = new Set([
+  PRODUCT_LISTINGS_SCOPE,
+  "write_product_listings",
+]);
 export const PUBLICATION_GID = /^gid:\/\/shopify\/Publication\/([1-9]\d*)$/;
 
 export const CATALOG_IMPORT_ERRORS = [
@@ -15,7 +19,6 @@ export const CATALOG_IMPORT_ERRORS = [
   "SHOPIFY_READ_FAILED",
   "PUBLICATION_CHANGED",
   "INCOMPLETE_EXPORT",
-  "RECONCILIATION_FAILED",
 ] as const;
 export type CatalogImportError = (typeof CATALOG_IMPORT_ERRORS)[number];
 
@@ -25,10 +28,9 @@ export interface CatalogImportStatus {
   failed: number;
   // Active products published to Aura's channel in the snapshot.
   eligible?: number;
-  // Admitted withdrawals: unpublished/inactive products and absent records.
+  // Admitted withdrawals of unselected or inactive products. Withdrawing a
+  // product that was never imported is a no-op downstream.
   withdrawn?: number;
-  // Absence-based cleanup ran against a verified complete snapshot.
-  reconciled?: boolean;
   error?: CatalogImportError;
   updatedAt: string;
 }
@@ -82,11 +84,10 @@ export async function loadCatalogImportStatus(
       value.total >= 0 &&
       Number.isSafeInteger(value.failed) &&
       value.failed >= 0 &&
+      value.failed <= value.total &&
       optionalCount(value.eligible) &&
       (value.eligible ?? 0) <= value.total &&
       optionalCount(value.withdrawn) &&
-      (value.reconciled === undefined ||
-        typeof value.reconciled === "boolean") &&
       (value.error === undefined ||
         CATALOG_IMPORT_ERRORS.includes(value.error)) &&
       typeof value.updatedAt === "string" &&
@@ -104,7 +105,6 @@ export async function loadCatalogImportStatus(
         failed: value.failed,
         eligible: value.eligible,
         withdrawn: value.withdrawn,
-        reconciled: value.reconciled,
         error: value.error,
         updatedAt: value.updatedAt,
       };
@@ -163,12 +163,34 @@ async function readChannelPublication(
   >;
 }> {
   try {
+    // Verify the access actually granted to this installation: a changed
+    // configuration is not proof that the merchant approved the new scope.
+    // Scopes are read on their own because the Admin client throws on any
+    // GraphQL error, which would hide a denial behind a generic failure.
+    const scopes = await graphql(
+      `query AuraChannelAccess {
+      currentAppInstallation { accessScopes { handle } }
+    }`,
+      {},
+    );
+    const granted = (scopes.data as ChannelPublicationData | undefined)
+      ?.currentAppInstallation?.accessScopes;
+    if (scopes.errors || !Array.isArray(granted))
+      return { resolution: { state: "unavailable" } };
+    if (
+      !granted.some(
+        (scope) =>
+          typeof scope?.handle === "string" &&
+          PRODUCT_LISTINGS_SCOPES.has(scope.handle),
+      )
+    )
+      return { resolution: { state: "missing_scope" } };
+
     // `currentAppInstallation.publication` is deprecated without a successor
     // in 2026-10, but it is the only reference to this app's own channel.
     const response = await graphql(
       `query AuraChannelPublication {
       currentAppInstallation {
-        accessScopes { handle }
         publication {
           id
           ${includeCount ? 'includedProductsCount(query: "status:active") { count precision }' : ""}
@@ -177,18 +199,9 @@ async function readChannelPublication(
     }`,
       {},
     );
+    if (response.errors) return { resolution: { state: "unavailable" } };
     const installation = (response.data as ChannelPublicationData | undefined)
       ?.currentAppInstallation;
-    const scopes = installation?.accessScopes;
-    // Verify the access actually granted to this installation: a changed
-    // configuration is not proof that the merchant approved the new scope.
-    if (
-      Array.isArray(scopes) &&
-      !scopes.some((scope) => scope?.handle === PRODUCT_LISTINGS_SCOPE)
-    )
-      return { resolution: { state: "missing_scope" } };
-    if (response.errors || !Array.isArray(scopes))
-      return { resolution: { state: "unavailable" } };
     const publication = installation?.publication;
     if (publication === null)
       return { resolution: { state: "missing_publication" } };

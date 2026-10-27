@@ -32,6 +32,39 @@ describe("tooling configuration", () => {
     );
   });
 
+  it("exports and binds the SQLite catalog importer for resumable imports", () => {
+    const wrangler = readFileSync(
+      resolve(process.cwd(), "wrangler.jsonc"),
+      "utf8",
+    );
+    const entry = readFileSync(
+      resolve(process.cwd(), "workers/app.ts"),
+      "utf8",
+    );
+    const types = readFileSync(
+      resolve(process.cwd(), "worker-configuration.d.ts"),
+      "utf8",
+    );
+    assert.match(
+      wrangler,
+      /"name": "CATALOG_IMPORTER", "class_name": "CatalogImporter"/,
+    );
+    // Existing migrations are immutable; the importer has its own tag.
+    assert.match(
+      wrangler,
+      /"tag": "shop-coordinator-v1", "new_sqlite_classes": \["ShopCoordinator"\]/,
+    );
+    assert.match(
+      wrangler,
+      /"tag": "catalog-importer-v1", "new_sqlite_classes": \["CatalogImporter"\]/,
+    );
+    assert.match(
+      entry,
+      /export \{ CatalogImporter \} from "\.\/catalog-importer"/,
+    );
+    assert.match(types, /CATALOG_IMPORTER: DurableObjectNamespace/);
+  });
+
   it("keeps the Node engine compatible with current Shopify tooling", () => {
     assert.equal(packageJson.engines.node, ">=22.18");
   });

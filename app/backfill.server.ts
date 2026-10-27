@@ -1,4 +1,5 @@
 import {
+  type CatalogImportStatus,
   CHANNEL_PUBLICATION_ERRORS,
   PUBLICATION_GID,
   resolveChannelPublication,
@@ -8,12 +9,10 @@ import { CURRENCY_MINOR_UNITS } from "./currency";
 import { createClient } from "./generated/api/client";
 import {
   deleteAsyncPartnerProductListings,
-  listPartnerProductListings,
   putAsyncPartnerProductListings,
   putShopifyListingSourceIngestionConfiguration,
 } from "./generated/api/sdk.gen";
 import type {
-  AdminProductListingPage,
   AsyncProductListingBatchReport,
   CurrencyData,
   LanguageData,
@@ -31,16 +30,11 @@ import { isValidListingSourceId } from "./shop-credentials.server";
 const BATCH_SIZE = 100;
 const BACKFILL_CONTEXT_PREFIX = "aura-historia:backfill:";
 const BACKFILL_CONTEXT_TTL_SECONDS = 3600;
-// Bounds the absence reconciliation read to 100,000 active source listings.
-const MAX_RECONCILIATION_PAGES = 1000;
-// Listings changed shortly before the snapshot started may reflect a newer
-// listing event than the snapshot; leave them to the next reconciliation.
-const RECONCILIATION_CLOCK_MARGIN_MS = 5 * 60_000;
-const SHOPIFY_PRODUCT_ID = /^[1-9]\d*$/;
 
-// Proposed batch-level ordering context for aura-historia/backend#2572: the
-// Shopify snapshot start time, a lower bound for every observation in the
-// batch. It is resent unchanged with each retry under the same idempotency key.
+// Provisional batch-level ordering context proposed for
+// aura-historia/backend#2572; it is not yet part of the published API. The
+// value is Shopify's snapshot start time, a lower bound for every observation
+// in the batch, and is resent unchanged with each retry under the same key.
 export const SOURCE_OCCURRED_AT_HEADER = "Source-Occurred-At";
 
 // Bulk queries take no variables. The validated publication GID is embedded so
@@ -209,15 +203,34 @@ export interface BulkOperationResult {
   rootObjectCount: number | null;
 }
 
-export interface BackfillOutcome {
+export interface BackfillBatch {
+  verb: "put" | "delete";
+  index: number;
+  items: UpsertProductListingData[] | WithdrawProductListingData[];
+}
+
+// Deterministic for one immutable export, so a resumed import replays the
+// same batches under the same idempotency keys.
+export interface BackfillPlan {
   total: number;
   eligible: number;
-  withdrawn: number;
-  failures: string[];
   // The export was verified complete and every membership read was explicit.
   complete: boolean;
-  // Absence-based withdrawal ran against the complete snapshot.
-  reconciled: boolean;
+  // Products with unknown membership or unmappable data; never submitted.
+  rejected: string[];
+  batches: BackfillBatch[];
+}
+
+// Durable progress of one catalog import. It holds no credentials.
+export interface CatalogImportJob {
+  shop: string;
+  bulkOperationId: string;
+  result?: BulkOperationResult;
+  // Index of the next batch in the plan.
+  cursor: number;
+  failed: number;
+  withdrawn: number;
+  attempts: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -606,8 +619,6 @@ export async function submitBulkOperation(
   publicationId: string,
 ): Promise<{ id: string; createdAt: string }> {
   const query = buildBulkProductsQuery(publicationId);
-  // Fallback lower bound if Shopify omits its own creation time.
-  const requestedAt = new Date().toISOString();
   const response = (await graphqlRequest(SUBMIT_BULK_OPERATION_MUTATION, {
     query,
   })) as BulkOperationSubmitResponse;
@@ -629,15 +640,13 @@ export async function submitBulkOperation(
   if (!opId) {
     throw new Error("Bulk operation submission returned no operation ID");
   }
+  // Shopify's own clock orders the snapshot against listing events; the
+  // Worker clock is no substitute.
   const createdAt = result?.bulkOperation?.createdAt;
+  if (typeof createdAt !== "string" || !Number.isFinite(Date.parse(createdAt)))
+    throw new Error("Bulk operation submission returned no creation time");
 
-  return {
-    id: opId,
-    createdAt:
-      typeof createdAt === "string" && Number.isFinite(Date.parse(createdAt))
-        ? new Date(createdAt).toISOString()
-        : requestedAt,
-  };
+  return { id: opId, createdAt: new Date(createdAt).toISOString() };
 }
 
 // ---------------------------------------------------------------------------
@@ -708,7 +717,7 @@ export async function fetchBulkOperationResult(
 
 export function createBackfillIdempotencyKey(
   bulkOperationId: string,
-  verb: "put" | "delete" | "reconcile",
+  verb: "put" | "delete",
   batchIndex: number,
 ): string {
   const operationId = /^gid:\/\/shopify\/BulkOperation\/(\d+)$/.exec(
@@ -846,115 +855,42 @@ export async function putShopifyIngestionConfiguration(
 }
 
 // ---------------------------------------------------------------------------
-// Source-scoped reconciliation of absent listings
+// Process bulk operation results (resumable catalog import steps)
 // ---------------------------------------------------------------------------
 
-async function listActiveSourceListings(
-  context: BackfillContext,
-): Promise<AdminProductListingPage["items"]> {
-  const client = createClient({ baseUrl: context.apiBaseUrl });
-  const listings: AdminProductListingPage["items"] = [];
-  let searchAfter: string | undefined;
-  for (let page = 0; page < MAX_RECONCILIATION_PAGES; page++) {
-    let result: Awaited<ReturnType<typeof listPartnerProductListings>>;
-    let attempt = 0;
-    do {
-      result = await listPartnerProductListings({
-        client,
-        path: { listingSourceId: context.listingSourceId },
-        query: {
-          lifecycle: "ACTIVE",
-          sort: "created",
-          order: "asc",
-          size: BATCH_SIZE,
-          ...(searchAfter && { searchAfter }),
-        },
-        headers: { Authorization: `Bearer ${context.accessToken}` },
-      });
-    } while (
-      ++attempt < 3 &&
-      (!result.response || result.response.status === 503)
-    );
-    const data = result.data;
-    if (
-      result.response?.status !== 200 ||
-      !data ||
-      !Array.isArray(data.items) ||
-      data.items.some(
-        (item) =>
-          typeof item?.sourceListingId !== "string" ||
-          typeof item.updated !== "string",
-      )
-    )
-      throw new Error(
-        `ProductListing read failed (${result.response?.status ?? "transport"})`,
-      );
-    listings.push(...data.items);
-    if (!data.searchAfter) return listings;
-    searchAfter = data.searchAfter;
+export async function downloadBackfillExport(
+  result: BulkOperationResult,
+): Promise<string> {
+  if (!result.url) return "";
+  const response = await fetch(result.url);
+  if (!response.ok) {
+    throw new Error(`Failed to download JSONL: ${response.status}`);
   }
-  throw new Error("ProductListing reconciliation exceeds its page limit");
+  return response.text();
 }
 
-// Withdraws this source's active Shopify listings that are absent from a
-// verified complete snapshot, e.g. products deleted while unselected after
-// being imported under the former shop-wide product topics. Products present
-// in the snapshot are handled explicitly by their own membership instead.
-export async function findAbsentListings(
+export function planBackfill(
+  jsonl: string,
+  rootObjectCount: number | null,
   context: BackfillContext,
-  snapshotIds: ReadonlySet<string>,
-): Promise<WithdrawProductListingData[]> {
-  const cutoff =
-    Date.parse(context.snapshotStartedAt) - RECONCILIATION_CLOCK_MARGIN_MS;
-  return (await listActiveSourceListings(context))
-    .filter(
-      (listing) =>
-        listing.lifecycle === "ACTIVE" &&
-        // Non-Shopify identities are merchant data, not ours to withdraw.
-        SHOPIFY_PRODUCT_ID.test(listing.sourceListingId) &&
-        !snapshotIds.has(listing.sourceListingId) &&
-        // A listing changed after the snapshot began may be a newer
-        // publication; NaN comparisons also keep it.
-        Date.parse(listing.updated) < cutoff,
-    )
-    .map((listing) => ({ sourceListingId: listing.sourceListingId }));
-}
-
-// ---------------------------------------------------------------------------
-// Process bulk operation results (called from webhook handler)
-// ---------------------------------------------------------------------------
-
-export async function processBackfillResults(
-  exportResult: BulkOperationResult,
-  context: BackfillContext,
-): Promise<BackfillOutcome> {
-  let jsonl = "";
-  if (exportResult.url) {
-    const response = await fetch(exportResult.url);
-    if (!response.ok) {
-      throw new Error(`Failed to download JSONL: ${response.status}`);
-    }
-    jsonl = await response.text();
-  }
+): BackfillPlan {
   const { products, images, variants } = parseProductsFromJsonl(jsonl);
-
   // Only an export whose product rows match Shopify's root count is an
   // authoritative selection. A complete empty export is a valid selection.
-  let complete = exportResult.rootObjectCount === products.length;
+  let complete = rootObjectCount === products.length;
   let eligible = 0;
   const upserts: UpsertProductListingData[] = [];
   const withdrawals: WithdrawProductListingData[] = [];
-  const allFailures: string[] = [];
+  const rejected: string[] = [];
   for (const product of products) {
     const action = classifyShopifyBackfillAction(product);
     if (action === "withdraw") {
+      // Explicitly withdraws every product that is not selected, including
+      // products imported under the former shop-wide product topics.
       withdrawals.push(transformWithdrawal(product));
     } else if (action === "unknown") {
       complete = false;
-      allFailures.push(extractShopifyNumericId(product.id));
-      console.error(
-        `Unknown Aura channel membership for Shopify product ${product.id}`,
-      );
+      rejected.push(extractShopifyNumericId(product.id));
     } else if (action === "upsert") {
       eligible++;
       try {
@@ -968,76 +904,129 @@ export async function processBackfillResults(
             context.shopDomain,
           ),
         );
-      } catch (error) {
-        allFailures.push(extractShopifyNumericId(product.id));
-        console.error(
-          `Cannot map Shopify product ${product.id} for backfill:`,
-          error,
-        );
+      } catch {
+        rejected.push(extractShopifyNumericId(product.id));
       }
     }
   }
-
-  async function submitBatches(
-    items: UpsertProductListingData[] | WithdrawProductListingData[],
-    kind: "put" | "delete" | "reconcile",
-  ): Promise<number> {
-    let failed = 0;
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      const batch = items.slice(i, i + BATCH_SIZE);
-      let failures: string[];
-      try {
-        failures = await sendProductBatch(
-          batch,
-          context.apiBaseUrl,
-          context.listingSourceId,
-          context.accessToken,
-          kind === "put" ? "put" : "delete",
-          createBackfillIdempotencyKey(
-            context.bulkOperationId,
-            kind,
-            i / BATCH_SIZE,
-          ),
-          context.snapshotStartedAt,
-        );
-      } catch (error) {
-        failures = batch.map((item) => item.sourceListingId);
-        console.error(
-          `Backfill ${kind} batch ${i / BATCH_SIZE} failed:`,
-          error,
-        );
-      }
-      allFailures.push(...failures);
-      failed += failures.length;
-    }
-    return failed;
+  const batches: BackfillBatch[] = [];
+  for (const [verb, items] of [
+    ["put", upserts],
+    ["delete", withdrawals],
+  ] as const) {
+    for (let i = 0; i < items.length; i += BATCH_SIZE)
+      batches.push({
+        verb,
+        index: i / BATCH_SIZE,
+        items: items.slice(i, i + BATCH_SIZE),
+      });
   }
-  await submitBatches(upserts, "put");
-  let withdrawn =
-    withdrawals.length - (await submitBatches(withdrawals, "delete"));
+  return { total: products.length, eligible, complete, rejected, batches };
+}
 
-  let reconciled = false;
-  if (complete) {
-    try {
-      const absent = await findAbsentListings(
-        context,
-        new Set(products.map((product) => extractShopifyNumericId(product.id))),
-      );
-      const failed = await submitBatches(absent, "reconcile");
-      withdrawn += absent.length - failed;
-      reconciled = failed === 0;
-    } catch (error) {
-      console.error("Backfill reconciliation could not read listings:", error);
-    }
+async function submitBackfillBatch(
+  batch: BackfillBatch,
+  context: BackfillContext,
+): Promise<string[]> {
+  try {
+    return await sendProductBatch(
+      batch.items,
+      context.apiBaseUrl,
+      context.listingSourceId,
+      context.accessToken,
+      batch.verb,
+      createBackfillIdempotencyKey(
+        context.bulkOperationId,
+        batch.verb,
+        batch.index,
+      ),
+      context.snapshotStartedAt,
+    );
+  } catch (error) {
+    console.error(
+      `Backfill ${batch.verb} batch ${batch.index} failed:`,
+      error instanceof Error ? error.message : "unknown error",
+    );
+    return batch.items.map((item) => item.sourceListingId);
   }
-  return {
-    total: products.length,
-    eligible,
-    withdrawn,
-    failures: allFailures,
-    complete,
-    reconciled,
+}
+
+// Runs one bounded step of an import. `checkpoint` persists the job after
+// every admitted batch, so an interrupted step resumes at the next batch and
+// a replayed batch reuses its idempotency key. Throws on Shopify read errors.
+export async function runCatalogImportStep(
+  job: CatalogImportJob,
+  context: BackfillContext,
+  graphqlRequest: GraphqlRequestFn,
+  deadline: number,
+  checkpoint: (job: CatalogImportJob) => Promise<void>,
+): Promise<{ done: boolean; status: Omit<CatalogImportStatus, "updatedAt"> }> {
+  const result =
+    job.result ??
+    (await fetchBulkOperationResult(graphqlRequest, job.bulkOperationId));
+  // Every step writes with the current installation's access and publication.
+  // A revoked scope or replaced channel invalidates the whole snapshot.
+  const publication = await resolveChannelPublication(graphqlRequest);
+  if (
+    publication.state !== "ready" ||
+    publication.publicationId !== context.publicationId
+  ) {
+    return {
+      done: true,
+      status: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error:
+          publication.state === "ready"
+            ? "PUBLICATION_CHANGED"
+            : CHANNEL_PUBLICATION_ERRORS[publication.state],
+      },
+    };
+  }
+  if (!job.result) {
+    job.result = result;
+    await checkpoint(job);
+  }
+
+  const plan = planBackfill(
+    await downloadBackfillExport(result),
+    result.rootObjectCount,
+    context,
+  );
+  if (job.cursor === 0 && plan.rejected.length > 0) {
+    console.error(
+      `Backfill cannot classify or map ${plan.rejected.length} Shopify products: ${plan.rejected.slice(0, 50).join(", ")}`,
+    );
+  }
+  while (job.cursor < plan.batches.length && Date.now() < deadline) {
+    const batch = plan.batches[job.cursor];
+    const failures = await submitBackfillBatch(batch, context);
+    job.failed += failures.length;
+    if (batch.verb === "delete")
+      job.withdrawn += batch.items.length - failures.length;
+    job.cursor++;
+    await checkpoint(job);
+  }
+
+  const counts = {
+    total: plan.total,
+    eligible: plan.eligible,
+    withdrawn: job.withdrawn,
+    failed: job.failed + plan.rejected.length,
   };
+  if (job.cursor < plan.batches.length)
+    return { done: false, status: { phase: "processing", ...counts } };
+  // Unknown membership or a truncated export is never a complete catalog.
+  return plan.complete
+    ? {
+        done: true,
+        status: { phase: counts.failed ? "failed" : "submitted", ...counts },
+      }
+    : {
+        done: true,
+        status: { phase: "failed", ...counts, error: "INCOMPLETE_EXPORT" },
+      };
 }
 
 // ---------------------------------------------------------------------------

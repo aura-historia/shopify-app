@@ -7,15 +7,13 @@ import { action } from "../app/routes/webhooks.bulk-operations.finish";
 
 const shop = "example.myshopify.com";
 const bulkOperationId = "gid://shopify/BulkOperation/123";
-const publicationId = "gid://shopify/Publication/456";
 
-function makeKv(beforePut?: (value: string) => Promise<void>) {
+function makeKv() {
   const entries = new Map<string, string>();
   return {
     entries,
     get: async (key: string) => entries.get(key) ?? null,
     put: async (key: string, value: string) => {
-      await beforePut?.(value);
       entries.set(key, value);
     },
     delete: async (key: string) => {
@@ -24,42 +22,11 @@ function makeKv(beforePut?: (value: string) => Promise<void>) {
   };
 }
 
-function publication(
-  id: string | null = publicationId,
-  scopes = ["read_products", "read_product_listings"],
-) {
-  return {
-    data: {
-      currentAppInstallation: {
-        accessScopes: scopes.map((handle) => ({ handle })),
-        publication: id && { id },
-      },
-    },
-  };
-}
-
-function shopifyGraphql(publicationResponse = publication()) {
-  return mock.fn(async (_shop: string, query: string) =>
-    query.includes("AuraChannelPublication")
-      ? publicationResponse
-      : {
-          data: {
-            node: {
-              status: "COMPLETED",
-              objectCount: "0",
-              rootObjectCount: "0",
-              url: null,
-            },
-          },
-        },
-  );
-}
-
 async function deliver(
-  kv: ReturnType<typeof makeKv>,
-  graphql: ReturnType<typeof shopifyGraphql>,
-  status = "completed",
+  start: (shop: string, bulkOperationId: string) => Promise<void>,
+  { status = "completed", operation = bulkOperationId } = {},
 ) {
+  const kv = makeKv();
   await storeBackfillContext(kv, shop, {
     listingSourceId: `ls_${"0".repeat(26)}`,
     accessToken: "synthetic-aura-token",
@@ -67,16 +34,16 @@ async function deliver(
     currencyCode: "EUR",
     shopDomain: shop,
     bulkOperationId,
-    publicationId,
+    publicationId: "gid://shopify/Publication/456",
     snapshotStartedAt: "2026-10-27T10:00:00.000Z",
     createdAt: new Date().toISOString(),
   });
-  const work: Promise<unknown>[] = [];
   const body = JSON.stringify({
     type: "query",
     status,
-    admin_graphql_api_id: bulkOperationId,
+    admin_graphql_api_id: operation,
   });
+  const getByName = mock.fn(() => ({ start }));
   const response = await action({
     request: new Request(
       "https://app.invalid/webhooks/bulk-operations/finish",
@@ -102,102 +69,55 @@ async function deliver(
           SHOPIFY_API_KEY: "synthetic-key",
           SHOPIFY_API_SECRET: "synthetic-secret",
           SHOPIFY_APP_URL: "https://app.invalid",
-          SHOP_COORDINATOR: { getByName: () => ({ graphql }) },
+          CATALOG_IMPORTER: { getByName },
         },
-        ctx: { waitUntil: (promise: Promise<unknown>) => work.push(promise) },
+        ctx: {
+          waitUntil: () => {
+            throw new Error("Processing must not run in waitUntil");
+          },
+        },
       },
     },
     params: {},
   } as never);
-  return { response, work };
-}
-
-async function withFetch(fetcher: typeof fetch, run: () => Promise<void>) {
-  const original = globalThis.fetch;
-  globalThis.fetch = fetcher;
-  try {
-    await run();
-  } finally {
-    globalThis.fetch = original;
-  }
+  return { response, kv, getByName };
 }
 
 describe("catalog completion webhook", () => {
-  it("acknowledges Shopify before saving progress and reconciles an empty export", async () => {
-    let releaseProgress = () => {};
-    const pendingProgress = new Promise<void>((resolve) => {
-      releaseProgress = resolve;
-    });
-    const kv = makeKv(async (value) => {
-      if (JSON.parse(value).phase === "processing") await pendingProgress;
-    });
-    const graphql = shopifyGraphql();
-    const auraRequests: Request[] = [];
-    await withFetch(
-      (async (input: RequestInfo | URL) => {
-        auraRequests.push(new Request(input));
-        return Response.json({ items: [], size: 0 });
-      }) as typeof fetch,
-      async () => {
-        const { response, work } = await deliver(kv, graphql);
-        assert.equal(response.status, 200);
-        assert.equal(work.length, 1);
-        assert.equal(graphql.mock.callCount(), 0);
-
-        releaseProgress();
-        await Promise.all(work);
-      },
-    );
-    assert.equal(graphql.mock.callCount(), 2);
-    // A complete empty selection still reads the source for absent records.
-    assert.deepEqual(
-      auraRequests.map((request) => request.method),
-      ["GET"],
-    );
-    const status = await loadCatalogImportStatus(kv as never, shop);
-    assert.equal(status?.phase, "submitted");
-    assert.equal(status?.total, 0);
-    assert.equal(status?.eligible, 0);
-    assert.equal(status?.reconciled, true);
-    assert.equal(kv.entries.has(`aura-historia:backfill:${shop}`), false);
+  it("durably admits the matching export to the shop's catalog importer", async () => {
+    const start = mock.fn(async () => {});
+    const { response, kv, getByName } = await deliver(start);
+    assert.equal(response.status, 200);
+    assert.deepEqual(getByName.mock.calls[0].arguments, [shop]);
+    assert.deepEqual(start.mock.calls[0].arguments, [shop, bulkOperationId]);
+    // The importer owns the context until the import finishes.
+    assert.ok(kv.entries.has(`aura-historia:backfill:${shop}`));
   });
 
-  for (const [name, response, error] of [
-    [
-      "a replaced channel publication",
-      publication("gid://shopify/Publication/789"),
-      "PUBLICATION_CHANGED",
-    ],
-    [
-      "a revoked product listing scope",
-      publication(publicationId, ["read_products"]),
-      "MISSING_SCOPE",
-    ],
-    ["a removed channel publication", publication(null), "MISSING_PUBLICATION"],
-  ] as const) {
-    it(`discards the snapshot without writes after ${name}`, async () => {
-      const kv = makeKv();
-      const fetcher = mock.fn(async () => Response.json({}));
-      await withFetch(fetcher as typeof fetch, async () => {
-        const { work } = await deliver(kv, shopifyGraphql(response));
-        await Promise.all(work);
-      });
-      assert.equal(fetcher.mock.callCount(), 0);
-      const status = await loadCatalogImportStatus(kv as never, shop);
-      assert.equal(status?.phase, "failed");
-      assert.equal(status?.error, error);
-      assert.equal(kv.entries.has(`aura-historia:backfill:${shop}`), false);
+  it("asks Shopify to retry when admission cannot be committed", async () => {
+    const { response, kv } = await deliver(async () => {
+      throw new Error("Durable Object unavailable");
     });
-  }
+    assert.equal(response.status, 503);
+    assert.ok(kv.entries.has(`aura-historia:backfill:${shop}`));
+  });
+
+  it("ignores exports that are not the shop's current import", async () => {
+    const start = mock.fn(async () => {});
+    const { response } = await deliver(start, {
+      operation: "gid://shopify/BulkOperation/999",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(start.mock.callCount(), 0);
+  });
 
   it("records a failed Shopify export as a retryable read failure", async () => {
-    const kv = makeKv();
-    const graphql = shopifyGraphql();
-    const { work } = await deliver(kv, graphql, "failed");
-    assert.equal(work.length, 0);
-    assert.equal(graphql.mock.callCount(), 0);
+    const start = mock.fn(async () => {});
+    const { kv } = await deliver(start, { status: "failed" });
+    assert.equal(start.mock.callCount(), 0);
     const status = await loadCatalogImportStatus(kv as never, shop);
     assert.equal(status?.phase, "failed");
     assert.equal(status?.error, "SHOPIFY_READ_FAILED");
+    assert.equal(kv.entries.has(`aura-historia:backfill:${shop}`), false);
   });
 });

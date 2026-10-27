@@ -9,6 +9,7 @@ import type { AppLoadContext } from "react-router";
 
 export interface CloudflareShopifyEnv {
   SHOP_COORDINATOR: CloudflareBindings["SHOP_COORDINATOR"];
+  CATALOG_IMPORTER: CloudflareBindings["CATALOG_IMPORTER"];
   KV: CloudflareBindings["KV"];
   SCOPES?: string;
   SHOPIFY_API_KEY?: string;

@@ -1,4 +1,6 @@
 import type { AppLoadContext } from "react-router";
+import { PRODUCT_LISTINGS_SCOPE } from "../catalog.server";
+import { queueCatalogImport } from "../catalog-import.server";
 import { getShopifyWebhook } from "../shopify.server";
 import { SHIPPING_API_VERSION } from "./model";
 import { shopCoordinator } from "./runtime.server";
@@ -50,6 +52,16 @@ async function boundedRequest(request: Request): Promise<Request> {
   });
 }
 
+function grantsProductListings(body: Record<string, unknown>) {
+  const has = (scopes: unknown) =>
+    Array.isArray(scopes) &&
+    scopes.some(
+      (scope) =>
+        scope === PRODUCT_LISTINGS_SCOPE || scope === "write_product_listings",
+    );
+  return has(body.current) && !has(body.previous);
+}
+
 export async function receiveShippingWebhook(
   request: Request,
   context: AppLoadContext,
@@ -91,6 +103,10 @@ export async function receiveShippingWebhook(
       deliveryId,
       profileId,
     });
+    if (topic === "APP_SCOPES_UPDATE" && grantsProductListings(body))
+      // Existing installations recover through Shopify's scope update: the
+      // first grant of channel listing access starts the filtered import.
+      context.cloudflare.ctx.waitUntil(queueCatalogImport(context, shop));
     return new Response(null, { status: 200 });
   } catch {
     // Shopify must retry if the durable commit or RPC reply was lost.

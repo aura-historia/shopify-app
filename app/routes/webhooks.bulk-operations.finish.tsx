@@ -1,17 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
-import {
-  clearBackfillContext,
-  fetchBulkOperationResult,
-  loadBackfillContext,
-  processBackfillResults,
-} from "../backfill.server";
-import {
-  CHANNEL_PUBLICATION_ERRORS,
-  resolveChannelPublication,
-  saveCatalogImportStatus,
-} from "../catalog.server";
-import { summarizeOAuthError } from "../oauth.server";
-import { offlineGraphql } from "../shipping/runtime.server";
+import { clearBackfillContext, loadBackfillContext } from "../backfill.server";
+import { saveCatalogImportStatus } from "../catalog.server";
+import { catalogImporter } from "../shipping/runtime.server";
 import { getShopifyWebhook } from "../shopify.server";
 
 interface BulkOperationPayload {
@@ -54,77 +44,13 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     return new Response(null, { status: 200 });
   }
 
-  context.cloudflare.ctx.waitUntil(
-    (async () => {
-      try {
-        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-          phase: "processing",
-          total: 0,
-          failed: 0,
-        });
-        const graphqlRequest = offlineGraphql(context, shop);
-        const exportResult = await fetchBulkOperationResult(
-          graphqlRequest,
-          bulkOpId,
-        );
-        // Writes use the current installation's access and publication. A
-        // revoked scope or replaced channel invalidates the whole snapshot.
-        const publication = await resolveChannelPublication(graphqlRequest);
-        if (
-          publication.state !== "ready" ||
-          publication.publicationId !== backfillCtx.publicationId
-        ) {
-          await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-            phase: "failed",
-            total: 0,
-            failed: 0,
-            error:
-              publication.state === "ready"
-                ? "PUBLICATION_CHANGED"
-                : CHANNEL_PUBLICATION_ERRORS[publication.state],
-          });
-          return;
-        }
-
-        const result = await processBackfillResults(exportResult, backfillCtx);
-        const error = !result.complete
-          ? "INCOMPLETE_EXPORT"
-          : !result.reconciled
-            ? "RECONCILIATION_FAILED"
-            : undefined;
-        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-          phase: result.failures.length || error ? "failed" : "submitted",
-          total: result.total,
-          failed: result.failures.length,
-          eligible: result.eligible,
-          withdrawn: result.withdrawn,
-          reconciled: result.reconciled,
-          ...(error && { error }),
-        });
-
-        console.log(
-          `Backfill complete for ${shop}: ${result.total} products, ${result.eligible} published to Aura, ${result.withdrawn} withdrawn, ${result.failures.length} failures, reconciled=${result.reconciled}`,
-        );
-
-        if (result.failures.length > 0) {
-          console.warn("Failed product IDs:", result.failures.join(", "));
-        }
-      } catch (error) {
-        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-          phase: "failed",
-          total: 0,
-          failed: 0,
-          error: "SHOPIFY_READ_FAILED",
-        });
-        console.error(
-          `Backfill processing failed for ${shop}:`,
-          summarizeOAuthError(error, [backfillCtx.accessToken]),
-        );
-      } finally {
-        await clearBackfillContext(context.cloudflare.env.KV, shop);
-      }
-    })(),
-  );
-
+  // Processing runs in bounded, resumable Durable Object alarms rather than
+  // this request's short waitUntil window. Admission is idempotent per bulk
+  // operation; Shopify retries the delivery if it could not be committed.
+  try {
+    await catalogImporter(context, shop).start(shop, bulkOpId);
+  } catch {
+    return new Response(null, { status: 503 });
+  }
   return new Response(null, { status: 200 });
 };

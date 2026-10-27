@@ -1,22 +1,17 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, redirect, useLoaderData, useNavigation } from "react-router";
-import {
-  clearBackfillContext,
-  configureShopifyListingSource,
-  triggerBackfill,
-} from "../backfill.server";
+import { clearBackfillContext } from "../backfill.server";
 import {
   type CatalogImportError,
   clearCatalogImportStatus,
   getChannelPublication,
   loadCatalogImportStatus,
 } from "../catalog.server";
+import { queueCatalogImport } from "../catalog-import.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
-  getAuraHistoriaApiBaseUrl,
   getAuraHistoriaOAuthConfig,
   getMissingAuraHistoriaOAuthConfig,
-  summarizeOAuthError,
 } from "../oauth.server";
 import {
   offlineGraphql,
@@ -59,9 +54,7 @@ const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   PUBLICATION_CHANGED:
     "The sales channel changed while the import ran. Import the catalog again.",
   INCOMPLETE_EXPORT:
-    "Shopify's catalog export could not be verified as complete. Published products were updated, but nothing was withdrawn for being absent. Retry the import.",
-  RECONCILIATION_FAILED:
-    "Previously imported products that no longer exist in Shopify could not all be withdrawn. Retry the import.",
+    "Shopify's catalog export could not be verified as complete, or some products' channel membership could not be read. Retry the import.",
 };
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
@@ -175,45 +168,8 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   }
 
   if (intent === "retry_backfill") {
-    const credentials = await loadShopCredentials(
-      context.cloudflare.env.KV,
-      session.shop,
-    );
-    if (!credentials) {
-      redirectParams.set("backfill", "not_queued");
-      return redirect(`/app?${redirectParams.toString()}`);
-    }
-
-    try {
-      const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
-      const apiBaseUrl =
-        getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
-        new URL(config.tokenUrl).origin;
-      const graphqlRequest = offlineGraphql(context, session.shop);
-      const metadata = await configureShopifyListingSource(
-        graphqlRequest,
-        apiBaseUrl,
-        credentials.listingSourceId,
-        credentials.accessToken,
-        session.shop,
-      );
-      const queued = await triggerBackfill(
-        graphqlRequest,
-        context.cloudflare.env.KV,
-        session.shop,
-        credentials.listingSourceId,
-        credentials.accessToken,
-        apiBaseUrl,
-        metadata,
-      );
-      redirectParams.set("backfill", queued ? "queued" : "not_queued");
-    } catch (error) {
-      console.error(
-        "Failed to retry initial backfill:",
-        summarizeOAuthError(error, [credentials.accessToken]),
-      );
-      redirectParams.set("backfill", "not_queued");
-    }
+    const queued = await queueCatalogImport(context, session.shop);
+    redirectParams.set("backfill", queued ? "queued" : "not_queued");
     return redirect(`/app?${redirectParams.toString()}`);
   }
 
@@ -393,7 +349,7 @@ export default function AppIndex() {
                     ? "The Aura Historia channel selection is unavailable. Refresh this page or contact support if the issue continues."
                     : publication.count === null
                       ? "The number of products selected for this channel is unavailable."
-                      : `${publication.atLeast ? "At least " : ""}${publication.count} active products are selected for the Aura Historia channel in Shopify. Selected products scheduled for later publication are imported once published.`}
+                      : `${publication.atLeast ? "At least " : ""}${publication.count} active products are selected for the Aura Historia channel in Shopify. The count can include products scheduled for later publication; only published products are imported.`}
                 </s-paragraph>
               )}
               <s-paragraph>
@@ -413,14 +369,17 @@ export default function AppIndex() {
                 >
                   {catalogImport?.phase === "failed" && catalogImport.error && (
                     <s-paragraph>
-                      {CATALOG_ISSUE_MESSAGES[catalogImport.error]}
+                      {catalogImport.error === "MISSING_SCOPE" &&
+                      publication?.state === "ready"
+                        ? "The updated Shopify permissions are now approved. Import the catalog again to apply your channel selection."
+                        : CATALOG_ISSUE_MESSAGES[catalogImport.error]}
                     </s-paragraph>
                   )}
                   <s-paragraph>
                     {catalogImport?.failed
-                      ? `${catalogImport.failed} products could not be submitted. Review their product data and retry the import.`
+                      ? `${catalogImport.failed} products could not be classified or submitted. Retry the import; if this continues, review their product data or contact support.`
                       : catalogImport?.phase === "failed" && catalogImport.error
-                        ? "Nothing is reported as imported until a complete import succeeds."
+                        ? "The import is not reported as complete until a full channel-filtered import succeeds."
                         : "The catalog import did not finish. Retry the import or contact support."}
                   </s-paragraph>
                 </s-banner>
@@ -436,16 +395,21 @@ export default function AppIndex() {
               )}
               {catalogImport?.phase === "submitted" &&
                 (catalogImport.eligible === undefined ? (
-                  <s-paragraph>
-                    Last import: {catalogImport.total} products processed,{" "}
-                    {catalogImport.failed} submission failures.
-                  </s-paragraph>
+                  <s-banner tone="warning" heading="Import your catalog again">
+                    <s-paragraph>
+                      The last import ({catalogImport.total} products) ran
+                      before imports followed your channel selection. Import the
+                      catalog again so only products published to Aura Historia
+                      stay listed.
+                    </s-paragraph>
+                  </s-banner>
                 ) : (
                   <s-paragraph>
                     Last import: {catalogImport.total} Shopify products checked,{" "}
                     {catalogImport.eligible} published to Aura Historia
-                    submitted, {catalogImport.withdrawn ?? 0} withdrawals
-                    submitted, {catalogImport.failed} submission failures.
+                    submitted, {catalogImport.withdrawn ?? 0} unpublished or
+                    inactive products withdrawn (if previously listed),{" "}
+                    {catalogImport.failed} failures.
                   </s-paragraph>
                 ))}
               <s-stack direction="inline" gap="base">

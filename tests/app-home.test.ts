@@ -25,7 +25,9 @@ function renderHome(
             integration: { status: "connected", backfill },
             shipping: null,
             publication: null,
-            catalogImport: phase ? { phase, total: 1, failed: 0 } : null,
+            catalogImport: phase
+              ? { phase, total: 1, failed: 0, eligible: 1, withdrawn: 0 }
+              : null,
             ...overrides,
           },
         },
@@ -49,14 +51,14 @@ describe("catalog progress in the embedded home", () => {
         phase === "processing"
           ? /The catalog is being submitted/
           : phase === "submitted"
-            ? /Last import: 1 products processed/
+            ? /Last import: 1 Shopify products checked/
             : /Catalog import needs attention/,
       );
     }
   });
   it("still reports a failed retry when the previous import succeeded", () => {
     const html = renderHome("submitted", "not_queued");
-    assert.match(html, /Last import: 1 products processed/);
+    assert.match(html, /Last import: 1 Shopify products checked/);
     assert.match(html, /Catalog import needs attention/);
   });
   it("retains the redirect feedback when no saved progress is available", () => {
@@ -111,20 +113,46 @@ describe("Aura channel selection in the embedded home", () => {
     });
     assert.match(html, /Sales channel not found/);
   });
-  it("explains incomplete reconciliation as a retryable failure", () => {
+  it("explains an incomplete export as a retryable failure", () => {
     const html = renderHome(null, "", {
       catalogImport: {
         phase: "failed",
         total: 4,
-        failed: 0,
+        failed: 1,
         eligible: 2,
-        withdrawn: 2,
-        reconciled: false,
-        error: "RECONCILIATION_FAILED",
+        withdrawn: 1,
+        error: "INCOMPLETE_EXPORT",
       },
     });
     assert.match(html, /Catalog import needs attention/);
-    assert.match(html, /no longer exist in Shopify could not all be withdrawn/);
+    assert.match(html, /could not be verified as complete/);
+    assert.match(html, /1 products could not be classified or submitted/);
+  });
+  it("points to a re-import once the missing permission is approved", () => {
+    const html = renderHome(null, "", {
+      publication: {
+        state: "ready",
+        count: 3,
+        atLeast: false,
+        editorUrl: "https://admin.shopify.com/store/example/bulk",
+      },
+      catalogImport: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "MISSING_SCOPE",
+      },
+    });
+    assert.doesNotMatch(html, /Approve updated Shopify permissions/);
+    assert.match(html, /permissions are now approved/);
+  });
+  it("asks for a re-import after an import from before channel filtering", () => {
+    const html = renderHome(null, "", {
+      catalogImport: { phase: "submitted", total: 7, failed: 0 },
+    });
+    assert.match(html, /Import your catalog again/);
+    assert.match(html, /ran before imports followed your channel selection/);
+    assert.doesNotMatch(html, /Last import/);
   });
   it("separates eligible submissions from withdrawals in the last import", () => {
     const html = renderHome(null, "", {
@@ -139,6 +167,6 @@ describe("Aura channel selection in the embedded home", () => {
     });
     assert.match(html, /5 Shopify products checked/);
     assert.match(html, /3 published to Aura Historia\s+submitted/);
-    assert.match(html, /2 withdrawals\s+submitted/);
+    assert.match(html, /2 unpublished or\s+inactive products withdrawn/);
   });
 });
