@@ -105,6 +105,7 @@ The app is a channel-config-extension sales channel, so it manages explicit chan
 - **Failure.** A missing `read_product_listings` grant is reported as missing access before any channel write. A Shopify `userErrors` refusal is reported as `CHANNEL_REJECTED`, with Shopify's message in the Worker log, and failed reads as a retryable read failure. The Aura connection and shipping import stay in place; the catalog shows the failure until “Import catalog again” succeeds. A refused or failed setup is never reported as an importable channel. The worldwide online-store-parity refusal of the current specification is tracked in [#378](https://github.com/aura-historia/shopify-app/issues/378).
 - **Disconnect and uninstall.** Disconnecting keeps the connection and its product selection for a later reconnect. After uninstall the app can no longer call Shopify. On reinstall, the next connection reuses a surviving connection or creates one.
 - **Publication.** `currentAppInstallation.publication` is deprecated in 2026-10 and does not identify an explicit connection; it was empty on the QA installation. The `publications` query requires `read_publications`, which the app does not request. The app therefore reads the app catalogs (`catalogs(type: APP)`, at most 20 pages of 25) and uses the publication of the one catalog that lists its connection. The bulk editor link and membership reads use that publication; the channel count is the connection's `productsCount` for active products.
+- **Product feeds.** The specification keeps `productFeedManagement = "automatic"`, so Shopify creates the connection's product feeds. The app subscribes to no `product_feeds/*` topic: catalog sync stays on the publication and the `product_listings/*` topics above.
 - **Migration.** Legacy install-time creation was never enabled, so there are no legacy channel records to convert with `channelUpdate`. Installations connected before this release have no channel. Their catalog reports the missing channel, and “Import catalog again” or reconnecting creates it. The Aura OAuth client is unchanged.
 
 ### Withdrawals
@@ -145,7 +146,7 @@ There are no active installations yet, so nothing is migrated.
 
 1. Deploy backend listing-event support ([aura-historia/backend#2573](https://github.com/aura-historia/backend/pull/2573)). Do not release this Shopify configuration earlier: without backend routing, live product sync does not work.
 2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration.
-3. Verify the following on a development store whose markets satisfy the specification:
+3. Verify the following on a development store. Channel creation on regional stores also needs the specification fix tracked in [#378](https://github.com/aura-historia/shopify-app/issues/378):
    - A fresh install creates no channel; connecting Aura Historia creates exactly one `aura-historia` connection bound to the listing source, and a retried connection or import creates no second one.
    - Products can be selected for the channel, and `product_listings/*` events arrive for that selection.
    - Selected and unselected products.
@@ -207,7 +208,7 @@ The repository uses separate Shopify configuration files to keep stage-specific 
 | `shopify.app.prod.toml` | Production configuration using the production EventBridge partner source |
 | `shopify.app.tunnel.toml` | Development tunnel mode; exposes backfill completion and shipping receivers through the active tunnel |
 
-The required Shopify scopes are `read_products`, `read_product_listings`, `read_locales` and `read_shipping`. `read_product_listings` is required by the own-channel listing topics and the per-publication membership reads. `read_shipping` must stay required: the profile webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
+The required Shopify scopes are `read_products`, `read_product_listings`, `read_locales` and `read_shipping`. `read_product_listings` is required by the channel connection, the own-channel listing topics and the per-publication membership reads. `read_shipping` must stay required: the profile webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
 
 ## Advertised shipping imports
 

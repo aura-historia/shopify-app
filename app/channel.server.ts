@@ -6,17 +6,16 @@ import type { GraphqlRequestFn } from "./backfill.server";
 // `extensions/channel-config/specifications/aura-historia.toml`.
 export const AURA_CHANNEL_HANDLE = "aura-historia";
 export const AURA_CHANNEL_SPECIFICATION_HANDLE = "aura-historia";
-export const AURA_CHANNEL_ACCOUNT_NAME = "Aura Historia";
+const AURA_CHANNEL_ACCOUNT_NAME = "Aura Historia";
 
-export const CHANNEL_GID = /^gid:\/\/shopify\/Channel\/([1-9]\d*)$/;
+const CHANNEL_GID = /^gid:\/\/shopify\/Channel\/([1-9]\d*)$/;
 export const PUBLICATION_GID = /^gid:\/\/shopify\/Publication\/([1-9]\d*)$/;
 
 // Shopify scope for the app's own channel listings: channel connections, the
 // listing webhooks and per-publication membership reads depend on it. The
 // write scope implies it.
-export const PRODUCT_LISTINGS_SCOPE = "read_product_listings";
 const PRODUCT_LISTINGS_SCOPES = new Set([
-  PRODUCT_LISTINGS_SCOPE,
+  "read_product_listings",
   "write_product_listings",
 ]);
 

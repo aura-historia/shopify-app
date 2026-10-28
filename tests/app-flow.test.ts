@@ -156,6 +156,8 @@ describe("public install flow", () => {
     assert.ok(appIndexRoute.includes("Connected via OAuth"));
     assert.ok(appIndexRoute.includes('heading="Aura Historia account"'));
     assert.ok(successRoute.includes("Shopify sales channel connection"));
+    // The channel exists only once the merchant connects Aura Historia.
+    assert.equal(successRoute.includes("connection is now active"), false);
     assert.ok(appIndexRoute.includes('"disconnected"'));
     assert.ok(appIndexRoute.includes("isShopCredentialsDisconnected"));
     assert.ok(appIndexRoute.includes("markShopCredentialsDisconnected"));

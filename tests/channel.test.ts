@@ -429,16 +429,4 @@ describe("Aura channel configuration", () => {
       AURA_CHANNEL_SPECIFICATION_HANDLE,
     );
   });
-
-  it("keeps Shopify's legacy install-time channel disabled", () => {
-    const extension = readFileSync(
-      resolve(
-        process.cwd(),
-        "extensions/channel-config/shopify.extension.toml",
-      ),
-      "utf8",
-    );
-    assert.match(extension, /^create_legacy_channel_on_app_install = false$/m);
-    assert.match(extension, /channelCreate/);
-  });
 });

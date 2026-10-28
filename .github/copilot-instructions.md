@@ -30,7 +30,8 @@
   - `product_listings/add`
   - `product_listings/update`
   - `product_listings/remove`
-- Catalog imports admit only active products whose `publishedOnPublication` membership in the current app publication is explicitly true. Never fall back to all active products, `onlineStoreUrl`, generic Online Store filters or aggregate counts.
+- Catalog imports admit only active products whose `publishedOnPublication` membership in the publication of the app's channel connection is explicitly true. Never fall back to all active products, `onlineStoreUrl`, generic Online Store filters, aggregate counts or the deprecated `currentAppInstallation.publication`.
+- Keep `create_legacy_channel_on_app_install = false`. The app's single channel connection (handle `aura-historia`) is created or rebound with `channelCreate`/`channelUpdate` in `app/channel.server.ts`, only after Aura accepted the listing source's ingestion configuration, and its `accountId` is that listing source ID.
 - Preserve the `app/uninstalled` subscription so session cleanup continues to work.
 - Keep `app/shopify.server.ts` API version aligned with `shopify.app.toml`.
 - Keep production-only webhook differences in `shopify.app.prod.toml` instead of trying to drive EventBridge ARNs from `shopify.web.toml`.

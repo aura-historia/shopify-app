@@ -55,7 +55,7 @@ const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   MISSING_CHANNEL:
     "The Aura Historia sales channel is not set up for this listing source in Shopify. Import the catalog again to set it up.",
   CHANNEL_REJECTED:
-    "Shopify did not accept the Aura Historia sales channel for this store, for example because the channel's markets are not available in your store. Review your Shopify markets, then import the catalog again or contact support.",
+    "Shopify did not accept the Aura Historia sales channel for this store. Your store settings are unchanged. Import the catalog again later or contact support.",
   MISSING_PUBLICATION:
     "Shopify did not return the product selection of the Aura Historia sales channel. Import the catalog again or contact support.",
   SHOPIFY_READ_FAILED:

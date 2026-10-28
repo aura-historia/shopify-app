@@ -144,7 +144,8 @@ describe("Aura channel selection in the embedded home", () => {
       html,
       /Shopify did not accept the Aura Historia sales channel/,
     );
-    assert.match(html, /Review your Shopify markets/);
+    assert.match(html, /Your store settings are unchanged/);
+    assert.doesNotMatch(html, /Shopify markets/);
   });
   it("explains an incomplete export as a retryable failure", () => {
     const html = renderHome(null, "", {

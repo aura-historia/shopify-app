@@ -51,7 +51,7 @@ export default function SuccessPage() {
             <p className={styles.brandMeta}>
               {oauthConfigMissing
                 ? "Shopify approval is complete, but Aura Historia OAuth still needs runtime configuration."
-                : "The Shopify sales channel connection is now active and Aura Historia can begin receiving changes to products published to its channel over Amazon EventBridge."}
+                : "Shopify approval is complete. Connecting your Aura Historia account in the embedded app sets up the Shopify sales channel connection for the products you publish to it."}
             </p>
           </div>
           <nav className={styles.headerLinks} aria-label="Aura Historia links">
@@ -83,11 +83,11 @@ export default function SuccessPage() {
                 </>
               ) : shop ? (
                 <>
-                  Aura Historia Sales Channel is now connected to{" "}
+                  Aura Historia Sales Channel is now installed on{" "}
                   <span className={styles.shopName}>{shop}</span>.
                 </>
               ) : (
-                "Aura Historia Sales Channel is now connected to your Shopify store."
+                "Aura Historia Sales Channel is now installed on your Shopify store."
               )}
             </h1>
             <p className={styles.lead}>
@@ -95,7 +95,7 @@ export default function SuccessPage() {
                 ? `Set the missing OAuth environment variables${
                     missingConfig ? ` (${missingConfig})` : ""
                   } and reopen the embedded app to complete Aura Historia authorization automatically.`
-                : "Shopify approval is complete. Product create, update, and delete events can now flow through the configured EventBridge pipeline to Aura Historia for sales channel publishing."}
+                : "Open the embedded app and connect your Aura Historia account to create the Aura Historia sales channel. Products you publish to it then reach Aura Historia through the configured EventBridge pipeline."}
             </p>
 
             <div className={styles.buttonRow}>
@@ -118,7 +118,7 @@ export default function SuccessPage() {
                 <p className={styles.cardBody}>
                   {oauthConfigMissing
                     ? "The Shopify installation is approved, but the Aura Historia access token and partner shop ID were not stored because OAuth client settings are missing."
-                    : "Aura Historia now follows the products you publish to its Shopify sales channel, publishes them to its discovery surface, and keeps the public-app compliance subscriptions in place for ongoing App Store eligibility."}
+                    : "After you connect your Aura Historia account, Aura Historia follows the products you publish to its Shopify sales channel and publishes them to its discovery surface. The public-app compliance subscriptions stay in place for ongoing App Store eligibility."}
                 </p>
               </article>
               <article className={styles.surfaceCardStrong}>
