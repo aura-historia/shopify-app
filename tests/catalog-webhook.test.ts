@@ -35,7 +35,6 @@ async function deliver(
     shopDomain: shop,
     bulkOperationId,
     publicationId: "gid://shopify/Publication/456",
-    snapshotStartedAt: "2026-10-27T10:00:00.000Z",
     createdAt: new Date().toISOString(),
   });
   const body = JSON.stringify({

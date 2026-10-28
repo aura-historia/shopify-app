@@ -8,6 +8,7 @@ import {
   buildBulkProductsQuery,
   buildShopifyIngestionConfiguration,
   type CatalogImportJob,
+  type CatalogImportStore,
   classifyShopifyBackfillAction,
   clearBackfillContext,
   configureShopifyListingSource,
@@ -27,7 +28,6 @@ import {
   requireSupportedShopifyCurrency,
   resolveLanguage,
   runCatalogImportStep,
-  SOURCE_OCCURRED_AT_HEADER,
   sendProductBatch,
   storeBackfillContext,
   submitBulkOperation,
@@ -44,7 +44,6 @@ const shopDomain = "my-shop.myshopify.com";
 const accessToken = "aurahistoria_accesstoken_test";
 const bulkOperationId = "gid://shopify/BulkOperation/789";
 const publicationId = "gid://shopify/Publication/456";
-const snapshotStartedAt = "2026-06-06T00:00:00.000Z";
 
 function makeProduct(
   overrides: Partial<BulkJsonlProduct> = {},
@@ -74,7 +73,6 @@ function makeContext(
     shopDomain,
     bulkOperationId,
     publicationId,
-    snapshotStartedAt,
     createdAt: "2026-06-06T00:00:00.000Z",
     ...overrides,
   };
@@ -394,8 +392,6 @@ describe("Shopify JSONL and KV context", () => {
     for (const overrides of [
       { publicationId: undefined },
       { publicationId: "gid://shopify/Channel/1" },
-      { snapshotStartedAt: undefined },
-      { snapshotStartedAt: "yesterday" },
     ]) {
       kv.entries.set(
         `aura-historia:backfill:${shopDomain}`,
@@ -432,8 +428,7 @@ describe("Shopify GraphQL", () => {
 
   it("submits a bulk query without descriptions and returns the operation ID", async () => {
     const graphqlRequest: GraphqlRequestFn = mock.fn(
-      async (mutation, variables) => {
-        assert.match(mutation, /createdAt/);
+      async (_mutation, variables) => {
         const bulkQuery = variables.query;
         assert.equal(typeof bulkQuery, "string");
         assert.match(bulkQuery as string, /handle/);
@@ -448,21 +443,17 @@ describe("Shopify GraphQL", () => {
         return {
           data: {
             bulkOperationRunQuery: {
-              bulkOperation: {
-                id: bulkOperationId,
-                status: "CREATED",
-                createdAt: "2026-10-27T10:00:00Z",
-              },
+              bulkOperation: { id: bulkOperationId, status: "CREATED" },
               userErrors: [],
             },
           },
         };
       },
     );
-    assert.deepEqual(await submitBulkOperation(graphqlRequest, publicationId), {
-      id: bulkOperationId,
-      createdAt: "2026-10-27T10:00:00.000Z",
-    });
+    assert.equal(
+      await submitBulkOperation(graphqlRequest, publicationId),
+      bulkOperationId,
+    );
     await assert.rejects(
       () =>
         submitBulkOperation(
@@ -478,30 +469,6 @@ describe("Shopify GraphQL", () => {
         ),
       /Already running/,
     );
-  });
-
-  it("requires Shopify's own creation time as the snapshot lower bound", async () => {
-    for (const createdAt of [undefined, "not-a-time"]) {
-      await assert.rejects(
-        () =>
-          submitBulkOperation(
-            async () => ({
-              data: {
-                bulkOperationRunQuery: {
-                  bulkOperation: {
-                    id: bulkOperationId,
-                    status: "CREATED",
-                    createdAt,
-                  },
-                  userErrors: [],
-                },
-              },
-            }),
-            publicationId,
-          ),
-        /creation time/,
-      );
-    }
   });
 
   it("embeds only a validated publication GID into the bulk query", () => {
@@ -849,17 +816,12 @@ describe("async product listing batches", () => {
 
   it("retries the unchanged entire batch with the same key on retryable report failures", async () => {
     const items = [transformWithdrawal(makeProduct())];
-    const requests: Array<{
-      key: string | null;
-      occurredAt: string | null;
-      body: unknown;
-    }> = [];
+    const requests: Array<{ key: string | null; body: unknown }> = [];
     await withFetch(
       (async (input: RequestInfo | URL) => {
         const request = asRequest(input);
         requests.push({
           key: request.headers.get("Idempotency-Key"),
-          occurredAt: request.headers.get(SOURCE_OCCURRED_AT_HEADER),
           body: await request.json(),
         });
         return requests.length === 1
@@ -885,22 +847,15 @@ describe("async product listing batches", () => {
             accessToken,
             "delete",
             "retry-key",
-            snapshotStartedAt,
           ),
           [],
         );
       },
     );
-    // A delayed retry still carries the original snapshot time, never the
-    // retry time, so the backend can order it before newer listing events.
     assert.ok(requests.length >= 2);
     assert.deepEqual(
       requests,
-      requests.map(() => ({
-        key: "retry-key",
-        occurredAt: snapshotStartedAt,
-        body: items,
-      })),
+      requests.map(() => ({ key: "retry-key", body: items })),
     );
   });
 
@@ -1009,17 +964,21 @@ function stepGraphql({
           };
 }
 
-// Fake Shopify export download plus Aura async writes.
+// Fake Shopify export download plus this source's existing Aura listings
+// (paged by the partner listing query) and async writes.
 function fakeCatalog(
   products: BulkJsonlProduct[] | string,
-  respond?: (body: Array<{ sourceListingId: string }>) => Response,
+  {
+    existing = [] as string[],
+    listingStatus = undefined as number | undefined,
+    respond = undefined as
+      | ((body: Array<{ sourceListingId: string }>) => Response)
+      | undefined,
+  } = {},
 ) {
-  const writes: Array<{
-    method: string;
-    key: string | null;
-    occurredAt: string | null;
-    ids: string[];
-  }> = [];
+  const writes: Array<{ method: string; key: string | null; ids: string[] }> =
+    [];
+  const reads: URL[] = [];
   const fetcher = (async (input: RequestInfo | URL) => {
     const request = asRequest(input);
     if (request.url === resultUrl) {
@@ -1027,22 +986,71 @@ function fakeCatalog(
         typeof products === "string" ? products : jsonl(products),
       );
     }
+    if (request.method === "GET") {
+      const url = new URL(request.url);
+      reads.push(url);
+      assert.equal(
+        url.pathname,
+        `/v1/listing-sources/${listingSourceId}/product-listings`,
+      );
+      assert.equal(url.searchParams.get("lifecycle"), "ACTIVE");
+      assert.equal(
+        request.headers.get("Authorization"),
+        `Bearer ${accessToken}`,
+      );
+      if (listingStatus) return jsonResponse({ error: "X" }, listingStatus);
+      const start = Number(url.searchParams.get("searchAfter") ?? "0");
+      const size = Number(url.searchParams.get("size"));
+      const items = existing.slice(start, start + size).map((id) => ({
+        sourceListingId: id,
+        lifecycle: "ACTIVE",
+      }));
+      return jsonResponse(
+        {
+          items,
+          size: items.length,
+          ...(start + size < existing.length && {
+            searchAfter: String(start + size),
+          }),
+        },
+        200,
+      );
+    }
     const body = (await request.json()) as Array<{ sourceListingId: string }>;
     writes.push({
       method: request.method,
       key: request.headers.get("Idempotency-Key"),
-      occurredAt: request.headers.get(SOURCE_OCCURRED_AT_HEADER),
       ids: body.map((item) => item.sourceListingId),
     });
     return respond?.(body) ?? jsonResponse(report(body.length));
   }) as typeof fetch;
-  return { fetcher, writes };
+  return { fetcher, writes, reads };
+}
+
+function memoryStore() {
+  const ids = new Map<string, string[]>();
+  const jobs: CatalogImportJob[] = [];
+  const store: CatalogImportStore = {
+    saveJob: async (job) => {
+      jobs.push(structuredClone(job));
+    },
+    putIds: async (key, value) => {
+      ids.set(key, [...value]);
+    },
+    getIds: async (key) => {
+      const value = ids.get(key);
+      assert.ok(value, key);
+      return [...value];
+    },
+  };
+  return { store, ids, jobs };
 }
 
 function newJob(): CatalogImportJob {
   return {
     shop: shopDomain,
     bulkOperationId,
+    listingPages: 0,
     cursor: 0,
     failed: 0,
     withdrawn: 0,
@@ -1060,7 +1068,7 @@ async function runToCompletion(
     makeContext(),
     graphql,
     Number.POSITIVE_INFINITY,
-    async () => {},
+    memoryStore().store,
   );
   assert.equal(step.done, true);
   return { job, status: step.status };
@@ -1096,29 +1104,33 @@ describe("Aura channel eligibility", () => {
     );
   });
 
-  it("plans deterministic batches of at most 100 with unique keys", () => {
-    const products = Array.from({ length: 101 }, (_, index) =>
+  it("plans the eligible selection and the listings it retains", () => {
+    const products = [
+      makeProduct({ id: "gid://shopify/Product/1" }),
+      makeProduct({ id: "gid://shopify/Product/2", status: "DRAFT" }),
       makeProduct({
-        id: `gid://shopify/Product/${index + 1}`,
-        handle: `clock-${index + 1}`,
+        id: "gid://shopify/Product/3",
+        publishedOnPublication: false,
       }),
-    );
-    products.push(
-      makeProduct({ id: "gid://shopify/Product/102", status: "ARCHIVED" }),
-    );
-    const plan = planBackfill(jsonl(products), 102, makeContext());
-    assert.deepEqual(
-      plan.batches.map(({ verb, index, items }) => [verb, index, items.length]),
-      [
-        ["put", 0, 100],
-        ["put", 1, 1],
-        ["delete", 0, 1],
-      ],
-    );
-    assert.deepEqual(planBackfill(jsonl(products), 102, makeContext()), plan);
-    assert.equal(plan.total, 102);
-    assert.equal(plan.eligible, 101);
+      makeProduct({ id: "gid://shopify/Product/4", status: "UNLISTED" }),
+      makeProduct({
+        id: "gid://shopify/Product/5",
+        handle: "",
+        onlineStoreUrl: null,
+      }),
+    ];
+    const plan = planBackfill(jsonl(products), 5, makeContext());
+    assert.equal(plan.total, 5);
+    assert.equal(plan.eligible, 2);
     assert.equal(plan.complete, true);
+    assert.deepEqual(
+      plan.upserts.map((item) => item.sourceListingId),
+      ["1"],
+    );
+    // Unmappable eligible products are failures but keep their listings.
+    assert.deepEqual(plan.rejected, ["5"]);
+    assert.deepEqual([...plan.retained].sort(), ["1", "4", "5"]);
+    assert.deepEqual(planBackfill(jsonl(products), 5, makeContext()), plan);
   });
 
   it("verifies completeness against Shopify's root object count", () => {
@@ -1145,7 +1157,7 @@ describe("Aura channel eligibility", () => {
 });
 
 describe("catalog import steps", () => {
-  it("imports only products published to Aura and withdraws those published elsewhere or nowhere", async () => {
+  it("upserts the selection and withdraws only existing listings absent from it", async () => {
     const products = [
       makeProduct({ id: "gid://shopify/Product/301" }),
       // Published only to the Online Store: a storefront URL is not
@@ -1154,7 +1166,7 @@ describe("catalog import steps", () => {
         id: "gid://shopify/Product/302",
         publishedOnPublication: false,
       }),
-      // Active but published to no channel.
+      // Active but published to no channel, never imported.
       makeProduct({
         id: "gid://shopify/Product/303",
         publishedOnPublication: false,
@@ -1165,7 +1177,10 @@ describe("catalog import steps", () => {
       makeProduct({ id: "gid://shopify/Product/305", status: "DRAFT" }),
       makeProduct({ id: "gid://shopify/Product/306", status: "UNLISTED" }),
     ];
-    const catalog = fakeCatalog(products);
+    // 900 is an existing listing whose product is no longer in Shopify.
+    const catalog = fakeCatalog(products, {
+      existing: ["301", "302", "305", "306", "900"],
+    });
     let upsertBody: unknown;
     await withFetch(
       (async (input: RequestInfo | URL) => {
@@ -1188,14 +1203,12 @@ describe("catalog import steps", () => {
       {
         method: "PUT",
         key: "shopify-backfill-789-put-0",
-        occurredAt: snapshotStartedAt,
         ids: ["301", "304"],
       },
       {
         method: "DELETE",
         key: "shopify-backfill-789-delete-0",
-        occurredAt: snapshotStartedAt,
-        ids: ["302", "303", "305"],
+        ids: ["302", "305", "900"],
       },
     ]);
     assert.deepEqual(
@@ -1206,18 +1219,14 @@ describe("catalog import steps", () => {
     );
   });
 
-  it("withdraws every product for a valid empty channel selection", async () => {
+  it("withdraws every existing listing of the source for a valid empty selection", async () => {
     const products = [
       makeProduct({
         id: "gid://shopify/Product/1",
         publishedOnPublication: false,
       }),
-      makeProduct({
-        id: "gid://shopify/Product/2",
-        publishedOnPublication: false,
-      }),
     ];
-    const catalog = fakeCatalog(products);
+    const catalog = fakeCatalog(products, { existing: ["1", "2"] });
     await withFetch(catalog.fetcher, async () => {
       const { status } = await runToCompletion(products);
       assert.equal(status.phase, "submitted");
@@ -1230,22 +1239,25 @@ describe("catalog import steps", () => {
     );
   });
 
-  it("completes an empty shop without downloads or writes", async () => {
-    const catalog = fakeCatalog([]);
+  it("reconciles an empty shop against existing listings", async () => {
+    const catalog = fakeCatalog([], { existing: ["7"] });
     await withFetch(catalog.fetcher, async () => {
       const { status } = await runToCompletion([]);
       assert.deepEqual(status, {
         phase: "submitted",
         total: 0,
         eligible: 0,
-        withdrawn: 0,
+        withdrawn: 1,
         failed: 0,
       });
     });
-    assert.deepEqual(catalog.writes, []);
+    assert.deepEqual(
+      catalog.writes.map(({ method, ids }) => ({ method, ids })),
+      [{ method: "DELETE", ids: ["7"] }],
+    );
   });
 
-  it("never upserts or withdraws on unknown membership and never reports it complete", async () => {
+  it("never withdraws on unknown membership and never reports it complete", async () => {
     const products = [
       makeProduct({
         id: "gid://shopify/Product/401",
@@ -1256,13 +1268,14 @@ describe("catalog import steps", () => {
         publishedOnPublication: "true" as never,
       }),
       makeProduct({ id: "gid://shopify/Product/403" }),
+      makeProduct({ id: "gid://shopify/Product/404", status: "DRAFT" }),
     ];
-    const catalog = fakeCatalog(products);
+    const catalog = fakeCatalog(products, { existing: ["404", "999"] });
     await withFetch(catalog.fetcher, async () => {
       const { status } = await runToCompletion(products);
       assert.deepEqual(status, {
         phase: "failed",
-        total: 3,
+        total: 4,
         eligible: 1,
         withdrawn: 0,
         failed: 2,
@@ -1273,11 +1286,12 @@ describe("catalog import steps", () => {
       catalog.writes.map(({ method, ids }) => ({ method, ids })),
       [{ method: "PUT", ids: ["403"] }],
     );
+    assert.equal(catalog.reads.length, 0);
   });
 
-  it("reports a truncated export as incomplete", async () => {
+  it("never withdraws for a truncated export", async () => {
     const products = [makeProduct()];
-    const catalog = fakeCatalog(products);
+    const catalog = fakeCatalog(products, { existing: ["999"] });
     await withFetch(catalog.fetcher, async () => {
       const { status } = await runToCompletion(
         products,
@@ -1286,7 +1300,41 @@ describe("catalog import steps", () => {
       assert.equal(status.phase, "failed");
       assert.equal(status.error, "INCOMPLETE_EXPORT");
     });
+    assert.deepEqual(
+      catalog.writes.map(({ method }) => method),
+      ["PUT"],
+    );
+    assert.equal(catalog.reads.length, 0);
   });
+
+  for (const [listingStatus, attempts] of [
+    [503, 3],
+    [403, 1],
+  ] as const) {
+    it(`submits the selection but withdraws nothing when existing listings are unreadable (${listingStatus})`, async () => {
+      const products = [
+        makeProduct(),
+        makeProduct({ id: "gid://shopify/Product/2", status: "DRAFT" }),
+      ];
+      const catalog = fakeCatalog(products, { listingStatus });
+      await withFetch(catalog.fetcher, async () => {
+        const { status } = await runToCompletion(products);
+        assert.deepEqual(status, {
+          phase: "failed",
+          total: 2,
+          eligible: 1,
+          withdrawn: 0,
+          failed: 0,
+          error: "RECONCILIATION_FAILED",
+        });
+      });
+      assert.equal(catalog.reads.length, attempts);
+      assert.deepEqual(
+        catalog.writes.map(({ method }) => method),
+        ["PUT"],
+      );
+    });
+  }
 
   for (const [name, graphql, error] of [
     [
@@ -1308,8 +1356,8 @@ describe("catalog import steps", () => {
       "PUBLICATION_CHANGED",
     ],
   ] as const) {
-    it(`discards the snapshot without writes after ${name}`, async () => {
-      const catalog = fakeCatalog([makeProduct()]);
+    it(`discards the snapshot without reads or writes after ${name}`, async () => {
+      const catalog = fakeCatalog([makeProduct()], { existing: ["999"] });
       await withFetch(catalog.fetcher, async () => {
         const { status } = await runToCompletion([makeProduct()], graphql);
         assert.deepEqual(status, {
@@ -1320,6 +1368,7 @@ describe("catalog import steps", () => {
         });
       });
       assert.deepEqual(catalog.writes, []);
+      assert.equal(catalog.reads.length, 0);
     });
   }
 
@@ -1332,7 +1381,7 @@ describe("catalog import steps", () => {
           makeContext(),
           async () => ({ data: { node: { status: "RUNNING" } } }),
           Number.POSITIVE_INFINITY,
-          async () => {},
+          memoryStore().store,
         ),
       );
     });
@@ -1344,20 +1393,22 @@ describe("catalog import steps", () => {
       makeProduct(),
       makeProduct({ id: "gid://shopify/Product/6", status: "DRAFT" }),
     ];
-    const catalog = fakeCatalog(products, (body) =>
-      jsonResponse(
-        report(
-          0,
-          body.map((product, index) => ({
-            index,
-            sourceListingId: product.sourceListingId,
-            error: "BAD_BODY_VALUE",
-            retryable: false,
-          })),
+    const catalog = fakeCatalog(products, {
+      existing: ["6"],
+      respond: (body) =>
+        jsonResponse(
+          report(
+            0,
+            body.map((product, index) => ({
+              index,
+              sourceListingId: product.sourceListingId,
+              error: "BAD_BODY_VALUE",
+              retryable: false,
+            })),
+          ),
+          400,
         ),
-        400,
-      ),
-    );
+    });
     await withFetch(catalog.fetcher, async () => {
       const { status } = await runToCompletion(products);
       assert.equal(status.phase, "failed");
@@ -1367,75 +1418,76 @@ describe("catalog import steps", () => {
     });
   });
 
-  it("stops at its deadline and resumes at the next batch with the same keys", async () => {
+  it("resumes enumeration and batches at the next step with the same keys", async () => {
     const products = Array.from({ length: 250 }, (_, index) =>
       makeProduct({
         id: `gid://shopify/Product/${index + 1}`,
         handle: `clock-${index + 1}`,
       }),
     );
-    const catalog = fakeCatalog(products);
+    // 150 absent listings span two pages and two withdrawal batches.
+    const existing = Array.from({ length: 150 }, (_, index) =>
+      String(10_000 + index),
+    );
+    const catalog = fakeCatalog(products, { existing });
     const graphql = stepGraphql({ rootObjectCount: "250" });
-    const persisted: CatalogImportJob[] = [];
-    const checkpoint = async (job: CatalogImportJob) => {
-      persisted.push(structuredClone(job));
-    };
+    const { store, jobs } = memoryStore();
     let now = 1_000_000;
     const clock = mock.method(Date, "now", () => now);
     try {
       await withFetch(
         (async (input: RequestInfo | URL) => {
-          if (asRequest(input).method === "PUT") now += 15_000;
+          if (asRequest(input).url !== resultUrl) now += 15_000;
           return catalog.fetcher(input);
         }) as typeof fetch,
         async () => {
           const job = newJob();
-          const first = await runCatalogImportStep(
-            job,
-            makeContext(),
-            graphql,
-            now + 20_000,
-            checkpoint,
-          );
-          assert.equal(first.done, false);
-          assert.equal(first.status.phase, "processing");
-          assert.equal(job.cursor, 2);
-          // Resume from the last persisted checkpoint, as after eviction.
-          const resumed = structuredClone(persisted.at(-1) as CatalogImportJob);
-          const second = await runCatalogImportStep(
-            resumed,
-            makeContext(),
-            graphql,
-            now + 20_000,
-            checkpoint,
-          );
-          assert.equal(second.done, true);
-          assert.equal(second.status.phase, "submitted");
-          assert.equal(second.status.eligible, 250);
+          const steps: boolean[] = [];
+          for (let step = 0; step < 10; step++) {
+            // Resume from the last persisted checkpoint, as after eviction.
+            const resumed = structuredClone(jobs.at(-1) ?? job);
+            const result = await runCatalogImportStep(
+              resumed,
+              makeContext(),
+              graphql,
+              now + 20_000,
+              store,
+            );
+            steps.push(result.done);
+            if (result.done) {
+              assert.equal(result.status.phase, "submitted");
+              assert.equal(result.status.eligible, 250);
+              assert.equal(result.status.withdrawn, 150);
+              break;
+            }
+            assert.equal(result.status.phase, "processing");
+          }
+          assert.ok(steps.length > 2);
+          assert.equal(steps.at(-1), true);
         },
       );
     } finally {
       clock.mock.restore();
     }
+    assert.equal(catalog.reads.length, 2);
     assert.deepEqual(
       catalog.writes.map((write) => write.key),
-      [0, 1, 2].map((index) => `shopify-backfill-789-put-${index}`),
-    );
-    assert.ok(
-      catalog.writes.every((write) => write.occurredAt === snapshotStartedAt),
+      [
+        "shopify-backfill-789-put-0",
+        "shopify-backfill-789-put-1",
+        "shopify-backfill-789-put-2",
+        "shopify-backfill-789-delete-0",
+        "shopify-backfill-789-delete-1",
+      ],
     );
   });
 
-  it("replays an unconfirmed batch under its original key after interruption", async () => {
-    const products = Array.from({ length: 150 }, (_, index) =>
-      makeProduct({
-        id: `gid://shopify/Product/${index + 1}`,
-        handle: `clock-${index + 1}`,
-      }),
-    );
-    const catalog = fakeCatalog(products);
-    const graphql = stepGraphql({ rootObjectCount: "150" });
-    const persisted: CatalogImportJob[] = [];
+  it("replays a retained withdrawal batch unchanged even if listings changed", async () => {
+    const products = [makeProduct()];
+    const existing = ["12345", "8", "9"];
+    const catalog = fakeCatalog(products, { existing });
+    const graphql = stepGraphql({ rootObjectCount: "1" });
+    const { store, jobs } = memoryStore();
     await withFetch(catalog.fetcher, async () => {
       await assert.rejects(() =>
         runCatalogImportStep(
@@ -1443,31 +1495,42 @@ describe("catalog import steps", () => {
           makeContext(),
           graphql,
           Number.POSITIVE_INFINITY,
-          async (job) => {
-            // The second batch is sent, but its checkpoint is lost.
-            if (job.cursor === 2) throw new Error("evicted");
-            persisted.push(structuredClone(job));
+          {
+            ...store,
+            saveJob: async (job) => {
+              // The withdrawal batch is sent, but its checkpoint is lost.
+              if (job.cursor === 2) throw new Error("evicted");
+              await store.saveJob(job);
+            },
           },
         ),
       );
+      // A listing created after the enumeration must not alter the batch.
+      existing.push("10");
       const step = await runCatalogImportStep(
-        structuredClone(persisted.at(-1) as CatalogImportJob),
+        structuredClone(jobs.at(-1) as CatalogImportJob),
         makeContext(),
         graphql,
         Number.POSITIVE_INFINITY,
-        async () => {},
+        store,
       );
       assert.equal(step.done, true);
     });
-    assert.deepEqual(
-      catalog.writes.map((write) => write.key),
-      [
-        "shopify-backfill-789-put-0",
-        "shopify-backfill-789-put-1",
-        "shopify-backfill-789-put-1",
-      ],
-    );
-    assert.deepEqual(catalog.writes[1].ids, catalog.writes[2].ids);
+    const deletes = catalog.writes.filter((write) => write.method === "DELETE");
+    assert.deepEqual(deletes, [
+      {
+        method: "DELETE",
+        key: "shopify-backfill-789-delete-0",
+        ids: ["8", "9"],
+      },
+      {
+        method: "DELETE",
+        key: "shopify-backfill-789-delete-0",
+        ids: ["8", "9"],
+      },
+    ]);
+    // The enumeration is read once and retained, never recomputed.
+    assert.equal(catalog.reads.length, 1);
   });
 });
 
@@ -1512,7 +1575,6 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
                   bulkOperation: {
                     id: bulkOperationId,
                     status: "CREATED",
-                    createdAt: snapshotStartedAt,
                   },
                   userErrors: [],
                 },
@@ -1565,7 +1627,6 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       assert.equal(stored.accessToken, accessToken);
       assert.equal(stored.bulkOperationId, bulkOperationId);
       assert.equal(stored.publicationId, publicationId);
-      assert.equal(stored.snapshotStartedAt, snapshotStartedAt);
       assert.equal(stored.currencyCode, "EUR");
       assert.equal(stored.primaryLocale, "de");
       assert.equal("shopId" in stored, false);
@@ -1631,7 +1692,6 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
           bulkOperationRunQuery: {
             bulkOperation: {
               id: bulkOperationId,
-              createdAt: snapshotStartedAt,
             },
             userErrors: [],
           },
@@ -1709,7 +1769,6 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
                     bulkOperation: {
                       id: bulkOperationId,
                       status: "CREATED",
-                      createdAt: snapshotStartedAt,
                     },
                   },
                 },

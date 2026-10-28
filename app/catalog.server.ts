@@ -19,6 +19,7 @@ export const CATALOG_IMPORT_ERRORS = [
   "SHOPIFY_READ_FAILED",
   "PUBLICATION_CHANGED",
   "INCOMPLETE_EXPORT",
+  "RECONCILIATION_FAILED",
 ] as const;
 export type CatalogImportError = (typeof CATALOG_IMPORT_ERRORS)[number];
 
@@ -28,8 +29,7 @@ export interface CatalogImportStatus {
   failed: number;
   // Active products published to Aura's channel in the snapshot.
   eligible?: number;
-  // Admitted withdrawals of unselected or inactive products. Withdrawing a
-  // product that was never imported is a no-op downstream.
+  // Admitted withdrawals of this source's listings absent from the selection.
   withdrawn?: number;
   error?: CatalogImportError;
   updatedAt: string;
@@ -84,7 +84,6 @@ export async function loadCatalogImportStatus(
       value.total >= 0 &&
       Number.isSafeInteger(value.failed) &&
       value.failed >= 0 &&
-      value.failed <= value.total &&
       optionalCount(value.eligible) &&
       (value.eligible ?? 0) <= value.total &&
       optionalCount(value.withdrawn) &&

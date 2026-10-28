@@ -43,6 +43,9 @@ class MemoryStorage {
   async delete(key: string) {
     this.values.delete(key);
   }
+  async deleteAll() {
+    this.values.clear();
+  }
   async setAlarm(time: number) {
     this.alarm = time;
   }
@@ -57,7 +60,6 @@ function context(): BackfillContext {
     shopDomain: shop,
     bulkOperationId,
     publicationId,
-    snapshotStartedAt: "2026-10-27T10:00:00.000Z",
     createdAt: "2026-10-27T10:00:00.000Z",
   };
 }
@@ -143,10 +145,19 @@ async function withFetch(fetcher: typeof fetch, run: () => Promise<void>) {
   }
 }
 
+// The source already lists product 77 and an unselected product 78.
 const aura = () =>
   mock.fn(async (input: RequestInfo | URL) => {
     const request = new Request(input);
     if (request.url === resultUrl) return new Response(JSON.stringify(product));
+    if (request.method === "GET")
+      return Response.json({
+        items: ["77", "78"].map((sourceListingId) => ({
+          sourceListingId,
+          lifecycle: "ACTIVE",
+        })),
+        size: 2,
+      });
     const body = (await request.json()) as unknown[];
     return Response.json(
       { submissionId: "s", acceptedCount: body.length, failures: [] },
@@ -167,10 +178,12 @@ describe("catalog importer durable object", () => {
     );
     assert.equal(status?.phase, "submitted");
     assert.equal(status?.eligible, 1);
-    assert.equal(storage.values.has("job"), false);
+    assert.equal(status?.withdrawn, 1);
+    // Job, retained enumeration and withdrawal batches are all released.
+    assert.equal(storage.values.size, 0);
     assert.equal(kv.has(backfillKey), false);
-    // One export download and one admitted upsert batch.
-    assert.equal(fetcher.mock.callCount(), 2);
+    // Export download, one listing page, one upsert and one withdrawal batch.
+    assert.equal(fetcher.mock.callCount(), 4);
   });
 
   it("does not restart an admitted import on duplicate completion webhooks", async () => {
@@ -181,8 +194,14 @@ describe("catalog importer durable object", () => {
     )) as CatalogImportJob;
     job.cursor = 3;
     await storage.put("job", job);
+    await storage.put("withdraw:0", ["78"]);
     await importer.start(shop, bulkOperationId);
     assert.equal((await storage.get<CatalogImportJob>("job"))?.cursor, 3);
+    assert.ok(storage.values.has("withdraw:0"));
+    // A newer export discards the superseded job's retained data.
+    await importer.start(shop, "gid://shopify/BulkOperation/999");
+    assert.equal((await storage.get<CatalogImportJob>("job"))?.cursor, 0);
+    assert.equal(storage.values.has("withdraw:0"), false);
   });
 
   it("stops without writes once the import was superseded or disconnected", async () => {
