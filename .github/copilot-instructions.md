@@ -3,7 +3,7 @@
 ## Product context
 
 - This is a minimal public Shopify app.
-- Merchants install it so Aura Historia receives Shopify product lifecycle events through Amazon EventBridge.
+- Merchants install it so Aura Historia receives Shopify product listing events for its own sales channel through Amazon EventBridge.
 - AWS infrastructure, EventBridge rules, and downstream consumers live in another repository.
 
 ## Architecture constraints
@@ -11,7 +11,7 @@
 - Keep the app focused on authentication, the embedded app shell, KV session storage, initial catalog backfill, advertised shipping imports, and uninstall cleanup.
 - Product webhooks and compliance webhooks are declared in `shopify.app.toml`.
 - Uninstall, bulk-operation completion, shipping profile and scope-change webhooks are processed directly by this app. Product and compliance events use EventBridge.
-- Shipping acquisition, mapping and publication share the implementation in `app/shipping`; per-shop Durable Objects coordinate offline Shopify access for catalog and shipping. Keep provider credentials inside the app's protected sessions.
+- Shipping acquisition, mapping and publication share the implementation in `app/shipping`; per-shop Durable Objects coordinate offline Shopify access for catalog and shipping. Catalog exports are processed by the per-shop `CatalogImporter` in bounded, checkpointed alarm steps, never in a request's `waitUntil`. Keep provider credentials inside the app's protected sessions.
 - Avoid adding demo pages, sample mutations, placeholder business logic, or unnecessary UI.
 
 ## Local development rules
@@ -26,10 +26,11 @@
   - `customers/data_request`
   - `customers/redact`
   - `shop/redact`
-- Preserve the product EventBridge subscriptions:
-  - `products/create`
-  - `products/update`
-  - `products/delete`
+- Preserve the own-channel product listing EventBridge subscriptions (they require `read_product_listings`):
+  - `product_listings/add`
+  - `product_listings/update`
+  - `product_listings/remove`
+- Catalog imports admit only active products whose `publishedOnPublication` membership in the current app publication is explicitly true. Never fall back to all active products, `onlineStoreUrl`, generic Online Store filters or aggregate counts.
 - Preserve the `app/uninstalled` subscription so session cleanup continues to work.
 - Keep `app/shopify.server.ts` API version aligned with `shopify.app.toml`.
 - Keep production-only webhook differences in `shopify.app.prod.toml` instead of trying to drive EventBridge ARNs from `shopify.web.toml`.

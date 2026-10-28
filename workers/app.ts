@@ -2,6 +2,7 @@ import { createRequestHandler } from "react-router";
 import { protectPrivateResponse } from "../app/iframe-protection.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
 
+export { CatalogImporter } from "./catalog-importer";
 export { ShopCoordinator } from "./shop-coordinator";
 
 declare module "react-router" {

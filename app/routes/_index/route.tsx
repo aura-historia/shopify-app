@@ -27,21 +27,27 @@ const accessSections = [
   {
     title: "Products",
     description:
-      "Product lifecycle events publish merchant catalogs to the Aura Historia sales channel.",
+      "Only products the merchant publishes to the Aura Historia sales channel are imported and kept in sync.",
     items: [
       {
-        name: "products/create",
-        description: "New catalog entries are published without manual export.",
+        name: "read_product_listings",
+        description:
+          "Reads which products are published to this sales channel for the initial import and repairs.",
       },
       {
-        name: "products/update",
+        name: "product_listings/add",
         description:
-          "Edits stay in sync as merchants refine their sales channel listings.",
+          "Products published to the channel are added or restored without manual export.",
       },
       {
-        name: "products/delete",
+        name: "product_listings/update",
         description:
-          "Removals are passed on so sales channel records can close.",
+          "Edits and stock changes to published products stay in sync.",
+      },
+      {
+        name: "product_listings/remove",
+        description:
+          "Products removed from the channel are withdrawn from Aura Historia.",
       },
     ],
   },

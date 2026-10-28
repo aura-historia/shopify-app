@@ -13,11 +13,12 @@ interface __BaseEnv_CloudflareBindings {
 	AURA_HISTORIA_OAUTH_CLIENT_SECRET: string;
 	AURA_HISTORIA_OAUTH_SCOPE: string;
 	SHOP_COORDINATOR: DurableObjectNamespace<import("./workers/app").ShopCoordinator>;
+	CATALOG_IMPORTER: DurableObjectNamespace<import("./workers/app").CatalogImporter>;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./workers/app");
-		durableNamespaces: "ShopCoordinator";
+		durableNamespaces: "ShopCoordinator" | "CatalogImporter";
 	}
 	interface Env extends __BaseEnv_CloudflareBindings {}
 }

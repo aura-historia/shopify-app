@@ -32,7 +32,7 @@ The app intentionally owns only the integration edge: authentication, merchant c
 | --- | --- |
 | Merchant installs from Shopify App Store or Admin | Merchant authorizes Aura Historia from the embedded app |
 | Shopify supplies trusted shop context and OAuth approval | Connection metadata is stored in Cloudflare KV |
-| Product events are delivered to the configured EventBridge partner source | Catalog records are published for discovery |
+| Product listing events for the Aura Historia channel are delivered to the configured EventBridge partner source | Products published to the channel are published for discovery |
 | Shopper continues to the merchant’s Shopify storefront | No checkout or merchant-of-record responsibility moves to Aura Historia |
 
 ## Architecture
@@ -44,7 +44,7 @@ flowchart LR
     I --> O[Aura Historia OAuth]
     O --> K[Cloudflare KV]
     S --> K
-    P[Shopify product lifecycle events] --> E[Amazon EventBridge partner source]
+    P[Shopify channel product listing events] --> E[Amazon EventBridge partner source]
     E --> A[Aura Historia catalog consumers]
     I --> B[Initial catalog backfill]
     B --> A
@@ -62,7 +62,7 @@ flowchart LR
 - React Router application and embedded Shopify app shell
 - Shopify authentication, Aura Historia OAuth, and connection state
 - Cloudflare Worker deployment and Cloudflare KV session storage
-- Initial product backfill orchestration
+- Channel-filtered catalog import orchestration in a resumable per-shop Durable Object
 - Server-side shipping acquisition, typed mapping and resumable publication
 - A per-shop Durable Object coordinating offline Shopify access and shipping jobs
 - Shopify sales-channel configuration in `extensions/channel-config`
@@ -78,14 +78,67 @@ flowchart LR
 
 | Topic | Destination | Purpose |
 | --- | --- | --- |
-| `products/create`, `products/update`, `products/delete` | Aura Historia Amazon EventBridge partner source | Keep merchant product discovery records current |
+| `product_listings/add`, `product_listings/update`, `product_listings/remove` | Aura Historia Amazon EventBridge partner source | Keep products published to the Aura Historia channel current; removal from the channel withdraws them |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia Amazon EventBridge partner source | Required public-app privacy and compliance handling |
 | `profiles/create`, `profiles/update`, `profiles/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current shipping acquisition |
 | `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access, import once updated access is approved, and withdraw owned assertions on permission loss |
 | `app/uninstalled` | This app’s deployed HTTPS endpoint | Stop shipping, admit owned cleanup, then remove Shopify sessions and connection data |
-| `bulk_operations/finish` | This app’s deployed HTTPS endpoint | Complete the initial catalog backfill workflow |
+| `bulk_operations/finish` | This app’s deployed HTTPS endpoint | Admit the channel-filtered catalog export to the resumable catalog importer |
 
-The required public-app compliance subscriptions and product subscriptions are declared in `shopify.app.toml` and `shopify.app.prod.toml`.
+The required public-app compliance subscriptions and product listing subscriptions are declared in `shopify.app.toml` and `shopify.app.prod.toml`.
+
+## Catalog synchronization
+
+Merchants choose which products appear on Aura Historia by publishing them to the Aura Historia sales channel. That selection governs every catalog path:
+
+- **Ongoing changes** use Shopify's own-channel `product_listings/add`, `product_listings/update` and `product_listings/remove` topics, which Shopify scopes to this app's channel. Publishing adds or restores a product, and edits and stock changes arrive as updates. Removal from the channel withdraws the listing, even if the product stays active elsewhere. Out-of-stock products remain listed with their inventory availability.
+- **Initial import, “Import catalog again” and retries** share one bulk export. It resolves the current installation's publication (`currentAppInstallation.publication`) and reads `publishedOnPublication(publicationId: …)` for every product. An `ACTIVE` product is upserted only when that membership is explicitly `true`, and withdrawn when it is `false`. A missing value is unknown: the product is reported as a failure and the import is not complete. `DRAFT`/`ARCHIVED` products are withdrawn and other statuses are ignored, as before. Source listing IDs remain Shopify numeric product IDs.
+- **Missing access or publication.** Before exporting, the app verifies that `read_product_listings` (or `write_product_listings`) was actually granted to the installation, using a separate `accessScopes` query. It also verifies that the publication exists. If either check fails or the read fails, no export runs and the embedded app shows a retryable failure. There is never a fallback to all active products, `onlineStoreUrl`, Online Store publishing or an aggregate count. Every processing step checks the scope and publication again before writing; a changed publication discards the snapshot.
+
+### Withdrawals
+
+Imports withdraw only products that are in the Shopify export and known to be ineligible: `DRAFT`/`ARCHIVED` products and `ACTIVE` products not published to the channel, each by its own Shopify product ID. Withdrawing a product that was never imported is a no-op downstream. Aura listings are never read or withdrawn because they are absent from the export.
+
+An import is reported complete only when Shopify reported `COMPLETED` without an error code, the number of product rows equals the operation's `rootObjectCount`, and every membership read was explicit. Otherwise the import is reported as failed with a retry.
+
+### Resumable processing
+
+`bulk_operations/finish` only admits the export to the per-shop `CatalogImporter` Durable Object (`CATALOG_IMPORTER` binding, `catalog-importer-v1` SQLite migration). The webhook returns 503 if admission fails, so Shopify retries. Duplicate deliveries do not restart an admitted import.
+
+Each alarm prepares the export and then submits batches for up to 20 seconds, so a slow download or parse cannot starve submission. It checkpoints after every batch of 100. An evicted or failed step resumes at the next batch, and a batch whose checkpoint was lost is resent with its original idempotency key: `shopify-backfill-<operation>-<put|delete>-<index>`. Failed Shopify reads, including an unreadable publication, are retried with exponential backoff, at most six times, before the import is reported as failed. Only a confirmed missing scope, missing publication or replaced publication ends an import immediately.
+
+A newer import can be admitted while an alarm awaits network I/O. Job, alarm and cleanup writes are guarded by the bulk operation that owns the stored job, so an older alarm stops without touching the newer import.
+
+The job stores no credentials. It reads the Aura access token from the backfill context in KV, so disconnect, uninstall or a newer import stops it. “Import catalog again” starts a new export.
+
+### Ordering with live listing events
+
+Bulk writes use the existing canonical asynchronous upsert and withdrawal endpoints without ordering metadata. They have no shared ordering guarantee with listing webhooks:
+
+- An import that overlaps an unpublish can restore the removed product.
+- An older withdrawal batch can withdraw a product that was republished later.
+
+“Import catalog again” repairs such a state. Idempotency keys prevent duplicate application only; they do not order bulk writes against webhooks.
+
+### Counts and status
+
+- The channel count is Shopify's `includedProductsCount` for active products selected for the channel. It can include products scheduled for later publication and is not an import count.
+- “Last import” reports the Shopify products checked, the eligible products submitted, the admitted withdrawals of unpublished or inactive products, and failures.
+- Acceptance by Aura Historia means queue admission. Search visibility follows asynchronously and still applies product-status rules.
+- Missing permissions, a missing publication and incomplete exports remain visible as failures with a retry. They are never shown as a successful zero-product import.
+
+### Rollout
+
+There are no active installations yet, so nothing is migrated.
+
+1. Deploy backend listing-event support ([aura-historia/backend#2573](https://github.com/aura-historia/backend/pull/2573)). Do not release this Shopify configuration earlier: without backend routing, live product sync does not work.
+2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration.
+3. Verify the following:
+   - Selected and unselected products.
+   - Publication-only removal and restoration.
+   - Title, image, price and stock updates.
+   - Draft, archive, delete and reactivation.
+   - An import that overlaps a publication change, repaired by importing again.
 
 ## Local development
 
@@ -140,7 +193,7 @@ The repository uses separate Shopify configuration files to keep stage-specific 
 | `shopify.app.prod.toml` | Production configuration using the production EventBridge partner source |
 | `shopify.app.tunnel.toml` | Development tunnel mode; exposes backfill completion and shipping receivers through the active tunnel |
 
-The required Shopify scopes are `read_products`, `read_locales` and `read_shipping`. `read_shipping` must stay required: the profile webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
+The required Shopify scopes are `read_products`, `read_product_listings`, `read_locales` and `read_shipping`. `read_product_listings` is required by the own-channel listing topics and the per-publication membership reads. `read_shipping` must stay required: the profile webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
 
 ## Advertised shipping imports
 

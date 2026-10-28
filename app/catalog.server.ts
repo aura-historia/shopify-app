@@ -4,10 +4,34 @@ import { getShopifyStoreName } from "./shopify-admin-url";
 type KV = Pick<CloudflareBindings["KV"], "get" | "put" | "delete">;
 const STATUS_PREFIX = "aura-historia:catalog-status:";
 
+// Shopify scope for the app's own channel listings: the listing webhooks and
+// per-publication membership reads depend on it. The write scope implies it.
+export const PRODUCT_LISTINGS_SCOPE = "read_product_listings";
+const PRODUCT_LISTINGS_SCOPES = new Set([
+  PRODUCT_LISTINGS_SCOPE,
+  "write_product_listings",
+]);
+export const PUBLICATION_GID = /^gid:\/\/shopify\/Publication\/([1-9]\d*)$/;
+
+export const CATALOG_IMPORT_ERRORS = [
+  "MISSING_SCOPE",
+  "MISSING_PUBLICATION",
+  "SHOPIFY_READ_FAILED",
+  "PUBLICATION_CHANGED",
+  "INCOMPLETE_EXPORT",
+] as const;
+export type CatalogImportError = (typeof CATALOG_IMPORT_ERRORS)[number];
+
 export interface CatalogImportStatus {
   phase: "queued" | "processing" | "submitted" | "failed";
   total: number;
   failed: number;
+  // Active products published to Aura's channel in the snapshot.
+  eligible?: number;
+  // Admitted withdrawals of unselected or inactive products. Withdrawing a
+  // product that was never imported is a no-op downstream.
+  withdrawn?: number;
+  error?: CatalogImportError;
   updatedAt: string;
 }
 
@@ -51,6 +75,9 @@ export async function loadCatalogImportStatus(
     const raw = await kv.get(STATUS_PREFIX + shop.toLowerCase());
     if (!raw) return null;
     const value = JSON.parse(raw) as CatalogImportStatus;
+    const optionalCount = (count: unknown) =>
+      count === undefined ||
+      (Number.isSafeInteger(count) && (count as number) >= 0);
     if (
       ["queued", "processing", "submitted", "failed"].includes(value.phase) &&
       Number.isSafeInteger(value.total) &&
@@ -58,6 +85,11 @@ export async function loadCatalogImportStatus(
       Number.isSafeInteger(value.failed) &&
       value.failed >= 0 &&
       value.failed <= value.total &&
+      optionalCount(value.eligible) &&
+      (value.eligible ?? 0) <= value.total &&
+      optionalCount(value.withdrawn) &&
+      (value.error === undefined ||
+        CATALOG_IMPORT_ERRORS.includes(value.error)) &&
       typeof value.updatedAt === "string" &&
       Number.isFinite(Date.parse(value.updatedAt))
     ) {
@@ -71,6 +103,9 @@ export async function loadCatalogImportStatus(
         phase: timedOut ? ("failed" as const) : value.phase,
         total: value.total,
         failed: value.failed,
+        eligible: value.eligible,
+        withdrawn: value.withdrawn,
+        error: value.error,
         updatedAt: value.updatedAt,
       };
     }
@@ -90,57 +125,144 @@ export async function clearCatalogImportStatus(
   );
 }
 
-export async function getChannelPublication(
+export type ChannelPublicationState =
+  | "missing_scope"
+  | "missing_publication"
+  | "unavailable";
+
+export type ChannelPublicationResolution =
+  | { state: "ready"; publicationId: string }
+  | { state: ChannelPublicationState };
+
+export const CHANNEL_PUBLICATION_ERRORS: Record<
+  ChannelPublicationState,
+  CatalogImportError
+> = {
+  missing_scope: "MISSING_SCOPE",
+  missing_publication: "MISSING_PUBLICATION",
+  unavailable: "SHOPIFY_READ_FAILED",
+};
+
+interface ChannelPublicationData {
+  currentAppInstallation?: {
+    accessScopes?: Array<{ handle?: unknown }>;
+    publication?: {
+      id?: unknown;
+      includedProductsCount?: { count?: unknown; precision?: unknown };
+    } | null;
+  };
+}
+
+async function readChannelPublication(
   graphql: GraphqlRequestFn,
-  shop: string,
-) {
+  includeCount: boolean,
+): Promise<{
+  resolution: ChannelPublicationResolution;
+  publication?: NonNullable<
+    NonNullable<ChannelPublicationData["currentAppInstallation"]>["publication"]
+  >;
+}> {
   try {
+    // Verify the access actually granted to this installation: a changed
+    // configuration is not proof that the merchant approved the new scope.
+    // Scopes are read on their own because the Admin client throws on any
+    // GraphQL error, which would hide a denial behind a generic failure.
+    const scopes = await graphql(
+      `query AuraChannelAccess {
+      currentAppInstallation { accessScopes { handle } }
+    }`,
+      {},
+    );
+    const granted = (scopes.data as ChannelPublicationData | undefined)
+      ?.currentAppInstallation?.accessScopes;
+    if (scopes.errors || !Array.isArray(granted))
+      return { resolution: { state: "unavailable" } };
+    if (
+      !granted.some(
+        (scope) =>
+          typeof scope?.handle === "string" &&
+          PRODUCT_LISTINGS_SCOPES.has(scope.handle),
+      )
+    )
+      return { resolution: { state: "missing_scope" } };
+
+    // `currentAppInstallation.publication` is deprecated without a successor
+    // in 2026-10, but it is the only reference to this app's own channel.
     const response = await graphql(
       `query AuraChannelPublication {
       currentAppInstallation {
         publication {
           id
-          includedProductsCount(query: "status:active") { count precision }
+          ${includeCount ? 'includedProductsCount(query: "status:active") { count precision }' : ""}
         }
       }
     }`,
       {},
     );
-    if (response.errors) return null;
-    const data = response.data as
-      | {
-          currentAppInstallation?: {
-            publication?: {
-              id?: string;
-              includedProductsCount?: { count?: number; precision?: string };
-            };
-          };
-        }
-      | undefined;
-    const publication = data?.currentAppInstallation?.publication;
-    const id = publication?.id?.match(
-      /^gid:\/\/shopify\/Publication\/(\d+)$/,
-    )?.[1];
-    const count = publication?.includedProductsCount?.count;
-    const precision = publication?.includedProductsCount?.precision;
+    if (response.errors) return { resolution: { state: "unavailable" } };
+    const installation = (response.data as ChannelPublicationData | undefined)
+      ?.currentAppInstallation;
+    const publication = installation?.publication;
+    if (publication === null)
+      return { resolution: { state: "missing_publication" } };
     if (
-      !id ||
-      !Number.isSafeInteger(count) ||
-      (count as number) < 0 ||
-      !["EXACT", "AT_LEAST"].includes(precision ?? "")
+      typeof publication?.id !== "string" ||
+      !PUBLICATION_GID.test(publication.id)
     )
-      return null;
-    const editor = new URL(
-      `https://admin.shopify.com/store/${encodeURIComponent(getShopifyStoreName(shop))}/bulk`,
-    );
-    editor.searchParams.set("resource_name", "Product");
-    editor.searchParams.set("edit", `publications.${id}.published_at`);
+      return { resolution: { state: "unavailable" } };
     return {
-      count: count as number,
-      atLeast: precision === "AT_LEAST",
-      editorUrl: editor.toString(),
+      resolution: { state: "ready", publicationId: publication.id },
+      publication,
     };
   } catch {
-    return null;
+    return { resolution: { state: "unavailable" } };
   }
+}
+
+// Resolves the current installation's own channel publication. Missing access,
+// a missing publication or a failed read never fall back to another channel.
+export async function resolveChannelPublication(
+  graphql: GraphqlRequestFn,
+): Promise<ChannelPublicationResolution> {
+  return (await readChannelPublication(graphql, false)).resolution;
+}
+
+export type ChannelPublication =
+  | {
+      state: "ready";
+      // Products selected for the channel in Shopify. Included products may
+      // still be scheduled for later publication; this is not an import count.
+      count: number | null;
+      atLeast: boolean;
+      editorUrl: string;
+    }
+  | { state: ChannelPublicationState };
+
+export async function getChannelPublication(
+  graphql: GraphqlRequestFn,
+  shop: string,
+): Promise<ChannelPublication> {
+  const { resolution, publication } = await readChannelPublication(
+    graphql,
+    true,
+  );
+  if (resolution.state !== "ready") return resolution;
+  const id = PUBLICATION_GID.exec(resolution.publicationId)?.[1] ?? "";
+  const count = publication?.includedProductsCount?.count;
+  const precision = publication?.includedProductsCount?.precision;
+  const counted =
+    Number.isSafeInteger(count) &&
+    (count as number) >= 0 &&
+    (precision === "EXACT" || precision === "AT_LEAST");
+  const editor = new URL(
+    `https://admin.shopify.com/store/${encodeURIComponent(getShopifyStoreName(shop))}/bulk`,
+  );
+  editor.searchParams.set("resource_name", "Product");
+  editor.searchParams.set("edit", `publications.${id}.published_at`);
+  return {
+    state: "ready",
+    count: counted ? (count as number) : null,
+    atLeast: counted && precision === "AT_LEAST",
+    editorUrl: editor.toString(),
+  };
 }

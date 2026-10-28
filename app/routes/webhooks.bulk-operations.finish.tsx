@@ -1,13 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
-import {
-  clearBackfillContext,
-  fetchBulkOperationResultUrl,
-  loadBackfillContext,
-  processBackfillResults,
-} from "../backfill.server";
+import { clearBackfillContext, loadBackfillContext } from "../backfill.server";
 import { saveCatalogImportStatus } from "../catalog.server";
-import { summarizeOAuthError } from "../oauth.server";
-import { offlineGraphql } from "../shipping/runtime.server";
+import { catalogImporter } from "../shipping/runtime.server";
 import { getShopifyWebhook } from "../shopify.server";
 
 interface BulkOperationPayload {
@@ -44,63 +38,19 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
       phase: "failed",
       total: 0,
       failed: 0,
+      error: "SHOPIFY_READ_FAILED",
     });
     await clearBackfillContext(context.cloudflare.env.KV, shop);
     return new Response(null, { status: 200 });
   }
 
-  context.cloudflare.ctx.waitUntil(
-    (async () => {
-      try {
-        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-          phase: "processing",
-          total: 0,
-          failed: 0,
-        });
-        const graphqlRequest = offlineGraphql(context, shop);
-        const jsonlUrl = await fetchBulkOperationResultUrl(
-          graphqlRequest,
-          bulkOpId,
-        );
-
-        if (!jsonlUrl) {
-          await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-            phase: "submitted",
-            total: 0,
-            failed: 0,
-          });
-          return;
-        }
-
-        const result = await processBackfillResults(jsonlUrl, backfillCtx);
-        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-          phase: result.failures.length ? "failed" : "submitted",
-          total: result.total,
-          failed: result.failures.length,
-        });
-
-        console.log(
-          `Backfill complete for ${shop}: ${result.total} products, ${result.failures.length} failures`,
-        );
-
-        if (result.failures.length > 0) {
-          console.warn("Failed product IDs:", result.failures.join(", "));
-        }
-      } catch (error) {
-        await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-          phase: "failed",
-          total: 0,
-          failed: 0,
-        });
-        console.error(
-          `Backfill processing failed for ${shop}:`,
-          summarizeOAuthError(error, [backfillCtx.accessToken]),
-        );
-      } finally {
-        await clearBackfillContext(context.cloudflare.env.KV, shop);
-      }
-    })(),
-  );
-
+  // Processing runs in bounded, resumable Durable Object alarms rather than
+  // this request's short waitUntil window. Admission is idempotent per bulk
+  // operation; Shopify retries the delivery if it could not be committed.
+  try {
+    await catalogImporter(context, shop).start(shop, bulkOpId);
+  } catch {
+    return new Response(null, { status: 503 });
+  }
   return new Response(null, { status: 200 });
 };

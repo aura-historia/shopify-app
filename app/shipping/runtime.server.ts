@@ -6,6 +6,10 @@ export function shopCoordinator(context: AppLoadContext, shop: string) {
   return context.cloudflare.env.SHOP_COORDINATOR.getByName(shop.toLowerCase());
 }
 
+export function catalogImporter(context: AppLoadContext, shop: string) {
+  return context.cloudflare.env.CATALOG_IMPORTER.getByName(shop.toLowerCase());
+}
+
 export function offlineGraphql(
   context: AppLoadContext,
   shop: string,

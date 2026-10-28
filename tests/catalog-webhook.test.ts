@@ -5,91 +5,118 @@ import { storeBackfillContext } from "../app/backfill.server";
 import { loadCatalogImportStatus } from "../app/catalog.server";
 import { action } from "../app/routes/webhooks.bulk-operations.finish";
 
-describe("catalog completion webhook", () => {
-  it("acknowledges Shopify before saving progress and processes an empty export", async () => {
-    const shop = "example.myshopify.com";
-    const bulkOperationId = "gid://shopify/BulkOperation/123";
-    const entries = new Map<string, string>();
-    let releaseProgress = () => {};
-    const pendingProgress = new Promise<void>((resolve) => {
-      releaseProgress = resolve;
-    });
-    const kv = {
-      get: async (key: string) => entries.get(key) ?? null,
-      put: async (key: string, value: string) => {
-        if (JSON.parse(value).phase === "processing") await pendingProgress;
-        entries.set(key, value);
-      },
-      delete: async (key: string) => {
-        entries.delete(key);
-      },
-    };
-    await storeBackfillContext(kv, shop, {
-      listingSourceId: `ls_${"0".repeat(26)}`,
-      accessToken: "synthetic-aura-token",
-      apiBaseUrl: "https://aura.invalid",
-      currencyCode: "EUR",
-      shopDomain: shop,
-      bulkOperationId,
-      createdAt: new Date().toISOString(),
-    });
-    const graphql = mock.fn(async () => ({
-      data: {
-        node: {
-          status: "COMPLETED",
-          objectCount: "0",
-          url: null,
-        },
-      },
-    }));
-    const work: Promise<unknown>[] = [];
-    const body = JSON.stringify({
-      type: "query",
-      status: "completed",
-      admin_graphql_api_id: bulkOperationId,
-    });
-    const response = await action({
-      request: new Request(
-        "https://app.invalid/webhooks/bulk-operations/finish",
-        {
-          method: "POST",
-          body,
-          headers: {
-            "Content-Type": "application/json",
-            "X-Shopify-Topic": "bulk_operations/finish",
-            "X-Shopify-Shop-Domain": shop,
-            "X-Shopify-API-Version": "2026-10",
-            "X-Shopify-Webhook-Id": crypto.randomUUID(),
-            "X-Shopify-Hmac-Sha256": createHmac("sha256", "synthetic-secret")
-              .update(body)
-              .digest("base64"),
-          },
-        },
-      ),
-      context: {
-        cloudflare: {
-          env: {
-            KV: kv,
-            SHOPIFY_API_KEY: "synthetic-key",
-            SHOPIFY_API_SECRET: "synthetic-secret",
-            SHOPIFY_APP_URL: "https://app.invalid",
-            SHOP_COORDINATOR: { getByName: () => ({ graphql }) },
-          },
-          ctx: { waitUntil: (promise: Promise<unknown>) => work.push(promise) },
-        },
-      },
-      params: {},
-    } as never);
-    assert.equal(response.status, 200);
-    assert.equal(work.length, 1);
-    assert.equal(graphql.mock.callCount(), 0);
+const shop = "example.myshopify.com";
+const bulkOperationId = "gid://shopify/BulkOperation/123";
 
-    releaseProgress();
-    await Promise.all(work);
-    assert.equal(graphql.mock.callCount(), 1);
+function makeKv() {
+  const entries = new Map<string, string>();
+  return {
+    entries,
+    get: async (key: string) => entries.get(key) ?? null,
+    put: async (key: string, value: string) => {
+      entries.set(key, value);
+    },
+    delete: async (key: string) => {
+      entries.delete(key);
+    },
+  };
+}
+
+async function deliver(
+  start: (shop: string, bulkOperationId: string) => Promise<void>,
+  { status = "completed", operation = bulkOperationId } = {},
+) {
+  const kv = makeKv();
+  await storeBackfillContext(kv, shop, {
+    listingSourceId: `ls_${"0".repeat(26)}`,
+    accessToken: "synthetic-aura-token",
+    apiBaseUrl: "https://aura.invalid",
+    currencyCode: "EUR",
+    shopDomain: shop,
+    bulkOperationId,
+    publicationId: "gid://shopify/Publication/456",
+    createdAt: new Date().toISOString(),
+  });
+  const body = JSON.stringify({
+    type: "query",
+    status,
+    admin_graphql_api_id: operation,
+  });
+  const getByName = mock.fn(() => ({ start }));
+  const response = await action({
+    request: new Request(
+      "https://app.invalid/webhooks/bulk-operations/finish",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Topic": "bulk_operations/finish",
+          "X-Shopify-Shop-Domain": shop,
+          "X-Shopify-API-Version": "2026-10",
+          "X-Shopify-Webhook-Id": crypto.randomUUID(),
+          "X-Shopify-Hmac-Sha256": createHmac("sha256", "synthetic-secret")
+            .update(body)
+            .digest("base64"),
+        },
+      },
+    ),
+    context: {
+      cloudflare: {
+        env: {
+          KV: kv,
+          SHOPIFY_API_KEY: "synthetic-key",
+          SHOPIFY_API_SECRET: "synthetic-secret",
+          SHOPIFY_APP_URL: "https://app.invalid",
+          CATALOG_IMPORTER: { getByName },
+        },
+        ctx: {
+          waitUntil: () => {
+            throw new Error("Processing must not run in waitUntil");
+          },
+        },
+      },
+    },
+    params: {},
+  } as never);
+  return { response, kv, getByName };
+}
+
+describe("catalog completion webhook", () => {
+  it("durably admits the matching export to the shop's catalog importer", async () => {
+    const start = mock.fn(async () => {});
+    const { response, kv, getByName } = await deliver(start);
+    assert.equal(response.status, 200);
+    assert.deepEqual(getByName.mock.calls[0].arguments, [shop]);
+    assert.deepEqual(start.mock.calls[0].arguments, [shop, bulkOperationId]);
+    // The importer owns the context until the import finishes.
+    assert.ok(kv.entries.has(`aura-historia:backfill:${shop}`));
+  });
+
+  it("asks Shopify to retry when admission cannot be committed", async () => {
+    const { response, kv } = await deliver(async () => {
+      throw new Error("Durable Object unavailable");
+    });
+    assert.equal(response.status, 503);
+    assert.ok(kv.entries.has(`aura-historia:backfill:${shop}`));
+  });
+
+  it("ignores exports that are not the shop's current import", async () => {
+    const start = mock.fn(async () => {});
+    const { response } = await deliver(start, {
+      operation: "gid://shopify/BulkOperation/999",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(start.mock.callCount(), 0);
+  });
+
+  it("records a failed Shopify export as a retryable read failure", async () => {
+    const start = mock.fn(async () => {});
+    const { kv } = await deliver(start, { status: "failed" });
+    assert.equal(start.mock.callCount(), 0);
     const status = await loadCatalogImportStatus(kv as never, shop);
-    assert.equal(status?.phase, "submitted");
-    assert.equal(status?.total, 0);
-    assert.equal(entries.has(`aura-historia:backfill:${shop}`), false);
+    assert.equal(status?.phase, "failed");
+    assert.equal(status?.error, "SHOPIFY_READ_FAILED");
+    assert.equal(kv.entries.has(`aura-historia:backfill:${shop}`), false);
   });
 });

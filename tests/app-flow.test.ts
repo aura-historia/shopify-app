@@ -143,7 +143,8 @@ describe("public install flow", () => {
         "https://apps.shopify.com/aura-historia-partner-connect",
       ),
     );
-    assert.ok(marketingRoute.includes("products/create"));
+    assert.ok(marketingRoute.includes("product_listings/add"));
+    assert.ok(marketingRoute.includes("read_product_listings"));
     assert.ok(marketingRoute.includes("customers/data_request"));
     assert.ok(marketingRoute.includes("read_locales"));
     assert.ok(marketingRoute.includes("Shopify sales channel"));
