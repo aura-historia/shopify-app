@@ -14,6 +14,8 @@ import type { CloudflareShopifyEnv } from "../app/shopify.server";
 export const CATALOG_STEP_BUDGET_MS = 20_000;
 export const CATALOG_MAX_ATTEMPTS = 6;
 
+class SupersededImport extends Error {}
+
 // Per-shop catalog import driven by alarms instead of a request's waitUntil,
 // so large catalogs are bounded per step and resume after interruptions.
 export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
@@ -33,6 +35,21 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     await this.ctx.storage.setAlarm(Date.now());
   }
 
+  // start() can admit a newer import while an alarm awaits network I/O. Job,
+  // alarm and cleanup writes therefore apply only while the stored job still
+  // belongs to the alarm's own bulk operation.
+  private whileCurrent(
+    job: CatalogImportJob,
+    write: (transaction: DurableObjectTransaction) => Promise<unknown>,
+  ): Promise<boolean> {
+    return this.ctx.storage.transaction(async (transaction) => {
+      const current = await transaction.get<CatalogImportJob>("job");
+      if (current?.bulkOperationId !== job.bulkOperationId) return false;
+      await write(transaction);
+      return true;
+    });
+  }
+
   async alarm() {
     const job = await this.ctx.storage.get<CatalogImportJob>("job");
     if (!job) return;
@@ -40,7 +57,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     // newer import replaces or clears it and thereby stops this job.
     const context = await loadBackfillContext(this.env.KV, job.shop);
     if (context?.bulkOperationId !== job.bulkOperationId) {
-      await this.ctx.storage.delete("job");
+      await this.whileCurrent(job, (transaction) => transaction.delete("job"));
       return;
     }
     // Shopify reads share the coordinator's serialized offline token refresh.
@@ -56,11 +73,20 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         job,
         context,
         graphql,
-        Date.now() + CATALOG_STEP_BUDGET_MS,
-        (next) => this.ctx.storage.put("job", next),
+        CATALOG_STEP_BUDGET_MS,
+        async (next) => {
+          if (
+            !(await this.whileCurrent(next, (transaction) =>
+              transaction.put("job", next),
+            ))
+          )
+            throw new SupersededImport();
+        },
       );
       job.attempts = 0;
     } catch (error) {
+      // The newer import owns the job, alarm, status and context.
+      if (error instanceof SupersededImport) return;
       job.attempts++;
       console.error(
         `Catalog import step ${job.attempts} failed for ${job.shop}:`,
@@ -69,8 +95,10 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
           .slice(0, 180),
       );
       if (job.attempts < CATALOG_MAX_ATTEMPTS) {
-        await this.ctx.storage.put("job", job);
-        await this.ctx.storage.setAlarm(Date.now() + 1000 * 2 ** job.attempts);
+        await this.whileCurrent(job, async (transaction) => {
+          await transaction.put("job", job);
+          await transaction.setAlarm(Date.now() + 1000 * 2 ** job.attempts);
+        });
         return;
       }
       step = {
@@ -83,13 +111,25 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         },
       };
     }
+    if (
+      (await this.ctx.storage.get<CatalogImportJob>("job"))?.bulkOperationId !==
+      job.bulkOperationId
+    )
+      return;
     await saveCatalogImportStatus(this.env.KV, job.shop, step.status);
     if (!step.done) {
-      await this.ctx.storage.put("job", job);
-      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      await this.whileCurrent(job, async (transaction) => {
+        await transaction.put("job", job);
+        await transaction.setAlarm(Date.now() + 1000);
+      });
       return;
     }
-    await this.ctx.storage.delete("job");
+    if (
+      !(await this.whileCurrent(job, (transaction) =>
+        transaction.delete("job"),
+      ))
+    )
+      return;
     if (
       (await loadBackfillContext(this.env.KV, job.shop))?.bulkOperationId ===
       job.bulkOperationId

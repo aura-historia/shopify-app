@@ -929,20 +929,24 @@ async function submitBackfillBatch(
 
 // Runs one bounded step of an import. `checkpoint` persists the job after
 // every admitted batch, so an interrupted step resumes at the next batch and
-// a replayed batch reuses its idempotency key. Throws on Shopify read errors.
+// a replayed batch reuses its idempotency key. Throws on Shopify read errors
+// so the caller can retry the step.
 export async function runCatalogImportStep(
   job: CatalogImportJob,
   context: BackfillContext,
   graphqlRequest: GraphqlRequestFn,
-  deadline: number,
+  budgetMs: number,
   checkpoint: (job: CatalogImportJob) => Promise<void>,
 ): Promise<{ done: boolean; status: Omit<CatalogImportStatus, "updatedAt"> }> {
   const result =
     job.result ??
     (await fetchBulkOperationResult(graphqlRequest, job.bulkOperationId));
   // Every step writes with the current installation's access and publication.
-  // A revoked scope or replaced channel invalidates the whole snapshot.
+  // A revoked scope or replaced channel invalidates the whole snapshot; an
+  // unreadable publication is a transient read failure.
   const publication = await resolveChannelPublication(graphqlRequest);
+  if (publication.state === "unavailable")
+    throw new Error("Shopify channel publication could not be read");
   if (
     publication.state !== "ready" ||
     publication.publicationId !== context.publicationId
@@ -970,6 +974,11 @@ export async function runCatalogImportStep(
     result.rootObjectCount,
     context,
   );
+  // The batch budget starts after preparation, so a slow export download or
+  // parse can never starve batch submission.
+  const deadline = Date.now() + budgetMs;
+  // Fence before sending: a newer import may have been admitted meanwhile.
+  await checkpoint(job);
   if (job.cursor === 0 && plan.rejected.length > 0) {
     console.error(
       `Backfill cannot classify or map ${plan.rejected.length} Shopify products: ${plan.rejected.slice(0, 50).join(", ")}`,

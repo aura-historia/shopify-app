@@ -46,6 +46,9 @@ class MemoryStorage {
   async setAlarm(time: number) {
     this.alarm = time;
   }
+  async transaction<T>(callback: (storage: MemoryStorage) => Promise<T>) {
+    return callback(this);
+  }
 }
 
 function context(): BackfillContext {
@@ -102,9 +105,15 @@ async function runtime(graphql: (query: string) => Promise<unknown>) {
   return { storage, kv, env, importer };
 }
 
-function shopify({ fail = false } = {}) {
+function shopify({ fail = false, publicationFailures = 0 } = {}) {
+  let publicationReads = 0;
   return mock.fn(async (query: string) => {
     if (fail) throw new Error("Shopify unavailable");
+    if (
+      query.includes("AuraChannelPublication") &&
+      publicationReads++ < publicationFailures
+    )
+      throw new Error("Network connection lost");
     if (query.includes("AuraChannelAccess"))
       return {
         data: {
@@ -218,5 +227,71 @@ describe("catalog importer durable object", () => {
     );
     assert.equal(status?.phase, "failed");
     assert.equal(status?.error, "SHOPIFY_READ_FAILED");
+  });
+
+  it("never lets an old alarm erase or advance a newer import", async () => {
+    const { storage, kv, env, importer } = await runtime(shopify());
+    await importer.start(shop, bulkOperationId);
+    const newer = "gid://shopify/BulkOperation/654";
+    const auraWrites: string[] = [];
+    await withFetch(
+      (async (input: RequestInfo | URL) => {
+        const request = new Request(input);
+        if (request.url === resultUrl) {
+          // A re-import is admitted while the old alarm downloads its export.
+          await storeBackfillContext(env.KV, shop, {
+            ...context(),
+            bulkOperationId: newer,
+          });
+          await importer.start(shop, newer);
+          return new Response(JSON.stringify(product));
+        }
+        auraWrites.push(request.method);
+        return Response.json(
+          { submissionId: "s", acceptedCount: 1, failures: [] },
+          { status: 202 },
+        );
+      }) as typeof fetch,
+      () => importer.alarm(),
+    );
+    const job = await storage.get<CatalogImportJob>("job");
+    assert.equal(job?.bulkOperationId, newer);
+    assert.equal(job?.cursor, 0);
+    assert.equal(job?.attempts, 0);
+    assert.ok(storage.alarm && storage.alarm <= Date.now());
+    assert.equal(
+      JSON.parse(kv.get(backfillKey) ?? "{}").bulkOperationId,
+      newer,
+    );
+    assert.deepEqual(auraWrites, []);
+    assert.equal(
+      await loadCatalogImportStatus(
+        { get: async (key: string) => kv.get(key) ?? null } as never,
+        shop,
+      ),
+      null,
+    );
+  });
+
+  it("retries an unreadable publication with backoff and then completes", async () => {
+    const { storage, kv, importer } = await runtime(
+      shopify({ publicationFailures: 1 }),
+    );
+    await importer.start(shop, bulkOperationId);
+    const fetcher = aura();
+    await withFetch(fetcher as typeof fetch, async () => {
+      await importer.alarm();
+      const job = await storage.get<CatalogImportJob>("job");
+      assert.equal(job?.attempts, 1);
+      assert.ok(kv.has(backfillKey));
+      assert.equal(fetcher.mock.callCount(), 0);
+      await importer.alarm();
+    });
+    const status = await loadCatalogImportStatus(
+      { get: async (key: string) => kv.get(key) ?? null } as never,
+      shop,
+    );
+    assert.equal(status?.phase, "submitted");
+    assert.equal(storage.values.has("job"), false);
   });
 });

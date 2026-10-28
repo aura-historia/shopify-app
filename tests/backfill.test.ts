@@ -1341,7 +1341,7 @@ describe("catalog import steps", () => {
             job,
             makeContext(),
             graphql,
-            now + 20_000,
+            20_000,
             checkpoint,
           );
           assert.equal(first.done, false);
@@ -1353,7 +1353,7 @@ describe("catalog import steps", () => {
             resumed,
             makeContext(),
             graphql,
-            now + 20_000,
+            20_000,
             checkpoint,
           );
           assert.equal(second.done, true);
@@ -1368,6 +1368,76 @@ describe("catalog import steps", () => {
       catalog.writes.map((write) => write.key),
       [0, 1, 2].map((index) => `shopify-backfill-789-put-${index}`),
     );
+  });
+
+  it("never lets a slow export download starve batch submission", async () => {
+    const products = Array.from({ length: 450 }, (_, index) =>
+      makeProduct({
+        id: `gid://shopify/Product/${index + 1}`,
+        handle: `clock-${index + 1}`,
+      }),
+    );
+    const catalog = fakeCatalog(products);
+    const graphql = stepGraphql({ rootObjectCount: "450" });
+    const persisted: CatalogImportJob[] = [];
+    let now = 1_000_000;
+    const clock = mock.method(Date, "now", () => now);
+    try {
+      await withFetch(
+        (async (input: RequestInfo | URL) => {
+          const request = asRequest(input);
+          // Every step spends more than its whole budget on the download.
+          if (request.url === resultUrl) now += 21_000;
+          if (request.method === "PUT") now += 15_000;
+          return catalog.fetcher(input);
+        }) as typeof fetch,
+        async () => {
+          let job = newJob();
+          for (let step = 0; step < 3; step++) {
+            const before = job.cursor;
+            const result = await runCatalogImportStep(
+              job,
+              makeContext(),
+              graphql,
+              20_000,
+              async (next) => {
+                persisted.push(structuredClone(next));
+              },
+            );
+            assert.ok(job.cursor > before, `step ${step} made no progress`);
+            if (result.done) break;
+            job = structuredClone(persisted.at(-1) as CatalogImportJob);
+          }
+          assert.equal(job.cursor, 5);
+        },
+      );
+    } finally {
+      clock.mock.restore();
+    }
+    assert.equal(catalog.writes.length, 5);
+  });
+
+  it("retries an unreadable publication instead of ending the import", async () => {
+    const catalog = fakeCatalog([makeProduct()]);
+    const readable = stepGraphql({ rootObjectCount: "1" });
+    await withFetch(catalog.fetcher, async () => {
+      await assert.rejects(
+        () =>
+          runCatalogImportStep(
+            newJob(),
+            makeContext(),
+            async (query, variables) => {
+              if (query.includes("AuraChannelPublication"))
+                throw new Error("Network connection lost");
+              return readable(query, variables);
+            },
+            Number.POSITIVE_INFINITY,
+            async () => {},
+          ),
+        /publication could not be read/,
+      );
+    });
+    assert.deepEqual(catalog.writes, []);
   });
 
   it("replays an unconfirmed batch under its original key after interruption", async () => {
