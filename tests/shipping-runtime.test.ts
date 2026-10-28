@@ -57,6 +57,8 @@ const credentials = {
   accessToken: "aura-private-token",
   updatedAt: "2026-10-18T08:00:00Z",
 };
+const nextSource = "ls_01h455vb4pex5vy7enb1p677v2";
+type HomeData = Exclude<Awaited<ReturnType<typeof home.loader>>, Response>;
 const contract = JSON.parse(
   readFileSync(
     new URL("./fixtures/shipping-contract.json", import.meta.url),
@@ -1354,7 +1356,6 @@ describe("S02 connection lifecycle", () => {
     const backend = backendFixture();
     const original = globalThis.fetch;
     globalThis.fetch = backend.fetcher;
-    const nextSource = "ls_01h455vb4pex5vy7enb1p677v2";
     try {
       await runtime.coordinator.requestShipping(shop);
       await runtime.run();
@@ -1502,9 +1503,6 @@ describe("S02 scope fencing", () => {
   });
 });
 
-type HomeData = Exclude<Awaited<ReturnType<typeof home.loader>>, Response>;
-const nextSource = "ls_01h455vb4pex5vy7enb1p677v2";
-
 // Drives the actual OAuth callback and embedded home against the coordinator.
 function connectionRuntime() {
   const runtime = refreshRuntime();
@@ -1519,11 +1517,16 @@ function connectionRuntime() {
   const controls = { conflict: "" };
   const revoked: string[] = [];
   const configured: string[] = [];
+  const exchanged = new Set<string>();
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input as RequestInfo, init);
     const path = new URL(request.url).pathname;
     if (path === "/v1/oauth/token") {
-      const code = new URLSearchParams(await request.text()).get("code");
+      const code = new URLSearchParams(await request.text()).get("code") ?? "";
+      // Authorization codes are single use.
+      if (exchanged.has(code))
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      exchanged.add(code);
       return Response.json({ access_token: `aura-token-${code}` });
     }
     if (path === "/v1/oauth/revoke") {
@@ -1599,7 +1602,6 @@ describe("OAuth connection replacement", () => {
     const original = globalThis.fetch;
     globalThis.fetch = runtime.fetcher;
     try {
-      await runtime.installed();
       assert.equal(await runtime.coordinator.requestShipping(shop), true);
       await runtime.coordinator.alarm();
       const before = await storedState(runtime.storage);
@@ -1670,7 +1672,10 @@ describe("OAuth connection replacement", () => {
           (key) => !key.includes("shipping-cleanup"),
         ),
       );
-      assert.equal(await runtime.coordinator.connectionRetired(shop), false);
+      assert.equal(
+        await runtime.coordinator.connectionRetired(credentials.updatedAt),
+        false,
+      );
       assert.equal(await runtime.coordinator.requestShipping(shop), true);
     } finally {
       globalThis.fetch = original;
@@ -1682,7 +1687,6 @@ describe("OAuth connection replacement", () => {
     const original = globalThis.fetch;
     globalThis.fetch = runtime.fetcher;
     try {
-      await runtime.installed();
       await runtime.coordinator.requestShipping(shop);
       await runtime.run();
       const params = await (await runtime.authorize("second"))();
@@ -1727,7 +1731,6 @@ describe("OAuth connection replacement", () => {
       globalThis.fetch = runtime.fetcher;
       runtime.controls.conflict = conflict;
       try {
-        await runtime.installed();
         await runtime.coordinator.requestShipping(shop);
         await runtime.coordinator.alarm();
         const first = await runtime.authorize("first");
@@ -1774,13 +1777,62 @@ describe("OAuth connection replacement", () => {
     }
   });
 
+  it("connects a double-submitted callback once and leaves that connection on replay", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      const callback = await runtime.authorize("second");
+      const results = await Promise.all([callback(), callback()]);
+      assert.deepEqual(results.map((params) => params.get("oauth")).sort(), [
+        "connected",
+        "failed",
+      ]);
+      const state = await storedState(runtime.storage);
+      assert.equal(
+        (await loadShopCredentials(runtime.env.KV, shop))?.accessToken,
+        "aura-token-second",
+      );
+      assert.equal(runtime.cleanups(state).length, 1);
+      assert.equal((await callback()).get("oauth"), "failed");
+      assert.deepEqual(await storedState(runtime.storage), state);
+      // A rejected code issued no grant, so nothing new is revoked.
+      assert.deepEqual(runtime.revoked, []);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("withdraws and revokes a replaced record that was never bound", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      assert.equal(
+        (await (await runtime.authorize("second"))()).get("oauth"),
+        "connected",
+      );
+      const [cleanup, ...rest] = runtime.cleanups(
+        await storedState(runtime.storage),
+      );
+      assert.deepEqual(rest, []);
+      assert.equal(cleanup.credentialVersion, credentials.updatedAt);
+      assert.equal(cleanup.revoke, true);
+      await runtime.run();
+      assert.deepEqual(runtime.revoked, [credentials.accessToken]);
+      assert.equal((await runtime.coordinator.status()).tokenRevoked, true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("reports a stopped stored record as stopped and recovers only through a new authorization", async () => {
     const runtime = connectionRuntime();
     const original = globalThis.fetch;
     const realNow = Date.now;
     globalThis.fetch = runtime.fetcher;
     try {
-      await runtime.installed();
       await runtime.coordinator.requestShipping(shop);
       await runtime.run();
       // The binding was stopped and its revocation queued, but the record
@@ -1801,11 +1853,21 @@ describe("OAuth connection replacement", () => {
       assert.deepEqual(runtime.configured, []);
       await runtime.run();
       assert.deepEqual(runtime.revoked, [credentials.accessToken]);
-      // The fence outlives local retention while the record is stored.
+      assert.notDeepEqual((await storedState(runtime.storage)).mappings, {});
+      // The fence outlives local retention while the record is stored, but
+      // only as a minimal tombstone.
       Date.now = () => realNow() + 8 * 86_400_000;
       await runtime.coordinator.alarm();
       Date.now = realNow;
-      assert.equal(await runtime.coordinator.connectionRetired(shop), true);
+      const tombstone = await storedState(runtime.storage);
+      assert.deepEqual(tombstone.mappings, {});
+      assert.equal(tombstone.memberships, undefined);
+      assert.equal(tombstone.stopped, true);
+      assert.equal(runtime.storage.alarm, null);
+      assert.equal(
+        await runtime.coordinator.connectionRetired(credentials.updatedAt),
+        true,
+      );
       assert.equal(await runtime.coordinator.requestShipping(shop), false);
       const reconnect = await runtime.home("manual_connect=1");
       assert.ok(reconnect instanceof Response);

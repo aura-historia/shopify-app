@@ -66,6 +66,12 @@ export function isValidAuraHistoriaAccessToken(value: string) {
   return ACCESS_TOKEN_PATTERN.test(value);
 }
 
+// Identifies one stored connection. Records older than connection IDs use
+// their save time.
+export function credentialVersion(record: ShopCredentialsRecord) {
+  return record.connectionId ?? record.updatedAt;
+}
+
 export function toPublicShopCredentialsRecord(
   record: ShopCredentialsRecord,
 ): PublicShopCredentialsRecord {

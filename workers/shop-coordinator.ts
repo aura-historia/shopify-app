@@ -40,6 +40,7 @@ import {
 } from "../app/shipping/webhooks.server";
 import {
   clearShopCredentialsDisconnected,
+  credentialVersion,
   isShopCredentialsDisconnected,
   loadShopCredentials,
   type ShopCredentialsRecord,
@@ -120,19 +121,17 @@ interface CoordinatorState {
 export const RECONCILIATION_INTERVAL = 6 * 3600_000;
 const PRIVATE_RETENTION = 7 * 86_400_000;
 const DELIVERY_RETENTION = 48 * 3600_000;
-const credentialVersion = (record: ShopCredentialsRecord) =>
-  record.connectionId ?? record.updatedAt;
+const cleanupJobs = (state: CoordinatorState) =>
+  [state.cleanup, ...(state.cleanupQueue ?? [])].filter(
+    (job): job is CleanupJob => Boolean(job),
+  );
 // The protected record stays readable until a disconnect, uninstall or new
 // authorization replaces it. A stopped binding of the same version, or its
 // queued revocation, means it no longer acts for the shop: nothing revives it.
-const retired = (state: CoordinatorState, record: ShopCredentialsRecord) =>
-  Boolean(
-    (state.stopped &&
-      state.binding?.credentialVersion === credentialVersion(record)) ||
-      [state.cleanup, ...(state.cleanupQueue ?? [])].some(
-        (job) =>
-          job?.revoke && job.credentialVersion === credentialVersion(record),
-      ),
+const retired = (state: CoordinatorState, version: string) =>
+  Boolean(state.stopped && state.binding?.credentialVersion === version) ||
+  cleanupJobs(state).some(
+    (job) => job.revoke && job.credentialVersion === version,
   );
 
 const idle = (): ShippingStatus => ({
@@ -309,7 +308,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       )
         return false;
       const state = await this.load();
-      if (retired(state, credentials)) return false;
+      if (retired(state, credentialVersion(credentials))) return false;
       if (
         state.job?.publication?.retainUntil &&
         state.job.publication.retainUntil <= Date.now()
@@ -466,12 +465,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     });
   }
 
-  // Whether the stored record is one this coordinator stopped or revokes.
-  async connectionRetired(shop: string) {
-    return this.serialize(async () => {
-      const credentials = await loadShopCredentials(this.env.KV, shop);
-      return Boolean(credentials && retired(await this.load(), credentials));
-    });
+  // Whether the caller's record is one this coordinator stopped or revokes.
+  // It checks the version the caller is about to use, not a fresh KV read.
+  async connectionRetired(version: string) {
+    return this.serialize(async () => retired(await this.load(), version));
   }
 
   // Called by the OAuth callback only after the new grant configured the
@@ -483,27 +480,30 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
   async saveConnection(shop: string, values: ShopCredentialsValues) {
     return this.serialize(async () => {
       const state = await this.load();
+      const hinted = (await this.ctx.storage.get<number>("hintVersion")) ?? 0;
       const previous = await loadShopCredentials(this.env.KV, shop);
-      // The old token is copied to cleanup storage before its record is
-      // overwritten.
+      // Every replaced grant that is not already fenced is withdrawn and
+      // revoked, bound or not. Its token is copied to cleanup storage before
+      // the record holding it is overwritten.
       const cleanup =
-        previous && state.binding && !state.stopped
+        previous && !retired(state, credentialVersion(previous))
           ? await this.startCleanup(state, shop, previous, false, true)
           : undefined;
       let record: ShopCredentialsRecord;
+      // The caller revokes the new grant when this throws, so all fallible KV
+      // writes precede the record. Authorizing again ends a manual pause.
       try {
         await clearShopCredentialsDisconnected(this.env.KV, shop);
         record = await saveShopCredentials(this.env.KV, shop, values);
       } catch (error) {
-        // Nothing was replaced; the previous binding keeps its work.
+        // No record was replaced; the previous binding keeps its work.
         if (cleanup)
           await this.env.KV.delete(cleanup.credentialKey).catch(() => {});
         throw error;
       }
       state.job = undefined;
       state.reconcileAt = undefined;
-      state.seenHintVersion =
-        (await this.ctx.storage.get<number>("hintVersion")) ?? 0;
+      state.seenHintVersion = hinted;
       // A reconnect always performs new acquisition, never relabels old data.
       this.enqueue(state, shop, record, true);
       await this.ctx.storage.setAlarm(Date.now() + 1000);
@@ -519,9 +519,9 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     erase: boolean,
     revoke: boolean,
   ) {
-    const existing = [state.cleanup, ...(state.cleanupQueue ?? [])].find(
+    const existing = cleanupJobs(state).find(
       (job) =>
-        job?.listingSourceId === credentials.listingSourceId &&
+        job.listingSourceId === credentials.listingSourceId &&
         job.credentialVersion === credentialVersion(credentials),
     );
     if (existing) {
@@ -711,12 +711,21 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
           await this.ctx.storage.setAlarm(state.eraseAt);
           return;
         }
-        // Erasure would lift the fence of a record that is still stored.
+        // Erasure would lift the fence of a record that is still stored. Keep
+        // only that fence and its status, as private state is erased on time.
         // Disconnect, uninstall or a new authorization wakes this again.
         const credentials =
           state.binding &&
           (await loadShopCredentials(this.env.KV, state.binding.shop));
-        if (credentials && retired(state, credentials)) {
+        if (credentials && retired(state, credentialVersion(credentials))) {
+          await this.save({
+            sequence: state.sequence,
+            mappings: {},
+            binding: state.binding,
+            stopped: true,
+            status: state.status,
+          });
+          await this.ctx.storage.delete(["receipts"]);
           await this.ctx.storage.deleteAlarm();
           return;
         }

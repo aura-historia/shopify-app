@@ -31,6 +31,7 @@ import {
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
+  credentialVersion,
   isShopCredentialsDisconnected,
   loadShopCredentials,
   markShopCredentialsDisconnected,
@@ -72,14 +73,15 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     session.shop,
   );
   const disconnectedByAction = url.searchParams.get("disconnect") === "success";
+  const coordinator = shopCoordinator(context, session.shop);
   // A stored record is not a usable connection once the coordinator stopped
   // it or queued its revocation. Only a new authorization replaces it.
-  const connectionStopped =
-    !disconnectedByAction &&
-    storedCredentials !== null &&
-    (await shopCoordinator(context, session.shop).connectionRetired(
-      session.shop,
-    ));
+  const [shipping, connectionStopped] = await Promise.all([
+    coordinator.status(),
+    storedCredentials && !disconnectedByAction
+      ? coordinator.connectionRetired(credentialVersion(storedCredentials))
+      : false,
+  ]);
   const credentials =
     disconnectedByAction || connectionStopped ? null : storedCredentials;
   const oauthResult = url.searchParams.get("oauth");
@@ -130,7 +132,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const backfill = url.searchParams.get("backfill");
 
   return {
-    shipping: await shopCoordinator(context, session.shop).status(),
+    shipping,
     catalogImport: credentials
       ? await loadCatalogImportStatus(context.cloudflare.env.KV, session.shop)
       : null,
@@ -194,7 +196,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     if (
       !credentials ||
       (await shopCoordinator(context, session.shop).connectionRetired(
-        session.shop,
+        credentialVersion(credentials),
       ))
     ) {
       redirectParams.set("backfill", "not_queued");

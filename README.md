@@ -340,8 +340,12 @@ independent; manual edits/clears and collection/shipping overrides stay protecte
 by backend ownership checks. Product synchronization credentials remain usable.
 Uninstall/disconnect queues the same removals, then attempts Aura OAuth token
 revocation. OAuth revocation is recorded separately; it is not reported as source
-or grant revocation. Source switching fences old work and queues cleanup before
-new acquisition; at most five connection cleanups can be retained. Removals retain
+or grant revocation. A reconnect leaves the current connection running until the new
+grant has configured the provider and its record is stored. The previous binding's stop,
+cleanup and token revocation then commit with the new binding in one serialized step; a
+failed attempt revokes only the new grant. Source switching therefore fences old work
+and queues cleanup before new acquisition; at most five connection cleanups can be
+retained. Removals retain
 the last successful source acquisition time, so a newer backend authority boundary
 is never bypassed with a new timestamp. Reconnect always reads Shopify again.
 
@@ -375,7 +379,10 @@ Aura credentials for cleanup remain in a separate protected KV entry, with a
 seven-day maximum retention. No Shopify token is copied. Cleanup state retains only
 canonical typed removal requests and resource identities, then discards them.
 Minimal stop/status tombstones are erased after seven days; unknown installations
-and hints cannot recreate a binding.
+and hints cannot recreate a binding. A stopped connection record that is still stored
+keeps only its stop tombstone until a disconnect, uninstall or new authorization
+replaces it; the embedded app reports it as stopped and offers only a new
+authorization, never a retry with that record.
 The linked Aura privacy policy and App Store access disclosure must reflect this
 processing when the feature is released.
 
