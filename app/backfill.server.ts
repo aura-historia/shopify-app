@@ -885,8 +885,7 @@ export function planBackfill(
   for (const product of products) {
     const action = classifyShopifyBackfillAction(product);
     if (action === "withdraw") {
-      // Explicitly withdraws every product that is not selected, including
-      // products imported under the former shop-wide product topics.
+      // Every product that is not selected is withdrawn explicitly.
       withdrawals.push(transformWithdrawal(product));
     } else if (action === "unknown") {
       complete = false;

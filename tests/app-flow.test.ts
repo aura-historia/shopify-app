@@ -109,15 +109,9 @@ describe("public install flow", () => {
       oauthCallbackRoute,
       /return adminRedirect\(shopifyStoreName, \{\s*oauth: "connected",\s*backfill/,
     );
-    const catalogImport = readFileSync(
-      resolve(process.cwd(), "app/catalog-import.server.ts"),
-      "utf8",
-    );
     assert.match(appIndexRoute, /intent === "retry_backfill"/);
-    assert.match(appIndexRoute, /queueCatalogImport\(context, session\.shop\)/);
-    assert.match(catalogImport, /loadShopCredentials\(/);
-    assert.match(catalogImport, /credentials\.listingSourceId/);
-    assert.match(catalogImport, /credentials\.accessToken/);
+    assert.match(appIndexRoute, /credentials\.listingSourceId/);
+    assert.match(appIndexRoute, /credentials\.accessToken/);
     assert.match(appIndexRoute, /intent="retry_backfill"/);
   });
 

@@ -1179,44 +1179,6 @@ describe("S02 authenticated shipping refresh and recovery", () => {
     }
   });
 
-  it("queues a channel-filtered catalog import when product listing access is first granted", async () => {
-    const runtime = refreshRuntime();
-    await runtime.installed();
-    const detached: Promise<unknown>[] = [];
-    runtime.context.cloudflare.ctx.waitUntil = (promise) => {
-      detached.push(promise);
-    };
-    const original = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(null, { status: 503 })) as typeof fetch;
-    try {
-      for (const [previous, queued] of [
-        [["read_products", "read_shipping"], 1],
-        [["read_products", "read_product_listings", "read_shipping"], 0],
-      ] as const) {
-        detached.length = 0;
-        const response = await receiveShippingWebhook(
-          shippingCallback("app/scopes_update", crypto.randomUUID(), {
-            current: [
-              "read_products",
-              "read_product_listings",
-              "read_shipping",
-            ],
-            previous,
-          }),
-          runtime.context,
-        );
-        assert.equal(response.status, 200);
-        assert.equal(detached.length, queued);
-        // A failed import attempt stays a recoverable, logged outcome.
-        for (const result of await Promise.all(detached))
-          assert.equal(typeof result, "boolean");
-      }
-    } finally {
-      globalThis.fetch = original;
-    }
-  });
-
   it("withdraws only owned components on permission loss while catalog access stays available", async () => {
     const runtime = refreshRuntime();
     await runtime.installed();

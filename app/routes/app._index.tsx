@@ -1,17 +1,22 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, redirect, useLoaderData, useNavigation } from "react-router";
-import { clearBackfillContext } from "../backfill.server";
+import {
+  clearBackfillContext,
+  configureShopifyListingSource,
+  triggerBackfill,
+} from "../backfill.server";
 import {
   type CatalogImportError,
   clearCatalogImportStatus,
   getChannelPublication,
   loadCatalogImportStatus,
 } from "../catalog.server";
-import { queueCatalogImport } from "../catalog-import.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
+  getAuraHistoriaApiBaseUrl,
   getAuraHistoriaOAuthConfig,
   getMissingAuraHistoriaOAuthConfig,
+  summarizeOAuthError,
 } from "../oauth.server";
 import {
   offlineGraphql,
@@ -46,7 +51,7 @@ type IntegrationStatus =
 
 const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   MISSING_SCOPE:
-    "Approve the updated Shopify permissions for Aura Historia, then import the catalog again.",
+    "Aura Historia lacks Shopify access to this channel's product listings. Approve the app's permissions in Shopify, then import the catalog again.",
   MISSING_PUBLICATION:
     "The Aura Historia sales channel was not found in Shopify. Reinstall the channel or contact support.",
   SHOPIFY_READ_FAILED:
@@ -168,8 +173,45 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   }
 
   if (intent === "retry_backfill") {
-    const queued = await queueCatalogImport(context, session.shop);
-    redirectParams.set("backfill", queued ? "queued" : "not_queued");
+    const credentials = await loadShopCredentials(
+      context.cloudflare.env.KV,
+      session.shop,
+    );
+    if (!credentials) {
+      redirectParams.set("backfill", "not_queued");
+      return redirect(`/app?${redirectParams.toString()}`);
+    }
+
+    try {
+      const config = getAuraHistoriaOAuthConfig(context.cloudflare.env);
+      const apiBaseUrl =
+        getAuraHistoriaApiBaseUrl(context.cloudflare.env) ??
+        new URL(config.tokenUrl).origin;
+      const graphqlRequest = offlineGraphql(context, session.shop);
+      const metadata = await configureShopifyListingSource(
+        graphqlRequest,
+        apiBaseUrl,
+        credentials.listingSourceId,
+        credentials.accessToken,
+        session.shop,
+      );
+      const queued = await triggerBackfill(
+        graphqlRequest,
+        context.cloudflare.env.KV,
+        session.shop,
+        credentials.listingSourceId,
+        credentials.accessToken,
+        apiBaseUrl,
+        metadata,
+      );
+      redirectParams.set("backfill", queued ? "queued" : "not_queued");
+    } catch (error) {
+      console.error(
+        "Failed to retry initial backfill:",
+        summarizeOAuthError(error, [credentials.accessToken]),
+      );
+      redirectParams.set("backfill", "not_queued");
+    }
     return redirect(`/app?${redirectParams.toString()}`);
   }
 
@@ -325,15 +367,12 @@ export default function AppIndex() {
           ) : (
             <>
               {publication?.state === "missing_scope" ? (
-                <s-banner
-                  tone="critical"
-                  heading="Approve updated Shopify permissions"
-                >
+                <s-banner tone="critical" heading="Shopify permission required">
                   <s-paragraph>
                     Aura Historia imports only products published to this sales
                     channel and needs access to its product listings. Approve
-                    the updated app permissions in Shopify, then import the
-                    catalog again. No catalog import runs until then.
+                    the app's permissions in Shopify, then import the catalog
+                    again. No catalog import runs until then.
                   </s-paragraph>
                 </s-banner>
               ) : publication?.state === "missing_publication" ? (
@@ -369,10 +408,7 @@ export default function AppIndex() {
                 >
                   {catalogImport?.phase === "failed" && catalogImport.error && (
                     <s-paragraph>
-                      {catalogImport.error === "MISSING_SCOPE" &&
-                      publication?.state === "ready"
-                        ? "The updated Shopify permissions are now approved. Import the catalog again to apply your channel selection."
-                        : CATALOG_ISSUE_MESSAGES[catalogImport.error]}
+                      {CATALOG_ISSUE_MESSAGES[catalogImport.error]}
                     </s-paragraph>
                   )}
                   <s-paragraph>
@@ -393,25 +429,15 @@ export default function AppIndex() {
                   page for an update.
                 </s-paragraph>
               )}
-              {catalogImport?.phase === "submitted" &&
-                (catalogImport.eligible === undefined ? (
-                  <s-banner tone="warning" heading="Import your catalog again">
-                    <s-paragraph>
-                      The last import ({catalogImport.total} products) ran
-                      before imports followed your channel selection. Import the
-                      catalog again so only products published to Aura Historia
-                      stay listed.
-                    </s-paragraph>
-                  </s-banner>
-                ) : (
-                  <s-paragraph>
-                    Last import: {catalogImport.total} Shopify products checked,{" "}
-                    {catalogImport.eligible} published to Aura Historia
-                    submitted, {catalogImport.withdrawn ?? 0} unpublished or
-                    inactive products withdrawn (if previously listed),{" "}
-                    {catalogImport.failed} failures.
-                  </s-paragraph>
-                ))}
+              {catalogImport?.phase === "submitted" && (
+                <s-paragraph>
+                  Last import: {catalogImport.total} Shopify products checked,{" "}
+                  {catalogImport.eligible ?? 0} published to Aura Historia
+                  submitted, {catalogImport.withdrawn ?? 0} unpublished or
+                  inactive products withdrawn (if previously listed),{" "}
+                  {catalogImport.failed} failures.
+                </s-paragraph>
+              )}
               <s-stack direction="inline" gap="base">
                 {publication?.state === "ready" && (
                   <s-button href={publication.editorUrl} target="_top">

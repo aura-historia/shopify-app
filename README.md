@@ -81,7 +81,7 @@ flowchart LR
 | `product_listings/add`, `product_listings/update`, `product_listings/remove` | Aura Historia Amazon EventBridge partner source | Keep products published to the Aura Historia channel current; removal from the channel withdraws them |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia Amazon EventBridge partner source | Required public-app privacy and compliance handling |
 | `profiles/create`, `profiles/update`, `profiles/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current shipping acquisition |
-| `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access, import once updated access is approved, and withdraw owned assertions on permission loss; start a channel-filtered catalog import when product listing access is first granted |
+| `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access, import once updated access is approved, and withdraw owned assertions on permission loss |
 | `app/uninstalled` | This app’s deployed HTTPS endpoint | Stop shipping, admit owned cleanup, then remove Shopify sessions and connection data |
 | `bulk_operations/finish` | This app’s deployed HTTPS endpoint | Admit the channel-filtered catalog export to the resumable catalog importer |
 
@@ -92,12 +92,12 @@ The required public-app compliance subscriptions and product listing subscriptio
 Merchants choose which products appear on Aura Historia by publishing them to the Aura Historia sales channel. That selection governs every catalog path:
 
 - **Ongoing changes** use Shopify's own-channel `product_listings/add`, `product_listings/update` and `product_listings/remove` topics, which Shopify scopes to this app's channel. Publishing adds or restores a product, and edits and stock changes arrive as updates. Removal from the channel withdraws the listing, even if the product stays active elsewhere. Out-of-stock products remain listed with their inventory availability.
-- **Initial import, “Import catalog again”, retries and scope-grant recovery** share one bulk export. It resolves the current installation's publication (`currentAppInstallation.publication`) and reads `publishedOnPublication(publicationId: …)` for every product. An `ACTIVE` product is upserted only when that membership is explicitly `true`, and withdrawn when it is `false`. A missing value is unknown: the product is reported as a failure and the import is not complete. `DRAFT`/`ARCHIVED` products are withdrawn and other statuses are ignored, as before. Source listing IDs remain Shopify numeric product IDs.
+- **Initial import, “Import catalog again” and retries** share one bulk export. It resolves the current installation's publication (`currentAppInstallation.publication`) and reads `publishedOnPublication(publicationId: …)` for every product. An `ACTIVE` product is upserted only when that membership is explicitly `true`, and withdrawn when it is `false`. A missing value is unknown: the product is reported as a failure and the import is not complete. `DRAFT`/`ARCHIVED` products are withdrawn and other statuses are ignored, as before. Source listing IDs remain Shopify numeric product IDs.
 - **Missing access or publication.** Before exporting, the app verifies that `read_product_listings` (or `write_product_listings`) was actually granted to the installation, using a separate `accessScopes` query. It also verifies that the publication exists. If either check fails or the read fails, no export runs and the embedded app shows a retryable failure. There is never a fallback to all active products, `onlineStoreUrl`, Online Store publishing or an aggregate count. Every processing step checks the scope and publication again before writing; a changed publication discards the snapshot.
 
-### Reconciliation of previously imported products
+### Reconciliation
 
-The export covers the whole Shopify catalog, so every product that is not published to the channel is withdrawn explicitly by its Shopify product ID. That includes products imported under the former shop-wide topics that the merchant never selected. A valid empty selection therefore withdraws every product. Withdrawing a product that was never imported is a no-op downstream.
+The export covers the whole Shopify catalog, so every product that is not published to the channel is withdrawn explicitly by its Shopify product ID. A valid empty selection therefore withdraws every product. Withdrawing a product that was never imported is a no-op downstream.
 
 An import is reported complete only when Shopify reported `COMPLETED` without an error code, the number of product rows equals the operation's `rootObjectCount`, and every membership read was explicit. Otherwise the import is reported as failed with a retry.
 
@@ -128,22 +128,19 @@ Until then, the app alone cannot guarantee either ordering. If the backend choos
 - “Last import” reports the Shopify products checked, the eligible products submitted, the admitted withdrawals of unpublished or inactive products, and failures.
 - Acceptance by Aura Historia means queue admission. Search visibility follows asynchronously and still applies product-status rules.
 - Missing permissions, a missing publication and incomplete exports remain visible as failures with a retry. They are never shown as a successful zero-product import.
-- Statuses from imports before channel filtering ask the merchant to import again.
 
-### Migration from shop-wide product topics
+### Rollout
 
-1. Deploy backend listing-event support, source-scoped withdrawal and apply-time ordering ([aura-historia/backend#2572](https://github.com/aura-historia/backend/issues/2572)). Do not release this Shopify configuration earlier: without backend routing, live product sync stops for every shop.
-2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration. Existing installations receive `read_product_listings` through Shopify's managed scope update. Merchants approve it when they next open the app.
-3. The same configuration release replaces `products/*` with the three listing topics. A shop that has not approved the new scope receives no product events until it does. If that gap is unacceptable, first release a configuration that adds `read_product_listings` while keeping `products/*`, then switch the topics in a second release. Retire the old broad-topic work using the backend's bounded cutover, which covers deliveries still queued at Shopify or EventBridge, FIFO commands, pending raw revisions and dead-letter redrives.
-4. When a merchant approves the scope, the `app/scopes_update` notification starts a channel-filtered import automatically. Merchants can also use “Import catalog again”. A run reports success only after every product in a complete export has been classified and submitted.
-5. Verify the following:
+There are no active installations yet, so no existing shops need to be migrated.
+
+1. Deploy backend listing-event support, source-scoped withdrawal and apply-time ordering ([aura-historia/backend#2572](https://github.com/aura-historia/backend/issues/2572)). Do not release this Shopify configuration earlier: without backend routing, live product sync does not work.
+2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration.
+3. Verify the following:
    - Selected and unselected products.
    - Publication-only removal and restoration.
    - Title, image, price and stock updates.
    - Draft, archive, delete and reactivation.
    - The snapshot/live-event race.
-
-   Record failures and retry until each shop reports a complete import.
 
 ## Local development
 

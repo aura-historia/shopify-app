@@ -92,7 +92,7 @@ describe("Aura channel selection in the embedded home", () => {
     assert.match(html, /Manage products in Shopify bulk editor/);
     assert.match(html, /unpublishing withdraws it/);
   });
-  it("asks for the updated permission instead of reporting a zero-product import", () => {
+  it("asks for the missing permission instead of reporting a zero-product import", () => {
     const html = renderHome(null, "not_queued", {
       publication: { state: "missing_scope" },
       catalogImport: {
@@ -102,7 +102,7 @@ describe("Aura channel selection in the embedded home", () => {
         error: "MISSING_SCOPE",
       },
     });
-    assert.match(html, /Approve updated Shopify permissions/);
+    assert.match(html, /Shopify permission required/);
     assert.match(html, /Catalog import needs attention/);
     assert.doesNotMatch(html, /Manage products in Shopify bulk editor/);
     assert.doesNotMatch(html, /Last import/);
@@ -127,32 +127,6 @@ describe("Aura channel selection in the embedded home", () => {
     assert.match(html, /Catalog import needs attention/);
     assert.match(html, /could not be verified as complete/);
     assert.match(html, /1 products could not be classified or submitted/);
-  });
-  it("points to a re-import once the missing permission is approved", () => {
-    const html = renderHome(null, "", {
-      publication: {
-        state: "ready",
-        count: 3,
-        atLeast: false,
-        editorUrl: "https://admin.shopify.com/store/example/bulk",
-      },
-      catalogImport: {
-        phase: "failed",
-        total: 0,
-        failed: 0,
-        error: "MISSING_SCOPE",
-      },
-    });
-    assert.doesNotMatch(html, /Approve updated Shopify permissions/);
-    assert.match(html, /permissions are now approved/);
-  });
-  it("asks for a re-import after an import from before channel filtering", () => {
-    const html = renderHome(null, "", {
-      catalogImport: { phase: "submitted", total: 7, failed: 0 },
-    });
-    assert.match(html, /Import your catalog again/);
-    assert.match(html, /ran before imports followed your channel selection/);
-    assert.doesNotMatch(html, /Last import/);
   });
   it("separates eligible submissions from withdrawals in the last import", () => {
     const html = renderHome(null, "", {
