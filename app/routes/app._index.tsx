@@ -59,9 +59,7 @@ const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   PUBLICATION_CHANGED:
     "The sales channel changed while the import ran. Import the catalog again.",
   INCOMPLETE_EXPORT:
-    "Shopify's catalog export could not be verified as complete, or some products' channel membership could not be read. Nothing was withdrawn. Retry the import.",
-  RECONCILIATION_FAILED:
-    "Published products were submitted, but existing Aura Historia listings could not be read, so unselected listings were not withdrawn. Retry the import; if this continues, reconnect Aura Historia.",
+    "Shopify's catalog export could not be verified as complete, or some products' channel membership could not be read. Retry the import.",
 };
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {
@@ -435,9 +433,9 @@ export default function AppIndex() {
                 <s-paragraph>
                   Last import: {catalogImport.total} Shopify products checked,{" "}
                   {catalogImport.eligible ?? 0} published to Aura Historia
-                  submitted, {catalogImport.withdrawn ?? 0} listings no longer
-                  published to the channel withdrawn, {catalogImport.failed}{" "}
-                  failures.
+                  submitted, {catalogImport.withdrawn ?? 0} unpublished or
+                  inactive products withdrawn (if previously listed),{" "}
+                  {catalogImport.failed} failures.
                 </s-paragraph>
               )}
               <s-stack direction="inline" gap="base">

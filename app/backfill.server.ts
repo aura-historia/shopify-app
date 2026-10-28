@@ -9,7 +9,6 @@ import { CURRENCY_MINOR_UNITS } from "./currency";
 import { createClient } from "./generated/api/client";
 import {
   deleteAsyncPartnerProductListings,
-  listPartnerProductListings,
   putAsyncPartnerProductListings,
   putShopifyListingSourceIngestionConfiguration,
 } from "./generated/api/sdk.gen";
@@ -31,8 +30,6 @@ import { isValidListingSourceId } from "./shop-credentials.server";
 const BATCH_SIZE = 100;
 const BACKFILL_CONTEXT_PREFIX = "aura-historia:backfill:";
 const BACKFILL_CONTEXT_TTL_SECONDS = 3600;
-// Bounds the existing-listing enumeration to one million listings.
-const MAX_LISTING_PAGES = 10_000;
 
 // Bulk queries take no variables. The validated publication GID is embedded so
 // every product row carries explicit membership in Aura's own channel.
@@ -197,8 +194,14 @@ export interface BulkOperationResult {
   rootObjectCount: number | null;
 }
 
+export interface BackfillBatch {
+  verb: "put" | "delete";
+  index: number;
+  items: UpsertProductListingData[] | WithdrawProductListingData[];
+}
+
 // Deterministic for one immutable export, so a resumed import replays the
-// same upsert batches under the same idempotency keys.
+// same batches under the same idempotency keys.
 export interface BackfillPlan {
   total: number;
   eligible: number;
@@ -206,10 +209,7 @@ export interface BackfillPlan {
   complete: boolean;
   // Products with unknown membership or unmappable data; never submitted.
   rejected: string[];
-  upserts: UpsertProductListingData[];
-  // Products whose existing listings stay: the eligible selection and
-  // statuses that imports leave untouched.
-  retained: Set<string>;
+  batches: BackfillBatch[];
 }
 
 // Durable progress of one catalog import. It holds no credentials.
@@ -217,27 +217,11 @@ export interface CatalogImportJob {
   shop: string;
   bulkOperationId: string;
   result?: BulkOperationResult;
-  // Existing-listing enumeration: next cursor and pages retained so far.
-  listingCursor?: string;
-  listingPages: number;
-  // Set once the withdrawals of absent listings are retained as batches.
-  withdrawals?: number;
-  // This source's existing listings could not be read.
-  enumerationFailed?: boolean;
-  // Index of the next batch: upserts first, then withdrawals.
+  // Index of the next batch in the plan.
   cursor: number;
   failed: number;
   withdrawn: number;
   attempts: number;
-}
-
-// Durable storage for the existing-listing enumeration and the ordered
-// withdrawal batches. Both come from a live read and are never recomputed
-// under the same idempotency keys.
-export interface CatalogImportStore {
-  saveJob(job: CatalogImportJob): Promise<void>;
-  putIds(key: string, ids: string[]): Promise<void>;
-  getIds(key: string): Promise<string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -869,24 +853,23 @@ export function planBackfill(
   context: BackfillContext,
 ): BackfillPlan {
   const { products, images, variants } = parseProductsFromJsonl(jsonl);
-  // Only an export whose product rows match Shopify's root count is an
-  // authoritative selection. A complete empty export is a valid selection.
+  // Only an export whose product rows match Shopify's root count is complete.
   let complete = rootObjectCount === products.length;
   let eligible = 0;
   const upserts: UpsertProductListingData[] = [];
-  const retained = new Set<string>();
+  const withdrawals: WithdrawProductListingData[] = [];
   const rejected: string[] = [];
   for (const product of products) {
-    const id = extractShopifyNumericId(product.id);
     const action = classifyShopifyBackfillAction(product);
-    if (action === "unknown") {
+    if (action === "withdraw") {
+      // Drafts, archived and unpublished products in the export are withdrawn
+      // by their own ID. Nothing is withdrawn for being absent from it.
+      withdrawals.push(transformWithdrawal(product));
+    } else if (action === "unknown") {
       complete = false;
-      rejected.push(id);
-    } else if (action === "ignore") {
-      retained.add(id);
+      rejected.push(extractShopifyNumericId(product.id));
     } else if (action === "upsert") {
       eligible++;
-      retained.add(id);
       try {
         upserts.push(
           transformProduct(
@@ -899,135 +882,60 @@ export function planBackfill(
           ),
         );
       } catch {
-        rejected.push(id);
+        rejected.push(extractShopifyNumericId(product.id));
       }
     }
   }
-  return {
-    total: products.length,
-    eligible,
-    complete,
-    rejected,
-    upserts,
-    retained,
-  };
-}
-
-class ListingReadError extends Error {}
-
-async function readExistingListingPage(
-  context: BackfillContext,
-  searchAfter: string | undefined,
-): Promise<{ ids: string[]; next?: string }> {
-  const client = createClient({ baseUrl: context.apiBaseUrl });
-  let status: number | string = "transport";
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const result = await listPartnerProductListings({
-      client,
-      path: { listingSourceId: context.listingSourceId },
-      query: {
-        lifecycle: "ACTIVE",
-        sort: "created",
-        order: "asc",
-        size: BATCH_SIZE,
-        ...(searchAfter && { searchAfter }),
-      },
-      headers: { Authorization: `Bearer ${context.accessToken}` },
-    });
-    const items = result.data?.items;
-    if (
-      result.response?.status === 200 &&
-      Array.isArray(items) &&
-      items.every((item) => typeof item?.sourceListingId === "string")
-    ) {
-      return {
-        ids: items
-          .filter((item) => item.lifecycle === "ACTIVE")
-          .map((item) => item.sourceListingId),
-        next: result.data?.searchAfter,
-      };
-    }
-    status = result.response?.status ?? "transport";
-    if (result.response && result.response.status !== 503) break;
+  const batches: BackfillBatch[] = [];
+  for (const [verb, items] of [
+    ["put", upserts],
+    ["delete", withdrawals],
+  ] as const) {
+    for (let i = 0; i < items.length; i += BATCH_SIZE)
+      batches.push({
+        verb,
+        index: i / BATCH_SIZE,
+        items: items.slice(i, i + BATCH_SIZE),
+      });
   }
-  throw new ListingReadError(`ProductListing read failed (${status})`);
-}
-
-// Reads this source's existing listings within the deadline and, once the
-// enumeration is complete, retains the withdrawals of listings absent from
-// the selection as ordered batches. Returns false while pages remain.
-async function retainAbsentListingWithdrawals(
-  job: CatalogImportJob,
-  context: BackfillContext,
-  plan: BackfillPlan,
-  deadline: number,
-  store: CatalogImportStore,
-): Promise<boolean> {
-  while (job.listingPages === 0 || job.listingCursor) {
-    if (job.listingPages >= MAX_LISTING_PAGES)
-      throw new ListingReadError("ProductListing enumeration limit reached");
-    if (Date.now() >= deadline) return false;
-    const page = await readExistingListingPage(context, job.listingCursor);
-    await store.putIds(`existing:${job.listingPages}`, page.ids);
-    job.listingPages++;
-    job.listingCursor = page.next;
-    await store.saveJob(job);
-  }
-  const absent = new Set<string>();
-  for (let page = 0; page < job.listingPages; page++) {
-    for (const id of await store.getIds(`existing:${page}`))
-      if (!plan.retained.has(id)) absent.add(id);
-  }
-  const ids = [...absent];
-  for (let i = 0; i < ids.length; i += BATCH_SIZE)
-    await store.putIds(
-      `withdraw:${i / BATCH_SIZE}`,
-      ids.slice(i, i + BATCH_SIZE),
-    );
-  job.withdrawals = ids.length;
-  await store.saveJob(job);
-  return true;
+  return { total: products.length, eligible, complete, rejected, batches };
 }
 
 async function submitBackfillBatch(
-  verb: "put" | "delete",
-  index: number,
-  items: UpsertProductListingData[] | WithdrawProductListingData[],
+  batch: BackfillBatch,
   context: BackfillContext,
 ): Promise<string[]> {
   try {
     return await sendProductBatch(
-      items,
+      batch.items,
       context.apiBaseUrl,
       context.listingSourceId,
       context.accessToken,
-      verb,
-      createBackfillIdempotencyKey(context.bulkOperationId, verb, index),
+      batch.verb,
+      createBackfillIdempotencyKey(
+        context.bulkOperationId,
+        batch.verb,
+        batch.index,
+      ),
     );
   } catch (error) {
     console.error(
-      `Backfill ${verb} batch ${index} failed:`,
+      `Backfill ${batch.verb} batch ${batch.index} failed:`,
       error instanceof Error ? error.message : "unknown error",
     );
-    return items.map((item) => item.sourceListingId);
+    return batch.items.map((item) => item.sourceListingId);
   }
 }
 
-// Runs one bounded step of an import. Progress is saved after every page and
-// batch, so an interrupted step resumes where it stopped and a replayed batch
-// reuses its idempotency key and content. Throws on Shopify read errors.
-//
-// Selected products are upserted. Withdrawals are submitted only for a
-// verified complete selection: this source's existing listings that are
-// absent from it are withdrawn, so a valid empty selection withdraws all of
-// them. Bulk writes are not ordered against concurrent listing webhooks; a
-// fresh complete import repairs any overlap.
+// Runs one bounded step of an import. `checkpoint` persists the job after
+// every admitted batch, so an interrupted step resumes at the next batch and
+// a replayed batch reuses its idempotency key. Throws on Shopify read errors.
 export async function runCatalogImportStep(
   job: CatalogImportJob,
   context: BackfillContext,
   graphqlRequest: GraphqlRequestFn,
   deadline: number,
-  store: CatalogImportStore,
+  checkpoint: (job: CatalogImportJob) => Promise<void>,
 ): Promise<{ done: boolean; status: Omit<CatalogImportStatus, "updatedAt"> }> {
   const result =
     job.result ??
@@ -1054,7 +962,7 @@ export async function runCatalogImportStep(
   }
   if (!job.result) {
     job.result = result;
-    await store.saveJob(job);
+    await checkpoint(job);
   }
 
   const plan = planBackfill(
@@ -1062,91 +970,39 @@ export async function runCatalogImportStep(
     result.rootObjectCount,
     context,
   );
-  if (job.cursor === 0 && job.listingPages === 0 && plan.rejected.length > 0) {
+  if (job.cursor === 0 && plan.rejected.length > 0) {
     console.error(
       `Backfill cannot classify or map ${plan.rejected.length} Shopify products: ${plan.rejected.slice(0, 50).join(", ")}`,
     );
   }
-  const counts = () => ({
+  while (job.cursor < plan.batches.length && Date.now() < deadline) {
+    const batch = plan.batches[job.cursor];
+    const failures = await submitBackfillBatch(batch, context);
+    job.failed += failures.length;
+    if (batch.verb === "delete")
+      job.withdrawn += batch.items.length - failures.length;
+    job.cursor++;
+    await checkpoint(job);
+  }
+
+  const counts = {
     total: plan.total,
     eligible: plan.eligible,
     withdrawn: job.withdrawn,
     failed: job.failed + plan.rejected.length,
-  });
-
-  if (
-    plan.complete &&
-    job.withdrawals === undefined &&
-    !job.enumerationFailed
-  ) {
-    try {
-      if (
-        !(await retainAbsentListingWithdrawals(
-          job,
-          context,
-          plan,
-          deadline,
-          store,
-        ))
-      )
-        return { done: false, status: { phase: "processing", ...counts() } };
-    } catch (error) {
-      if (!(error instanceof ListingReadError)) throw error;
-      // Without the complete existing-ID enumeration nothing is withdrawn.
-      console.error("Backfill cannot read existing listings:", error.message);
-      job.enumerationFailed = true;
-      await store.saveJob(job);
-    }
-  }
-
-  const upsertBatches = Math.ceil(plan.upserts.length / BATCH_SIZE);
-  const batches =
-    upsertBatches + Math.ceil((job.withdrawals ?? 0) / BATCH_SIZE);
-  while (job.cursor < batches && Date.now() < deadline) {
-    if (job.cursor < upsertBatches) {
-      const index = job.cursor;
-      const items = plan.upserts.slice(
-        index * BATCH_SIZE,
-        (index + 1) * BATCH_SIZE,
-      );
-      job.failed += (
-        await submitBackfillBatch("put", index, items, context)
-      ).length;
-    } else {
-      const index = job.cursor - upsertBatches;
-      const items = (await store.getIds(`withdraw:${index}`)).map(
-        (sourceListingId) => ({ sourceListingId }),
-      );
-      const failures = await submitBackfillBatch(
-        "delete",
-        index,
-        items,
-        context,
-      );
-      job.failed += failures.length;
-      job.withdrawn += items.length - failures.length;
-    }
-    job.cursor++;
-    await store.saveJob(job);
-  }
-
-  if (job.cursor < batches)
-    return { done: false, status: { phase: "processing", ...counts() } };
-  // Unknown membership, a truncated export or an unread enumeration is never
-  // reported as a complete reconciliation.
-  const error = !plan.complete
-    ? "INCOMPLETE_EXPORT"
-    : job.enumerationFailed
-      ? "RECONCILIATION_FAILED"
-      : undefined;
-  const status = counts();
-  return {
-    done: true,
-    status:
-      error || status.failed
-        ? { phase: "failed", ...status, ...(error && { error }) }
-        : { phase: "submitted", ...status },
   };
+  if (job.cursor < plan.batches.length)
+    return { done: false, status: { phase: "processing", ...counts } };
+  // Unknown membership or a truncated export is never a complete catalog.
+  return plan.complete
+    ? {
+        done: true,
+        status: { phase: counts.failed ? "failed" : "submitted", ...counts },
+      }
+    : {
+        done: true,
+        status: { phase: "failed", ...counts, error: "INCOMPLETE_EXPORT" },
+      };
 }
 
 // ---------------------------------------------------------------------------

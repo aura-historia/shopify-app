@@ -141,9 +141,6 @@ describe("Aura channel selection in the embedded home", () => {
     });
     assert.match(html, /5 Shopify products checked/);
     assert.match(html, /3 published to Aura Historia\s+submitted/);
-    assert.match(
-      html,
-      /2 listings no longer\s+published to the channel withdrawn/,
-    );
+    assert.match(html, /2 unpublished or\s+inactive products withdrawn/);
   });
 });

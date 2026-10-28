@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   type CatalogImportJob,
-  type CatalogImportStore,
   clearBackfillContext,
   type GraphqlRequestFn,
   loadBackfillContext,
@@ -19,15 +18,12 @@ export const CATALOG_MAX_ATTEMPTS = 6;
 // so large catalogs are bounded per step and resume after interruptions.
 export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
   // Duplicate completion webhooks never restart or fork an admitted import.
-  // A new import discards the retained data of a superseded one.
   async start(shop: string, bulkOperationId: string) {
     const job = await this.ctx.storage.get<CatalogImportJob>("job");
     if (job?.bulkOperationId !== bulkOperationId) {
-      await this.ctx.storage.deleteAll();
       await this.ctx.storage.put<CatalogImportJob>("job", {
         shop,
         bulkOperationId,
-        listingPages: 0,
         cursor: 0,
         failed: 0,
         withdrawn: 0,
@@ -37,18 +33,6 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     await this.ctx.storage.setAlarm(Date.now());
   }
 
-  private store(): CatalogImportStore {
-    return {
-      saveJob: (job) => this.ctx.storage.put("job", job),
-      putIds: (key, ids) => this.ctx.storage.put(key, ids),
-      getIds: async (key) => {
-        const ids = await this.ctx.storage.get<string[]>(key);
-        if (!ids) throw new Error(`Missing retained catalog data ${key}`);
-        return ids;
-      },
-    };
-  }
-
   async alarm() {
     const job = await this.ctx.storage.get<CatalogImportJob>("job");
     if (!job) return;
@@ -56,7 +40,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     // newer import replaces or clears it and thereby stops this job.
     const context = await loadBackfillContext(this.env.KV, job.shop);
     if (context?.bulkOperationId !== job.bulkOperationId) {
-      await this.ctx.storage.deleteAll();
+      await this.ctx.storage.delete("job");
       return;
     }
     // Shopify reads share the coordinator's serialized offline token refresh.
@@ -73,7 +57,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         context,
         graphql,
         Date.now() + CATALOG_STEP_BUDGET_MS,
-        this.store(),
+        (next) => this.ctx.storage.put("job", next),
       );
       job.attempts = 0;
     } catch (error) {
@@ -105,7 +89,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
       await this.ctx.storage.setAlarm(Date.now() + 1000);
       return;
     }
-    await this.ctx.storage.deleteAll();
+    await this.ctx.storage.delete("job");
     if (
       (await loadBackfillContext(this.env.KV, job.shop))?.bulkOperationId ===
       job.bulkOperationId

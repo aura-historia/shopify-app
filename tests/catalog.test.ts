@@ -156,7 +156,7 @@ describe("release catalog behavior", () => {
       null,
     );
     for (const inconsistent of [
-      { failed: -1 },
+      { failed: 2 },
       { eligible: 2 },
       { error: "PRIVATE_DIAGNOSTICS" },
       { withdrawn: -1 },
@@ -198,26 +198,6 @@ describe("release catalog behavior", () => {
     assert.equal(status?.eligible, 1);
     assert.equal(status?.withdrawn, 3);
     assert.equal(status?.error, "INCOMPLETE_EXPORT");
-  });
-  it("keeps withdrawal failures of listings outside the Shopify export", async () => {
-    // An empty shop can still fail to withdraw this source's old listings.
-    const status = await loadCatalogImportStatus(
-      {
-        get: async () =>
-          JSON.stringify({
-            phase: "failed",
-            total: 0,
-            failed: 3,
-            eligible: 0,
-            withdrawn: 2,
-            error: "RECONCILIATION_FAILED",
-            updatedAt: new Date().toISOString(),
-          }),
-      } as never,
-      shop,
-    );
-    assert.equal(status?.failed, 3);
-    assert.equal(status?.error, "RECONCILIATION_FAILED");
   });
   it("retries rapid status writes after KV's per-key write window", async () => {
     const writes: { value: string; time: number }[] = [];

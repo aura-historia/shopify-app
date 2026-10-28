@@ -95,52 +95,48 @@ Merchants choose which products appear on Aura Historia by publishing them to th
 - **Initial import, “Import catalog again” and retries** share one bulk export. It resolves the current installation's publication (`currentAppInstallation.publication`) and reads `publishedOnPublication(publicationId: …)` for every product. An `ACTIVE` product is upserted only when that membership is explicitly `true`, and withdrawn when it is `false`. A missing value is unknown: the product is reported as a failure and the import is not complete. `DRAFT`/`ARCHIVED` products are withdrawn and other statuses are ignored, as before. Source listing IDs remain Shopify numeric product IDs.
 - **Missing access or publication.** Before exporting, the app verifies that `read_product_listings` (or `write_product_listings`) was actually granted to the installation, using a separate `accessScopes` query. It also verifies that the publication exists. If either check fails or the read fails, no export runs and the embedded app shows a retryable failure. There is never a fallback to all active products, `onlineStoreUrl`, Online Store publishing or an aggregate count. Every processing step checks the scope and publication again before writing; a changed publication discards the snapshot.
 
-### Reconciliation
+### Withdrawals
 
-Withdrawals follow the source-scoped reconciliation contract of [aura-historia/backend#2573](https://github.com/aura-historia/backend/pull/2573), using the existing canonical asynchronous upsert and withdrawal endpoints:
+Imports withdraw only products that are in the Shopify export and known to be ineligible: `DRAFT`/`ARCHIVED` products and `ACTIVE` products not published to the channel, each by its own Shopify product ID. Withdrawing a product that was never imported is a no-op downstream. Aura listings are never read or withdrawn because they are absent from the export.
 
-- Withdrawals require a complete selection. That means Shopify reported `COMPLETED` without an error code, the number of product rows equals the operation's `rootObjectCount`, and every membership read was explicit. Otherwise only the known eligible products are upserted, nothing is withdrawn and the import is reported as `INCOMPLETE_EXPORT`.
-- After a complete selection, the app reads this source's `ACTIVE` listings through the partner listing query. It withdraws every listing that is not in the selection, in batches of at most 100. Products with statuses that imports ignore keep their listings. A valid empty selection withdraws all of the source's listings and never affects another source.
-- If the existing listings cannot be read, nothing is withdrawn. Selected products are still upserted, and the import is reported as `RECONCILIATION_FAILED` with a retry.
-
-The existing-ID enumeration and the ordered withdrawal batches are retained until every batch has been submitted. A replayed batch is resent unchanged under its original key. “Import catalog again” recomputes the selection under new keys.
+An import is reported complete only when Shopify reported `COMPLETED` without an error code, the number of product rows equals the operation's `rootObjectCount`, and every membership read was explicit. Otherwise the import is reported as failed with a retry.
 
 ### Resumable processing
 
 `bulk_operations/finish` only admits the export to the per-shop `CatalogImporter` Durable Object (`CATALOG_IMPORTER` binding, `catalog-importer-v1` SQLite migration). The webhook returns 503 if admission fails, so Shopify retries. Duplicate deliveries do not restart an admitted import.
 
-Alarms process the export in steps of at most 20 seconds. They checkpoint after every listing page and every batch, so an evicted or failed step resumes where it stopped. Idempotency keys are `shopify-backfill-<operation>-<put|delete>-<index>`. Failed Shopify reads are retried with exponential backoff, at most six times, before the import is reported as failed.
+Alarms process the export in steps of at most 20 seconds and checkpoint after every batch of 100. An evicted or failed step resumes at the next batch, and a batch whose checkpoint was lost is resent with its original idempotency key: `shopify-backfill-<operation>-<put|delete>-<index>`. Failed Shopify reads are retried with exponential backoff, at most six times, before the import is reported as failed.
 
-The job stores no credentials. It reads the Aura access token from the backfill context in KV, so disconnect, uninstall or a newer import stops it. Its retained data is discarded when the import finishes or is superseded.
+The job stores no credentials. It reads the Aura access token from the backfill context in KV, so disconnect, uninstall or a newer import stops it. “Import catalog again” starts a new export.
 
 ### Ordering with live listing events
 
-Bulk writes and listing webhooks have no shared ordering guarantee:
+Bulk writes use the existing canonical asynchronous upsert and withdrawal endpoints without ordering metadata. They have no shared ordering guarantee with listing webhooks:
 
 - An import that overlaps an unpublish can restore the removed product.
 - An older withdrawal batch can withdraw a product that was republished later.
 
-That state can persist until a fresh complete import repairs it; a later webhook is not guaranteed. Idempotency keys only prevent duplicate application, and do not order bulk writes against webhooks. Webhook ordering by `X-Shopify-Triggered-At` and deletion barriers remain backend concerns.
+“Import catalog again” repairs such a state. Idempotency keys prevent duplicate application only; they do not order bulk writes against webhooks.
 
 ### Counts and status
 
 - The channel count is Shopify's `includedProductsCount` for active products selected for the channel. It can include products scheduled for later publication and is not an import count.
-- “Last import” reports the Shopify products checked, the eligible products submitted, the admitted withdrawals of existing listings absent from the selection, and failures.
+- “Last import” reports the Shopify products checked, the eligible products submitted, the admitted withdrawals of unpublished or inactive products, and failures.
 - Acceptance by Aura Historia means queue admission. Search visibility follows asynchronously and still applies product-status rules.
 - Missing permissions, a missing publication and incomplete exports remain visible as failures with a retry. They are never shown as a successful zero-product import.
 
 ### Rollout
 
-There are no active installations yet, so no existing shops need to be migrated.
+There are no active installations yet, so nothing is migrated.
 
-1. Deploy backend listing-event support ([aura-historia/backend#2573](https://github.com/aura-historia/backend/pull/2573)), following its Shopify channel cutover runbook. Do not release this Shopify configuration earlier: without backend routing, live product sync does not work.
+1. Deploy backend listing-event support ([aura-historia/backend#2573](https://github.com/aura-historia/backend/pull/2573)). Do not release this Shopify configuration earlier: without backend routing, live product sync does not work.
 2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration.
 3. Verify the following:
    - Selected and unselected products.
    - Publication-only removal and restoration.
    - Title, image, price and stock updates.
    - Draft, archive, delete and reactivation.
-   - An import that overlaps a publication change, repaired by a fresh import.
+   - An import that overlaps a publication change, repaired by importing again.
 
 ## Local development
 
