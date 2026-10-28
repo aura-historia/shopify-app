@@ -122,6 +122,18 @@ const PRIVATE_RETENTION = 7 * 86_400_000;
 const DELIVERY_RETENTION = 48 * 3600_000;
 const credentialVersion = (record: ShopCredentialsRecord) =>
   record.connectionId ?? record.updatedAt;
+// The protected record stays readable until a disconnect, uninstall or new
+// authorization replaces it. A stopped binding of the same version, or its
+// queued revocation, means it no longer acts for the shop: nothing revives it.
+const retired = (state: CoordinatorState, record: ShopCredentialsRecord) =>
+  Boolean(
+    (state.stopped &&
+      state.binding?.credentialVersion === credentialVersion(record)) ||
+      [state.cleanup, ...(state.cleanupQueue ?? [])].some(
+        (job) =>
+          job?.revoke && job.credentialVersion === credentialVersion(record),
+      ),
+  );
 
 const idle = (): ShippingStatus => ({
   phase: "idle",
@@ -297,11 +309,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       )
         return false;
       const state = await this.load();
-      if (
-        state.stopped &&
-        state.binding?.credentialVersion === credentialVersion(credentials)
-      )
-        return false;
+      if (retired(state, credentials)) return false;
       if (
         state.job?.publication?.retainUntil &&
         state.job.publication.retainUntil <= Date.now()
@@ -458,36 +466,44 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     });
   }
 
-  // Called by the authenticated OAuth callback before replacing a connection.
-  // The same durable gate fences old publication and catalog token refresh.
-  async prepareConnection(shop: string) {
+  // Whether the stored record is one this coordinator stopped or revokes.
+  async connectionRetired(shop: string) {
     return this.serialize(async () => {
-      const state = await this.load();
       const credentials = await loadShopCredentials(this.env.KV, shop);
-      if (credentials && state.binding && !state.stopped)
-        await this.startCleanup(state, shop, credentials, false, true);
-      state.stopped = true;
-      state.job = undefined;
-      state.reconcileAt = undefined;
-      await this.ctx.storage.setAlarm(Date.now() + 1000);
-      await this.save(state);
+      return Boolean(credentials && retired(await this.load(), credentials));
     });
   }
 
+  // Called by the OAuth callback only after the new grant configured the
+  // provider. The current record and binding stay untouched until the new
+  // record is stored, so a failed replacement leaves them running. The old
+  // binding's stop, cleanup and revocation then commit with the new binding
+  // in this one serialized step, and overlapping callbacks each replace
+  // whichever connection is current when they run.
   async saveConnection(shop: string, values: ShopCredentialsValues) {
     return this.serialize(async () => {
-      const record = await saveShopCredentials(this.env.KV, shop, values);
-      await clearShopCredentialsDisconnected(this.env.KV, shop);
       const state = await this.load();
+      const previous = await loadShopCredentials(this.env.KV, shop);
+      // The old token is copied to cleanup storage before its record is
+      // overwritten.
+      const cleanup =
+        previous && state.binding && !state.stopped
+          ? await this.startCleanup(state, shop, previous, false, true)
+          : undefined;
+      let record: ShopCredentialsRecord;
+      try {
+        await clearShopCredentialsDisconnected(this.env.KV, shop);
+        record = await saveShopCredentials(this.env.KV, shop, values);
+      } catch (error) {
+        // Nothing was replaced; the previous binding keeps its work.
+        if (cleanup)
+          await this.env.KV.delete(cleanup.credentialKey).catch(() => {});
+        throw error;
+      }
       state.job = undefined;
+      state.reconcileAt = undefined;
       state.seenHintVersion =
         (await this.ctx.storage.get<number>("hintVersion")) ?? 0;
-      state.stopped = false;
-      state.binding = {
-        shop,
-        listingSourceId: record.listingSourceId,
-        credentialVersion: credentialVersion(record),
-      };
       // A reconnect always performs new acquisition, never relabels old data.
       this.enqueue(state, shop, record, true);
       await this.ctx.storage.setAlarm(Date.now() + 1000);
@@ -562,6 +578,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     state.job = undefined;
     state.status.cleanup = "pending";
     state.status.tokenRevoked = false;
+    return cleanup;
   }
 
   async disconnectShipping(shop: string, erase = false) {
@@ -692,6 +709,15 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         // days. Hints require a binding and can never recreate erased state.
         if (state.eraseAt && state.eraseAt > Date.now()) {
           await this.ctx.storage.setAlarm(state.eraseAt);
+          return;
+        }
+        // Erasure would lift the fence of a record that is still stored.
+        // Disconnect, uninstall or a new authorization wakes this again.
+        const credentials =
+          state.binding &&
+          (await loadShopCredentials(this.env.KV, state.binding.shop));
+        if (credentials && retired(state, credentials)) {
+          await this.ctx.storage.deleteAlarm();
           return;
         }
         await this.ctx.storage.deleteAll();

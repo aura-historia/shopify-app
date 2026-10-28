@@ -45,6 +45,7 @@ import {
 type IntegrationStatus =
   | "connected"
   | "disconnected"
+  | "stopped"
   | "not_connected"
   | "failed"
   | "config_missing";
@@ -71,7 +72,16 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     session.shop,
   );
   const disconnectedByAction = url.searchParams.get("disconnect") === "success";
-  const credentials = disconnectedByAction ? null : storedCredentials;
+  // A stored record is not a usable connection once the coordinator stopped
+  // it or queued its revocation. Only a new authorization replaces it.
+  const connectionStopped =
+    !disconnectedByAction &&
+    storedCredentials !== null &&
+    (await shopCoordinator(context, session.shop).connectionRetired(
+      session.shop,
+    ));
+  const credentials =
+    disconnectedByAction || connectionStopped ? null : storedCredentials;
   const oauthResult = url.searchParams.get("oauth");
   const manualConnect = url.searchParams.get("manual_connect") === "1";
   const manuallyDisconnected = credentials
@@ -114,7 +124,9 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
         ? "config_missing"
         : oauthResult === "failed"
           ? "failed"
-          : "not_connected";
+          : connectionStopped
+            ? "stopped"
+            : "not_connected";
   const backfill = url.searchParams.get("backfill");
 
   return {
@@ -139,6 +151,8 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
         .filter(Boolean) ?? [],
     integration: {
       status,
+      // A failed authorization never replaces the current connection.
+      replacementFailed: Boolean(credentials) && oauthResult === "failed",
       error: url.searchParams.get("oauth_error"),
       disconnectError: url.searchParams.get("disconnect_error"),
       disconnected: disconnectedByAction,
@@ -177,7 +191,12 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
       context.cloudflare.env.KV,
       session.shop,
     );
-    if (!credentials) {
+    if (
+      !credentials ||
+      (await shopCoordinator(context, session.shop).connectionRetired(
+        session.shop,
+      ))
+    ) {
       redirectParams.set("backfill", "not_queued");
       return redirect(`/app?${redirectParams.toString()}`);
     }
@@ -279,11 +298,13 @@ export default function AppIndex() {
       ? "Connection temporarily unavailable"
       : integration.status === "disconnected"
         ? "Disconnected"
-        : integration.status === "failed"
-          ? "OAuth connection failed"
-          : "Ready to connect";
+        : integration.status === "stopped"
+          ? "Connection stopped"
+          : integration.status === "failed"
+            ? "OAuth connection failed"
+            : "Ready to connect";
   const connectButtonLabel =
-    integration.status === "disconnected"
+    integration.status === "disconnected" || integration.status === "stopped"
       ? "Reconnect Aura Historia"
       : integration.status === "failed"
         ? "Retry Aura Historia connection"
@@ -300,7 +321,9 @@ export default function AppIndex() {
                 ? "success"
                 : integration.status === "failed"
                   ? "critical"
-                  : "info"
+                  : integration.status === "stopped"
+                    ? "warning"
+                    : "info"
             }
           >
             <s-paragraph>
@@ -326,6 +349,21 @@ export default function AppIndex() {
               The connection could not finish. Try connecting again or contact
               support.
             </s-paragraph>
+          )}
+          {integration.status === "stopped" && (
+            <s-paragraph>
+              Synchronization has stopped for the stored connection, and its
+              authorization may already be revoked. Reconnect Aura Historia to
+              authorize a new connection.
+            </s-paragraph>
+          )}
+          {integration.replacementFailed && (
+            <s-banner tone="warning" heading="New authorization not completed">
+              <s-paragraph>
+                The new Aura Historia authorization could not finish. The
+                existing connection remains active.
+              </s-paragraph>
+            </s-banner>
           )}
           <s-stack direction="inline" gap="base">
             {isConnected ? (

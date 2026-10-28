@@ -133,10 +133,10 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
         shopifyStoreName,
       },
       config,
+      // The current connection keeps running until the coordinator replaces
+      // it with the persisted record. A failure up to then revokes only the
+      // new grant.
       async () => {
-        await shopCoordinator(context, shopDomain).prepareConnection(
-          shopDomain,
-        );
         const graphqlRequest = offlineGraphql(context, shopDomain);
         const metadata = await configureShopifyListingSource(
           graphqlRequest,
