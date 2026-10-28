@@ -74,7 +74,7 @@ describe("catalog progress in the embedded home", () => {
 });
 
 describe("Aura channel selection in the embedded home", () => {
-  it("labels Shopify's selected count and links the channel's bulk editor", () => {
+  it("labels Shopify's published count and links the channel's bulk editor", () => {
     const html = renderHome(null, "", {
       publication: {
         state: "ready",
@@ -86,9 +86,9 @@ describe("Aura channel selection in the embedded home", () => {
     });
     assert.match(
       html,
-      /12 active products are selected for the Aura Historia channel/,
+      /12 active products are published to the Aura Historia channel/,
     );
-    assert.match(html, /scheduled for later publication/);
+    assert.match(html, /not an import count/);
     assert.match(html, /Manage products in Shopify bulk editor/);
     assert.match(html, /unpublishing withdraws it/);
   });
@@ -112,6 +112,39 @@ describe("Aura channel selection in the embedded home", () => {
       publication: { state: "missing_publication" },
     });
     assert.match(html, /Sales channel not found/);
+  });
+  it("offers setup instead of product selection without a channel connection", () => {
+    const html = renderHome(null, "not_queued", {
+      publication: { state: "missing_channel" },
+      catalogImport: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "MISSING_CHANNEL",
+      },
+    });
+    assert.match(html, /Sales channel not set up/);
+    assert.match(html, /Import the catalog again to set it up/);
+    assert.match(html, /Import catalog again/);
+    assert.doesNotMatch(html, /Manage products in Shopify bulk editor/);
+    assert.doesNotMatch(html, /Last import/);
+  });
+  it("explains a channel Shopify refused as a retryable failure", () => {
+    const html = renderHome(null, "not_queued", {
+      publication: { state: "missing_channel" },
+      catalogImport: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "CHANNEL_REJECTED",
+      },
+    });
+    assert.match(html, /Catalog import needs attention/);
+    assert.match(
+      html,
+      /Shopify did not accept the Aura Historia sales channel/,
+    );
+    assert.match(html, /Review your Shopify markets/);
   });
   it("explains an incomplete export as a retryable failure", () => {
     const html = renderHome(null, "", {

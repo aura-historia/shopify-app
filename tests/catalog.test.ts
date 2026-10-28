@@ -12,38 +12,27 @@ import {
   saveCatalogImportStatus,
 } from "../app/catalog.server";
 import { exactMoney } from "../app/shipping/mapper";
+import {
+  boundChannel,
+  channelGraphql,
+  channelListingSourceId,
+} from "./helpers/channel-fixtures";
 
-const granted = [
-  { handle: "read_products" },
-  { handle: "read_product_listings" },
-];
-
-// The Admin client throws on GraphQL errors; scopes and the publication are
-// read by separate queries.
-function channelGraphql(
-  scopes: unknown,
-  publication: unknown,
-): GraphqlRequestFn {
-  return async (query) => {
-    if (query.includes("AuraChannelAccess")) {
-      assert.doesNotMatch(query, /publication/);
-      return { data: { currentAppInstallation: { accessScopes: scopes } } };
-    }
-    assert.match(query, /AuraChannelPublication/);
-    if (publication instanceof Error) throw publication;
-    return { data: { currentAppInstallation: { publication } } };
-  };
-}
+const granted = ["read_products", "read_product_listings"];
+const listingSourceId = channelListingSourceId;
 
 describe("release catalog behavior", () => {
   const shop = "example.myshopify.com";
-  it("reports channel-specific publication counts and an editor scoped to that publication", async () => {
+  it("reports the channel's published count and an editor scoped to its publication", async () => {
     const publication = await getChannelPublication(
-      channelGraphql(granted, {
-        id: "gid://shopify/Publication/123",
-        includedProductsCount: { count: 10000, precision: "AT_LEAST" },
+      channelGraphql({
+        channel: boundChannel({
+          productsCount: { count: 10000, precision: "AT_LEAST" },
+        }),
+        publication: { id: "gid://shopify/Publication/123" },
       }),
       shop,
+      listingSourceId,
     );
     assert.equal(publication.state, "ready");
     if (publication.state !== "ready") return;
@@ -53,13 +42,16 @@ describe("release catalog behavior", () => {
     assert.equal(url.origin, "https://admin.shopify.com");
     assert.equal(url.searchParams.get("edit"), "publications.123.published_at");
   });
-  it("keeps the editor link when only the selected count is unavailable", async () => {
+  it("keeps the editor link when only the published count is unavailable", async () => {
     const publication = await getChannelPublication(
-      channelGraphql(granted, {
-        id: "gid://shopify/Publication/123",
-        includedProductsCount: { count: -1, precision: "EXACT" },
+      channelGraphql({
+        channel: boundChannel({
+          productsCount: { count: -1, precision: "EXACT" },
+        }),
+        publication: { id: "gid://shopify/Publication/123" },
       }),
       shop,
+      listingSourceId,
     );
     assert.equal(publication.state, "ready");
     if (publication.state !== "ready") return;
@@ -67,60 +59,110 @@ describe("release catalog behavior", () => {
     assert.equal(publication.atLeast, false);
     assert.match(publication.editorUrl, /publications\.123\.published_at/);
   });
-  it("never turns unavailable or malformed publication data into a zero count", async () => {
+  it("counts only active products published to the channel", async () => {
+    const queries: string[] = [];
+    await getChannelPublication(
+      async (query, variables) => {
+        queries.push(query);
+        return channelGraphql()(query, variables);
+      },
+      shop,
+      listingSourceId,
+    );
+    assert.match(
+      queries.find((query) => query.includes("AuraChannelConnection")) ?? "",
+      /productsCount\(query: "status:active"\)/,
+    );
+  });
+  it("never turns unavailable or malformed channel data into a zero count", async () => {
     for (const graphql of [
       async () => ({ data: undefined }),
       async () => ({ data: {} }),
-      channelGraphql(undefined, { id: "gid://shopify/Publication/1" }),
-      channelGraphql(granted, undefined),
-      channelGraphql(granted, {
-        id: "untrusted",
-        includedProductsCount: { count: 0 },
+      channelGraphql({ channel: new Error("private provider diagnostics") }),
+      channelGraphql({ channel: { id: "untrusted" } }),
+      channelGraphql({ publication: { id: "gid://shopify/Channel/1" } }),
+      channelGraphql({
+        publication: new Error("private provider diagnostics"),
       }),
-      channelGraphql(granted, new Error("private provider diagnostics")),
-    ]) {
-      assert.deepEqual(await getChannelPublication(graphql, shop), {
-        state: "unavailable",
-      });
+    ] as GraphqlRequestFn[]) {
+      assert.deepEqual(
+        await getChannelPublication(graphql, shop, listingSourceId),
+        { state: "unavailable" },
+      );
     }
     assert.deepEqual(
-      await getChannelPublication(async () => {
-        throw new Error("private provider diagnostics");
-      }, shop),
+      await getChannelPublication(
+        async () => {
+          throw new Error("private provider diagnostics");
+        },
+        shop,
+        listingSourceId,
+      ),
       { state: "unavailable" },
     );
   });
-  it("distinguishes missing access, a missing publication and failed reads", async () => {
-    // A missing grant is reported even when the publication read would fail.
-    for (const publication of [
-      { id: "gid://shopify/Publication/1" },
-      new Error("Access denied"),
-    ]) {
+  it("distinguishes missing access, connection, publication and failed reads", async () => {
+    // A missing grant is reported even when the channel reads would fail.
+    for (const channel of [boundChannel(), new Error("Access denied")]) {
       assert.deepEqual(
         await resolveChannelPublication(
-          channelGraphql([{ handle: "read_products" }], publication),
+          channelGraphql({ scopes: ["read_products"], channel }),
+          listingSourceId,
         ),
         { state: "missing_scope" },
       );
     }
+    // No connection, or one bound to another listing source or specification,
+    // selects nothing for this source.
+    for (const channel of [
+      null,
+      boundChannel({ accountId: `ls_${"1".repeat(26)}` }),
+      boundChannel({ specificationHandle: null }),
+    ]) {
+      assert.deepEqual(
+        await resolveChannelPublication(
+          channelGraphql({ channel }),
+          listingSourceId,
+        ),
+        { state: "missing_channel" },
+      );
+    }
     assert.deepEqual(
-      await resolveChannelPublication(channelGraphql(granted, null)),
+      await resolveChannelPublication(
+        channelGraphql({ publication: null }),
+        listingSourceId,
+      ),
       { state: "missing_publication" },
     );
     assert.deepEqual(
       await resolveChannelPublication(
-        channelGraphql(granted, new Error("Internal error")),
+        channelGraphql({ channel: new Error("Internal error") }),
+        listingSourceId,
       ),
       { state: "unavailable" },
     );
-    for (const scopes of [granted, [{ handle: "write_product_listings" }]]) {
+    for (const scopes of [granted, ["write_product_listings"]]) {
       assert.deepEqual(
         await resolveChannelPublication(
-          channelGraphql(scopes, { id: "gid://shopify/Publication/1" }),
+          channelGraphql({
+            scopes,
+            publication: { id: "gid://shopify/Publication/1" },
+          }),
+          listingSourceId,
         ),
         { state: "ready", publicationId: "gid://shopify/Publication/1" },
       );
     }
+  });
+  it("never reads the deprecated installation publication", async () => {
+    const queries: string[] = [];
+    await resolveChannelPublication(async (query, variables) => {
+      queries.push(query);
+      return channelGraphql()(query, variables);
+    }, listingSourceId);
+    assert.equal(queries.length, 3);
+    for (const query of queries)
+      assert.doesNotMatch(query, /currentAppInstallation\s*\{\s*publication/);
   });
   it("only exposes public catalog progress fields from stored state", async () => {
     const status = await loadCatalogImportStatus(

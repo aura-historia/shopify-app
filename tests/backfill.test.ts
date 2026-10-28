@@ -36,6 +36,12 @@ import {
   type ValidatedShopifyMetadata,
 } from "../app/backfill.server";
 import { loadCatalogImportStatus } from "../app/catalog.server";
+import {
+  boundChannel,
+  type ChannelState,
+  channelResponse,
+  isChannelQuery,
+} from "./helpers/channel-fixtures";
 
 const listingSourceId = `ls_${"0".repeat(26)}`;
 const apiBaseUrl = "https://api.test.com";
@@ -933,34 +939,28 @@ function jsonl(products: BulkJsonlProduct[]) {
   return products.map((product) => JSON.stringify(product)).join("\n");
 }
 
-// Shopify reads for one import step: the completed export, granted scopes and
-// the app publication.
+// Shopify reads for one import step: the completed export, granted scopes, the
+// channel connection and its publication.
 function stepGraphql({
   rootObjectCount = "0",
-  scopes = ["read_products", "read_product_listings"],
-  publication = { id: publicationId } as unknown,
-} = {}): GraphqlRequestFn {
+  ...channel
+}: { rootObjectCount?: string } & ChannelState = {}): GraphqlRequestFn {
   return async (query) =>
-    query.includes("AuraChannelAccess")
-      ? {
+    isChannelQuery(query)
+      ? channelResponse(query, {
+          publication: { id: publicationId },
+          ...channel,
+        })
+      : {
           data: {
-            currentAppInstallation: {
-              accessScopes: scopes.map((handle) => ({ handle })),
+            node: {
+              status: "COMPLETED",
+              objectCount: rootObjectCount,
+              rootObjectCount,
+              url: rootObjectCount === "0" ? null : resultUrl,
             },
           },
-        }
-      : query.includes("AuraChannelPublication")
-        ? { data: { currentAppInstallation: { publication } } }
-        : {
-            data: {
-              node: {
-                status: "COMPLETED",
-                objectCount: rootObjectCount,
-                rootObjectCount,
-                url: rootObjectCount === "0" ? null : resultUrl,
-              },
-            },
-          };
+        };
 }
 
 // Fake Shopify export download plus Aura async writes.
@@ -1242,6 +1242,19 @@ describe("catalog import steps", () => {
       "MISSING_SCOPE",
     ],
     [
+      "a removed channel connection",
+      stepGraphql({ rootObjectCount: "1", channel: null }),
+      "MISSING_CHANNEL",
+    ],
+    [
+      "a channel rebound to another listing source",
+      stepGraphql({
+        rootObjectCount: "1",
+        channel: boundChannel({ accountId: `ls_${"1".repeat(26)}` }),
+      }),
+      "MISSING_CHANNEL",
+    ],
+    [
       "a removed publication",
       stepGraphql({ rootObjectCount: "1", publication: null }),
       "MISSING_PUBLICATION",
@@ -1485,23 +1498,8 @@ describe("catalog import steps", () => {
   });
 });
 
-function publicationResponse(
-  scopes = ["read_products", "read_product_listings"],
-  publication: unknown = { id: publicationId },
-) {
-  return {
-    data: {
-      currentAppInstallation: {
-        accessScopes: scopes.map((handle) => ({ handle })),
-        publication,
-      },
-    },
-  };
-}
-
-const isChannelQuery = (query: string) =>
-  query.includes("AuraChannelAccess") ||
-  query.includes("AuraChannelPublication");
+const publicationResponse = (query: string, state: ChannelState = {}) =>
+  channelResponse(query, { publication: { id: publicationId }, ...state });
 
 describe("configureShopifyListingSource and triggerBackfill", () => {
   const validatedMetadata: ValidatedShopifyMetadata = {
@@ -1519,7 +1517,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
             },
           }
         : isChannelQuery(query)
-          ? publicationResponse()
+          ? publicationResponse(query)
           : {
               data: {
                 bulkOperationRunQuery: {
@@ -1571,7 +1569,8 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         );
         assert.equal(fetchMock.mock.callCount(), 1);
       });
-      assert.equal(graphql.mock.callCount(), 4);
+      // Metadata, the idempotent connection check, publication and export.
+      assert.equal(graphql.mock.callCount(), 7);
       const stored = await loadBackfillContext(kv as never, shopDomain);
       assert.ok(stored);
       assert.equal(stored.listingSourceId, listingSourceId);
@@ -1636,7 +1635,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
   it("submits bulk work without metadata fetch or provider PUT and does not invent locale", async () => {
     const kv = makeKv();
     const graphql = mock.fn(async (query: string) => {
-      if (isChannelQuery(query)) return publicationResponse();
+      if (isChannelQuery(query)) return publicationResponse(query);
       assert.match(query, /bulkOperationRunQuery/);
       return {
         data: {
@@ -1667,7 +1666,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       );
     });
     assert.equal(fetchMock.mock.callCount(), 0);
-    assert.equal(graphql.mock.callCount(), 3);
+    assert.equal(graphql.mock.callCount(), 6);
     const stored = await loadBackfillContext(kv as never, shopDomain);
     assert.ok(stored);
     assert.equal(stored.currencyCode, "JPY");
@@ -1681,7 +1680,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     const kv = makeKv();
     const graphql: GraphqlRequestFn = async (query) =>
       isChannelQuery(query)
-        ? publicationResponse()
+        ? publicationResponse(query)
         : { errors: "Already running" };
     assert.equal(
       await triggerBackfill(
@@ -1713,7 +1712,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       await triggerBackfill(
         async (query) =>
           isChannelQuery(query)
-            ? publicationResponse()
+            ? publicationResponse(query)
             : {
                 data: {
                   bulkOperationRunQuery: {
@@ -1740,25 +1739,43 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     );
   });
 
-  for (const [name, response, error] of [
+  const refuse = (query: string) =>
+    query.includes("AuraChannelCreate")
+      ? {
+          data: {
+            channelCreate: {
+              channel: null,
+              userErrors: [{ message: "Requires online store parity" }],
+            },
+          },
+        }
+      : publicationResponse(query, { channel: null });
+  for (const [name, respond, error] of [
     [
       "a missing read_product_listings grant",
-      publicationResponse(["read_products", "read_locales"]),
+      (query: string) =>
+        publicationResponse(query, {
+          scopes: ["read_products", "read_locales"],
+        }),
       "MISSING_SCOPE",
     ],
+    ["a refused channel connection", refuse, "CHANNEL_REJECTED"],
     [
       "a missing app publication",
-      publicationResponse(undefined, null),
+      (query: string) => publicationResponse(query, { publication: null }),
       "MISSING_PUBLICATION",
     ],
     [
-      "a failed publication read",
-      { errors: [{ message: "Throttled" }] },
+      "a failed channel read",
+      () => ({ errors: [{ message: "Throttled" }] }),
       "SHOPIFY_READ_FAILED",
     ],
     [
       "a malformed publication",
-      publicationResponse(undefined, { id: "gid://shopify/Channel/1" }),
+      (query: string) =>
+        publicationResponse(query, {
+          publication: { id: "gid://shopify/Channel/1" },
+        }),
       "SHOPIFY_READ_FAILED",
     ],
   ] as const) {
@@ -1769,7 +1786,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         await triggerBackfill(
           async (query) => {
             queries.push(query);
-            if (isChannelQuery(query)) return response;
+            if (isChannelQuery(query)) return respond(query);
             throw new Error("No bulk export without a verified publication");
           },
           kv as never,
@@ -1789,6 +1806,53 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       assert.equal(status?.total, 0);
     });
   }
+
+  it("sets up a missing channel connection before exporting its selection", async () => {
+    const kv = makeKv();
+    let channel: unknown = null;
+    const writes: unknown[] = [];
+    assert.equal(
+      await triggerBackfill(
+        async (query, variables) => {
+          if (query.includes("AuraChannelCreate")) {
+            writes.push(variables.input);
+            channel = boundChannel();
+            return { data: { channelCreate: { channel, userErrors: [] } } };
+          }
+          if (isChannelQuery(query))
+            return publicationResponse(query, { channel });
+          assert.match(query, /bulkOperationRunQuery/);
+          return {
+            data: {
+              bulkOperationRunQuery: {
+                bulkOperation: { id: bulkOperationId },
+                userErrors: [],
+              },
+            },
+          };
+        },
+        kv as never,
+        shopDomain,
+        listingSourceId,
+        accessToken,
+        apiBaseUrl,
+        validatedMetadata,
+      ),
+      true,
+    );
+    assert.deepEqual(writes, [
+      {
+        handle: "aura-historia",
+        specificationHandle: "aura-historia",
+        accountId: listingSourceId,
+        accountName: "Aura Historia",
+      },
+    ]);
+    assert.equal(
+      (await loadBackfillContext(kv as never, shopDomain))?.publicationId,
+      publicationId,
+    );
+  });
 });
 
 describe("backfill configuration", () => {

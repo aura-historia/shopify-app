@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
+import { loadCatalogImportStatus } from "../app/catalog.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
   getOAuthPendingContextStorageKey,
 } from "../app/oauth.server";
+import { channelResponse, isChannelQuery } from "./helpers/channel-fixtures";
 
 // Node cannot load the route's CSS module, which the loader does not use.
 registerHooks({
@@ -192,5 +194,155 @@ describe("Aura Historia OAuth callback error boundary", () => {
     assert.deepEqual(logged, [
       "Failed to revoke token after connection setup failure: OAuth token revocation failed (HTTP 401, OAUTH_INVALID_CLIENT_SECRET)",
     ]);
+  });
+});
+
+// A connected shop: Shopify Admin reads/writes behind the coordinator, Aura's
+// token and ingestion-configuration endpoints, and this app's one channel
+// connection on the shop.
+function connectedEnv({ refuseChannel = false } = {}) {
+  const shopify = {
+    channel: null as Record<string, unknown> | null,
+    created: 0,
+    exports: 0,
+  };
+  const graphql = async (
+    _shop: string,
+    query: string,
+    variables: Record<string, unknown>,
+  ) => {
+    if (query.includes("shopLocales"))
+      return {
+        data: {
+          shopLocales: [{ locale: "en", primary: true }],
+          shop: { currencyCode: "EUR" },
+        },
+      };
+    if (query.includes("AuraChannelCreate")) {
+      if (refuseChannel)
+        return {
+          data: {
+            channelCreate: {
+              channel: null,
+              userErrors: [
+                {
+                  message: "Channel specification requires online store parity",
+                },
+              ],
+            },
+          },
+        };
+      shopify.created++;
+      const input = variables.input as Record<string, unknown>;
+      shopify.channel = {
+        id: `gid://shopify/Channel/${shopify.created}`,
+        accountId: input.accountId,
+        specificationHandle: input.specificationHandle,
+      };
+      return {
+        data: { channelCreate: { channel: shopify.channel, userErrors: [] } },
+      };
+    }
+    if (isChannelQuery(query))
+      return channelResponse(query, { channel: shopify.channel });
+    assert.match(query, /bulkOperationRunQuery/);
+    shopify.exports++;
+    return {
+      data: {
+        bulkOperationRunQuery: {
+          bulkOperation: {
+            id: `gid://shopify/BulkOperation/${shopify.exports}`,
+          },
+          userErrors: [],
+        },
+      },
+    };
+  };
+  const coordinator = {
+    prepareConnection: async () => {},
+    saveConnection: async () => {},
+    requestShipping: async () => true,
+    graphql,
+  };
+  return {
+    shopify,
+    env: {
+      ...makeEnv(),
+      SHOP_COORDINATOR: { getByName: () => coordinator },
+    },
+  };
+}
+
+async function connect(env: ReturnType<typeof connectedEnv>["env"]) {
+  const started = await buildAuraHistoriaOAuthAuthorizeUrl(
+    env.KV as never,
+    env as never,
+    shopDomain,
+  );
+  assert.ok(started.isReady);
+  const url = new URL("https://partner-connect.test/oauth/callback");
+  url.searchParams.set("code", code);
+  url.searchParams.set("state", started.state);
+  url.searchParams.set("listing_source_id", listingSourceId);
+  const response = await loader({
+    request: new Request(url),
+    context: { cloudflare: { env } },
+    params: {},
+  } as never);
+  assert.ok(response instanceof Response);
+  return new URL(response.headers.get("Location") ?? "").searchParams;
+}
+
+describe("Aura Historia connection channel setup", () => {
+  beforeEach(() => {
+    logged = [];
+    for (const method of ["log", "info", "warn", "error"] as const) {
+      mock.method(console, method, (...args: unknown[]) => {
+        logged.push(args.map(String).join(" "));
+      });
+    }
+    mock.method(globalThis, "fetch", async (input: unknown) =>
+      String(input).endsWith("/token")
+        ? Response.json({ access_token: accessToken, token_type: "BEARER" })
+        : new Response(null, { status: 204 }),
+    );
+  });
+
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it("provisions the authorized source's channel before the initial import", async () => {
+    const { env, shopify } = connectedEnv();
+    const result = await connect(env);
+    assert.equal(result.get("oauth"), "connected");
+    assert.equal(result.get("backfill"), "queued");
+    assert.deepEqual(shopify.channel, {
+      id: "gid://shopify/Channel/1",
+      accountId: listingSourceId,
+      specificationHandle: "aura-historia",
+    });
+    assert.equal(shopify.exports, 1);
+  });
+
+  it("reuses the channel when the callback or connection is retried", async () => {
+    const { env, shopify } = connectedEnv();
+    await connect(env);
+    const retried = await connect(env);
+    assert.equal(retried.get("backfill"), "queued");
+    assert.equal(shopify.created, 1);
+    assert.equal(shopify.exports, 2);
+  });
+
+  it("keeps the connection but never reports a refused channel as importable", async () => {
+    const { env, shopify } = connectedEnv({ refuseChannel: true });
+    const result = await connect(env);
+    assert.equal(result.get("oauth"), "connected");
+    assert.equal(result.get("backfill"), "not_queued");
+    assert.equal(shopify.channel, null);
+    assert.equal(shopify.exports, 0);
+    const status = await loadCatalogImportStatus(env.KV as never, shopDomain);
+    assert.equal(status?.phase, "failed");
+    assert.equal(status?.error, "CHANNEL_REJECTED");
   });
 });
