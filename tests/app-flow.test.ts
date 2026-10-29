@@ -147,6 +147,8 @@ describe("public install flow", () => {
     assert.ok(marketingRoute.includes("read_product_listings"));
     assert.ok(marketingRoute.includes("customers/data_request"));
     assert.ok(marketingRoute.includes("read_locales"));
+    assert.ok(marketingRoute.includes("read_shipping"));
+    assert.ok(marketingRoute.includes("read_markets"));
     assert.ok(marketingRoute.includes("Shopify sales channel"));
     assert.ok(appIndexRoute.includes("https://aura-historia.com"));
     assert.ok(appIndexRoute.includes("contact@aura-historia.com"));

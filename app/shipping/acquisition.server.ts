@@ -3,7 +3,13 @@ import {
   type Acquisition,
   type Connection,
   type Country,
+  isRegionMarket,
+  type Market,
+  type MarketOption,
+  type MarketRate,
+  type MarketRegion,
   type Method,
+  type Money,
   type Profile,
   SHIPPING_LIMITS,
   ShippingReadError,
@@ -13,6 +19,28 @@ const PAGE = "pageInfo { hasNextPage endCursor }";
 const PROFILE = `id name version default coversAllItems originLocationCount locationsWithoutRatesCount
   sellingPlanGroups(first: 1) { nodes { id } }
   profileLocationGroups { locationGroup { id } }`;
+const MARKET = `id type status conditions { conditionTypes regionsCondition { applicationLevel } }
+  delivery { shipping { isEnabled } }`;
+const MONEY = "amount currencyCode";
+const TRANSIT = "transitTimeMinSeconds transitTimeMaxSeconds";
+const GROUP =
+  "id conditions { collectionsCount { count } originLocationsCount { count } }";
+// A second rate group always varies rates by collection or origin location,
+// so one group per option decides whether its rates are uniform.
+const OPTION = `__typename id isActive currency freeDeliveryMinimumValue { ${MONEY} }
+  ... on DeliveryFlatRateOptionDefinition { flatGroups: rateGroups(first: 1) {
+    nodes { ${GROUP} rate { id price { ${MONEY} } ${TRANSIT} } } ${PAGE} } }
+  ... on DeliveryValueBasedOptionDefinition { valueGroups: rateGroups(first: 1) {
+    nodes { ${GROUP} rates(first: ${SHIPPING_LIMITS.rateTiers}) {
+      nodes { id price { ${MONEY} } minValue { ${MONEY} } maxValue { ${MONEY} } ${TRANSIT} } ${PAGE} } } ${PAGE} } }
+  ... on DeliveryWeightBasedOptionDefinition { weightGroups: rateGroups(first: 1) { nodes { ${GROUP} } ${PAGE} } }
+  ... on DeliveryCarrierCalculatedOptionDefinition { carrierGroups: rateGroups(first: 1) { nodes { ${GROUP} } ${PAGE} } }`;
+const OPTION_KINDS: Record<string, MarketOption["kind"]> = {
+  DeliveryFlatRateOptionDefinition: "FLAT",
+  DeliveryValueBasedOptionDefinition: "VALUE",
+  DeliveryWeightBasedOptionDefinition: "WEIGHT",
+  DeliveryCarrierCalculatedOptionDefinition: "CARRIER",
+};
 type PagedTask<K extends string> = {
   [Kind in K]: { kind: Kind; after?: string };
 }[K];
@@ -36,19 +64,31 @@ export type ReadTask =
       product: string;
       after?: string;
     }
-  | (PagedTask<"variants" | "verifyProduct"> & { product: string });
+  | (PagedTask<"variants" | "verifyProduct"> & { product: string })
+  // A verifying market read rebuilds the configuration for comparison.
+  | { kind: "markets"; after?: string; verify?: boolean }
+  | {
+      [Kind in "marketRegions" | "marketOptions"]: {
+        kind: Kind;
+        market: string;
+        after?: string;
+        verify?: boolean;
+      };
+    }["marketRegions" | "marketOptions"];
 
 export interface ShippingAcquisitionState {
   tasks: ReadTask[];
   snapshot: Acquisition;
   pages: number;
   verifiedProfiles: string[];
+  verifiedMarkets?: Record<string, Market>;
   verifying: boolean;
 }
 
 export function beginAcquisition(now: string): ShippingAcquisitionState {
   return {
-    tasks: [{ kind: "preflight" }, { kind: "profiles" }, { kind: "products" }],
+    // The preflight selects the shop's shipping model before reading it.
+    tasks: [{ kind: "preflight" }, { kind: "products" }],
     snapshot: { profiles: {}, products: {}, acquiredAt: now },
     pages: 0,
     verifiedProfiles: [],
@@ -103,6 +143,120 @@ function checkVersion(profile: Profile, version: number) {
     throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
 }
 
+type RawRate = Omit<
+  MarketRate,
+  "transitTimeMinSeconds" | "transitTimeMaxSeconds"
+> & {
+  transitTimeMinSeconds?: number | null;
+  transitTimeMaxSeconds?: number | null;
+};
+type RawRateGroup = {
+  id: string;
+  conditions: {
+    collectionsCount: { count: number } | null;
+    originLocationsCount: { count: number } | null;
+  };
+  rate?: RawRate | null;
+  rates?: Connection<RawRate>;
+};
+type RawOption = {
+  __typename: string;
+  id: string;
+  isActive: boolean;
+  currency: string;
+  freeDeliveryMinimumValue: Money | null;
+} & Partial<
+  Record<
+    "flatGroups" | "valueGroups" | "weightGroups" | "carrierGroups",
+    Connection<RawRateGroup> | null
+  >
+>;
+type RawRegion = {
+  __typename: string;
+  id: string;
+  code?: string;
+  country?: { code: string };
+};
+
+function complete<T>(connection: Connection<T>) {
+  if (
+    !Array.isArray(connection?.nodes) ||
+    typeof connection.pageInfo?.hasNextPage !== "boolean"
+  )
+    throw new ShippingReadError("INCOMPLETE_SHOPIFY_PAGE");
+  return connection;
+}
+
+function marketRate(rate: RawRate): MarketRate {
+  return {
+    id: rate.id,
+    price: rate.price,
+    ...(rate.minValue
+      ? { minValue: rate.minValue, maxValue: rate.maxValue ?? null }
+      : {}),
+    transitTimeMinSeconds: rate.transitTimeMinSeconds ?? null,
+    transitTimeMaxSeconds: rate.transitTimeMaxSeconds ?? null,
+  };
+}
+
+function marketOption(option: RawOption): MarketOption {
+  const kind = OPTION_KINDS[option.__typename] ?? "UNKNOWN";
+  const groups =
+    option.flatGroups ??
+    option.valueGroups ??
+    option.weightGroups ??
+    option.carrierGroups;
+  const nodes = groups ? complete(groups).nodes : [];
+  const group =
+    nodes.length === 1 && !groups?.pageInfo.hasNextPage ? nodes[0] : undefined;
+  let rates: MarketRate[] | null = [];
+  if (group?.rate) rates = [marketRate(group.rate)];
+  else if (group?.rates)
+    rates = complete(group.rates).pageInfo.hasNextPage
+      ? null
+      : group.rates.nodes.map(marketRate);
+  return {
+    id: option.id,
+    kind,
+    active: option.isActive === true,
+    currency: option.currency,
+    freeMinimum: option.freeDeliveryMinimumValue ?? null,
+    // Conditions narrow a rate group only where present: no collection
+    // condition applies to all products, no origin location to all origins.
+    uniform:
+      kind !== "UNKNOWN" &&
+      group !== undefined &&
+      group.conditions.collectionsCount === null &&
+      group.conditions.originLocationsCount?.count === 0,
+    rates,
+  };
+}
+
+function marketRegion(region: RawRegion): MarketRegion {
+  if (region.__typename === "MarketRegionCountry" && region.code)
+    return { id: region.id, country: region.code, subdivision: null };
+  if (
+    region.__typename === "MarketRegionSubdivision" &&
+    region.code &&
+    region.country?.code
+  )
+    return {
+      id: region.id,
+      country: region.country.code,
+      subdivision: region.code,
+    };
+  throw new ShippingReadError("UNSUPPORTED_SHOPIFY_SCHEMA");
+}
+
+function marketsFor(state: ShippingAcquisitionState, verify?: boolean) {
+  if (verify) {
+    state.verifiedMarkets ??= {};
+    return state.verifiedMarkets;
+  }
+  state.snapshot.markets ??= {};
+  return state.snapshot.markets;
+}
+
 type ProfileHeader = Omit<
   Profile,
   "groups" | "memberships" | "sellingPlans"
@@ -126,34 +280,162 @@ export async function acquireShippingStep(
     first: SHIPPING_LIMITS.pageSize,
   };
   if (task.kind === "preflight") {
+    type Fields = { fields: { name: string }[] } | null;
     const data = await read<{
       currentAppInstallation: { accessScopes: { handle: string }[] };
       shop: { features: { marketDrivenShipping: boolean } };
-      method: { fields: { name: string }[] };
+      method: Fields;
+      shipping: Fields;
     }>(
       graphql,
       `query ShippingPreflight {
       currentAppInstallation { accessScopes { handle } }
       shop { features { marketDrivenShipping } }
       method: __type(name: "DeliveryMethodDefinition") { fields { name } }
+      shipping: __type(name: "ShippingConfiguration") { fields { name } }
     }`,
     );
-    if (
-      !data.currentAppInstallation.accessScopes.some(
-        (scope) =>
-          scope.handle === "read_shipping" || scope.handle === "write_shipping",
-      )
-    ) {
-      throw new ShippingReadError("SHIPPING_PERMISSION_REQUIRED");
+    const granted = (...handles: string[]) =>
+      data.currentAppInstallation.accessScopes.some((scope) =>
+        handles.includes(scope.handle),
+      );
+    const exposes = (type: Fields, ...names: string[]) =>
+      names.every((name) => type?.fields.some((field) => field.name === name));
+    const marketDriven = data.shop.features.marketDrivenShipping;
+    if (marketDriven === true) {
+      // Merchant shipping lives in Markets. The legacy delivery profiles of
+      // such a shop can be a stale snapshot and never stand in for it.
+      if (!granted("read_markets", "write_markets"))
+        throw new ShippingReadError("SHIPPING_PERMISSION_REQUIRED");
+      if (!exposes(data.shipping, "isEnabled", "optionDefinitions"))
+        throw new ShippingReadError("UNSUPPORTED_SHOPIFY_SCHEMA");
+      state.snapshot.markets = {};
+    } else if (marketDriven === false) {
+      if (!granted("read_shipping", "write_shipping"))
+        throw new ShippingReadError("SHIPPING_PERMISSION_REQUIRED");
+      if (!exposes(data.method, "rateProvider", "methodConditions"))
+        throw new ShippingReadError("UNSUPPORTED_SHOPIFY_SCHEMA");
+      delete state.snapshot.markets;
+    } else throw new ShippingReadError("UNSUPPORTED_SHOPIFY_SCHEMA");
+    // Acquisitions persisted before the model check queued profile reads.
+    state.tasks = state.tasks.filter((queued) => queued.kind !== "profiles");
+    state.tasks.unshift(
+      marketDriven ? { kind: "markets" } : { kind: "profiles" },
+    );
+  } else if (task.kind === "markets") {
+    const data = await read<{
+      markets: Connection<{
+        id: string;
+        type: string;
+        status: string;
+        conditions: {
+          conditionTypes: string[];
+          regionsCondition: { applicationLevel: string | null } | null;
+        } | null;
+        delivery: { shipping: { isEnabled: boolean } | null } | null;
+      }>;
+    }>(
+      graphql,
+      `query ShippingMarkets($first: Int!, $after: String) {
+        markets(first: $first, after: $after, sortKey: ID) { nodes { ${MARKET} } ${PAGE} }
+      }`,
+      variables,
+    );
+    const markets = marketsFor(state, task.verify);
+    for (const node of nextPage(data.markets, task, state)) {
+      if (!/^gid:\/\/shopify\/Market\/\d+$/.test(node.id))
+        throw new ShippingReadError("INVALID_MARKET_ID");
+      if (markets[node.id])
+        throw new ShippingReadError("DUPLICATE_PROVIDER_OBJECT");
+      if (!node.delivery)
+        throw new ShippingReadError("INCOMPLETE_SHOPIFY_PAGE");
+      const shipping = node.delivery.shipping;
+      const market: Market = {
+        id: node.id,
+        type: node.type,
+        status: node.status,
+        conditionTypes: [...(node.conditions?.conditionTypes ?? [])].sort(),
+        allRegions:
+          node.conditions?.regionsCondition?.applicationLevel === "ALL",
+        regions: [],
+        shipping: shipping
+          ? { enabled: shipping.isEnabled === true, options: [] }
+          : null,
+      };
+      markets[market.id] = market;
+      if (!isRegionMarket(market)) continue;
+      const verify = task.verify ? { verify: true } : {};
+      if (!market.allRegions)
+        state.tasks.push({
+          kind: "marketRegions",
+          market: market.id,
+          ...verify,
+        });
+      if (market.shipping?.enabled)
+        state.tasks.push({
+          kind: "marketOptions",
+          market: market.id,
+          ...verify,
+        });
     }
-    if (data.shop.features.marketDrivenShipping !== false) {
-      throw new ShippingReadError("MARKET_DRIVEN_SHIPPING_UNSUPPORTED");
+    if (Object.keys(markets).length > SHIPPING_LIMITS.markets)
+      throw new ShippingReadError("ACQUISITION_LIMIT_EXCEEDED");
+  } else if (task.kind === "marketRegions") {
+    const market = marketsFor(state, task.verify)[task.market];
+    const data = await read<{
+      market: {
+        conditions: {
+          regionsCondition: { regions: Connection<RawRegion> } | null;
+        } | null;
+      } | null;
+    }>(
+      graphql,
+      `query ShippingMarketRegions($id: ID!, $first: Int!, $after: String) {
+        market(id: $id) { conditions { regionsCondition { regions(first: $first, after: $after) {
+          nodes { __typename id ... on MarketRegionCountry { code } ... on MarketRegionSubdivision { code country { code } } } ${PAGE}
+        } } } }
+      }`,
+      { ...variables, id: task.market },
+    );
+    const regions = data.market?.conditions?.regionsCondition?.regions;
+    if (!market || !regions)
+      throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
+    for (const node of nextPage(regions, task, state)) {
+      if (market.regions.some((region) => region.id === node.id))
+        throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
+      market.regions.push(marketRegion(node));
     }
+  } else if (task.kind === "marketOptions") {
+    const market = marketsFor(state, task.verify)[task.market];
+    const data = await read<{
+      market: {
+        delivery: {
+          shipping: {
+            isEnabled: boolean;
+            optionDefinitions: Connection<RawOption>;
+          } | null;
+        };
+      } | null;
+    }>(
+      graphql,
+      `query ShippingMarketOptions($id: ID!, $first: Int!, $after: String) {
+        market(id: $id) { delivery { shipping { isEnabled
+          optionDefinitions(first: $first, after: $after) { nodes { ${OPTION} } ${PAGE} }
+        } } }
+      }`,
+      { ...variables, first: SHIPPING_LIMITS.optionPageSize, id: task.market },
+    );
+    const shipping = data.market?.delivery?.shipping;
     if (
-      !data.method?.fields.some((f) => f.name === "rateProvider") ||
-      !data.method.fields.some((f) => f.name === "methodConditions")
-    ) {
-      throw new ShippingReadError("UNSUPPORTED_SHOPIFY_SCHEMA");
+      !market?.shipping ||
+      !shipping ||
+      shipping.isEnabled !== market.shipping.enabled
+    )
+      throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
+    for (const node of nextPage(shipping.optionDefinitions, task, state)) {
+      if (market.shipping.options.some((option) => option.id === node.id))
+        throw new ShippingReadError("DUPLICATE_PROVIDER_OBJECT");
+      market.shipping.options.push(marketOption(node));
     }
   } else if (task.kind === "profiles" || task.kind === "verifyProfiles") {
     const data = await read<{ deliveryProfiles: Connection<ProfileHeader> }>(
@@ -377,8 +659,12 @@ export async function acquireShippingStep(
   }
   if (state.tasks.length === 0 && !state.verifying) {
     state.verifying = true;
+    // Markets have no version. A second complete read must reproduce them.
+    if (state.snapshot.markets) state.verifiedMarkets = {};
     state.tasks.push(
-      { kind: "verifyProfiles" },
+      state.snapshot.markets
+        ? { kind: "markets", verify: true }
+        : { kind: "verifyProfiles" },
       ...Object.keys(state.snapshot.products).map(
         (product): ReadTask => ({ kind: "verifyProduct", product }),
       ),
@@ -386,8 +672,11 @@ export async function acquireShippingStep(
   }
   if (
     state.tasks.length === 0 &&
-    state.verifiedProfiles.length !==
-      Object.keys(state.snapshot.profiles).length
+    (state.verifiedProfiles.length !==
+      Object.keys(state.snapshot.profiles).length ||
+      (state.snapshot.markets &&
+        JSON.stringify(state.verifiedMarkets) !==
+          JSON.stringify(state.snapshot.markets)))
   ) {
     throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
   }

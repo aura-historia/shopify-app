@@ -50,7 +50,7 @@ flowchart LR
     B --> A
     U[App uninstall webhook] --> C[Session and connection cleanup]
     C --> K
-    SP[Shopify profile and scope events] --> H[HTTPS shipping receiver]
+    SP[Shopify profile, market and scope events] --> H[HTTPS shipping receiver]
     H --> D[Per-shop Durable Object]
     D --> G[Shopify Admin API acquisition]
     G --> D
@@ -81,6 +81,7 @@ flowchart LR
 | `product_listings/add`, `product_listings/update`, `product_listings/remove` | Aura Historia Amazon EventBridge partner source | Keep products published to the Aura Historia channel current; removal from the channel withdraws them |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia Amazon EventBridge partner source | Required public-app privacy and compliance handling |
 | `profiles/create`, `profiles/update`, `profiles/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current shipping acquisition |
+| `markets/create`, `markets/update`, `markets/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current acquisition of [market-driven shipping](#market-driven-shipping) |
 | `app/scopes_update` | This app’s HTTPS `/webhooks/shipping` receiver | Recheck current shipping access, import once updated access is approved, and withdraw owned assertions on permission loss |
 | `app/uninstalled` | This app’s deployed HTTPS endpoint | Stop shipping, admit owned cleanup, then remove Shopify sessions and connection data |
 | `bulk_operations/finish` | This app’s deployed HTTPS endpoint | Admit the channel-filtered catalog export to the resumable catalog importer |
@@ -210,15 +211,16 @@ The repository uses separate Shopify configuration files to keep stage-specific 
 | `shopify.app.prod.toml` | Production configuration using the production EventBridge partner source |
 | `shopify.app.tunnel.toml` | Development tunnel mode; exposes backfill completion and shipping receivers through the active tunnel |
 
-The required Shopify scopes are `read_products`, `read_product_listings`, `read_locales` and `read_shipping`. `read_product_listings` is required by the channel connection, the own-channel listing topics and the per-publication membership reads. `read_shipping` must stay required: the profile webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
+The required Shopify scopes are `read_products`, `read_product_listings`, `read_locales`, `read_shipping` and `read_markets`. `read_product_listings` is required by the channel connection, the own-channel listing topics and the per-publication membership reads. `read_shipping` and `read_markets` must stay required: the profile and market webhook subscriptions are declared statically, and Shopify rejects static subscriptions whose scope is only optional. `read_markets` reads the shipping of [market-driven shops](#market-driven-shipping); the app never writes markets. The same list is mirrored in the `SCOPES` variable of `wrangler.jsonc`. Installation starts from Shopify-owned surfaces, which supply the trusted `shop` and `host` context—merchants are not asked to manually enter a shop domain.
 
 ## Advertised shipping imports
 
 Initial Aura connection queues a shipping import independently of the catalog backfill.
 The embedded app offers **Import shipping settings** (new acquisition or resume).
-Installations approved before `read_shipping` became required are asked by Shopify
-to approve the updated access the next time the app is opened. Until then shipping
-status reports the missing permission and catalog sync continues; the resulting
+Installations approved before `read_shipping` or `read_markets` became required are
+asked by Shopify to approve the updated access the next time the app is opened. Until
+then shipping status reports the missing permission (`read_markets` only for
+market-driven shops) and catalog sync continues; the resulting
 `app/scopes_update` notification starts a new acquisition. Existing Aura connections
 need reconnection with the additional `listing-sources:read` and `product-listings:read`
 OAuth permissions. Register those permissions on both OAuth clients before rollout.
@@ -253,7 +255,7 @@ resumes those exact pending requests before acquiring the latest settings. Graph
 and Aura API calls have a 20-second timeout, and applied status requires a valid
 committed response.
 
-Reads are bounded to 50 records per connection page, 100 profiles, 5,000 products,
+Reads are bounded to 50 records per connection page, 100 profiles or markets, 5,000 products,
 4,000 requests and 4 MB of acquisition state. Every page has a persisted checkpoint.
 The importer traverses all profile items, assigned variants, product variants, zones
 and methods. A final profile/version traversal and product modification checks detect
@@ -293,9 +295,86 @@ fixed rate. Shopify's cart/profile/location charge groups have no exact Aura cha
 basis, so static amounts retain a null basis and a capability notice instead of
 claiming a per-item, order or physical-shipment price. Coverage stays partial, and
 external prices stay externally calculated.
-`ShopFeatures.marketDrivenShipping` is detected and reported as a capability gap;
-the legacy profiles do not describe that model. None of these limitations is filled
-with inferred locations, eligibility, taxes, packing, duties or checkout prices.
+These rules apply to shops on Shopify's legacy profile model. Shops on
+`ShopFeatures.marketDrivenShipping` are read from Markets instead, as described below.
+None of these limitations is filled with inferred locations, eligibility, taxes,
+packing, duties or checkout prices.
+
+### Market-driven shipping
+
+Shopify moves merchant shipping from delivery profiles into Markets: merchants
+opt in from October 1, 2026, and every shop uses the market model by July 1, 2027
+([upgrade guide](https://shopify.dev/docs/apps/build/orders-fulfillment/market-driven-shipping/upgrade-your-app)).
+For these shops the legacy `deliveryProfile`/`deliveryProfiles` reads can return a
+stale snapshot, so the importer never reads them or falls back to them
+([#383](https://github.com/aura-historia/shopify-app/issues/383)). Merchants keep their
+market settings; returning to legacy profiles is never required.
+
+- **Detection and access.** The preflight reads `shop.features.marketDrivenShipping`.
+  `true` selects the Markets read model, which needs `read_markets` (or `write_markets`)
+  and the 2026-10 `ShippingConfiguration` fields; `false` keeps the profile importer;
+  any other value is an unsupported schema. Missing access is reported as
+  `SHIPPING_PERMISSION_REQUIRED` and withdraws owned assertions, as for `read_shipping`.
+  The app never calls `marketCreate`/`marketUpdate` or any other mutation.
+- **Read surface (Admin API 2026-10).** `markets(sortKey: ID)` reads, 50 per page, each
+  market's type, status, condition types, region application level and whether
+  `delivery.shipping` is configured and enabled. For active region markets it reads
+  `conditions.regionsCondition.regions` (50 per page) and
+  `delivery.shipping.optionDefinitions` (5 per page, each with its first rate group and
+  up to 25 cart-value tiers). Product and variant traversal is shared with the profile
+  importer. Markets have no version, so a second complete read must reproduce the same
+  configuration before publication; any difference restarts the acquisition. Every
+  operation passed 2026-10 schema validation; the sources and recorded shapes are in
+  `tests/fixtures/shopify-market-shipping-2026-10.json`.
+- **Applicable markets.** Active region markets decide the options of buyers who check
+  out from Aura Historia. Company-location (B2B), retail-location (POS) and draft
+  markets are not used. Channel markets and markets with combined conditions are
+  reported (`MARKET_CONTEXT_UNSUPPORTED`) and not applied.
+- **Destinations and inheritance.** A destination belongs to the most specific active
+  region market containing it. A market without its own shipping inherits from the next
+  wider market, following the lineage Shopify infers from strict region subsets; the
+  widest one inherits the store default of no shipping. A destination in crossing
+  markets without one most specific market stays unresolved
+  (`MARKET_OVERLAP_UNRESOLVED`), and disabled shipping offers nothing. Shopify
+  subdivision codes (such as `CA` in `US`) are not ISO 3166-2 codes, so a country split
+  between markets is only an unresolved area. A market for all regions becomes an
+  unresolved rest-of-world area plus the countries that inherit from it.
+- **Options.** Each active option becomes a service whose code derives from its Shopify
+  ID. Its rates are representable only from one rate group without collection or
+  origin-location conditions, the only group that rates every shippable item alike.
+  Conditioned or multi-group options and more than 25 cart-value tiers stay conditional
+  without a rate (`MARKET_RATE_CONDITIONS_UNSUPPORTED`, `MARKET_RATE_TIER_LIMIT`).
+  Otherwise the profile importer's semantics apply: flat rates are fixed or free
+  amounts; a free-delivery minimum adds a free service with a seller-order threshold;
+  a cart-value tier with only a lower bound is a threshold, while upper bounds and
+  weight-based rates stay conditional; carrier-calculated options are calculated at
+  checkout. Currencies and minor units are exact. Transit time in whole days or hours
+  becomes the transit lead time without a business or calendar basis; other durations
+  stay unasserted. Rate consolidation and split shipping decide the combined checkout
+  charge, so amounts keep a null basis with `SHOPIFY_CHARGE_GROUP_BASIS_UNAVAILABLE`.
+- **Applicability.** The market configuration is one profile, `shopify:market-shipping`,
+  assigned as the source default. Market rates apply to items that require shipping, so
+  the rules of a shop-wide profile apply: a product whose variants all require shipping
+  selects it explicitly, and mixed or unknown products suppress inheritance. Rates that
+  other apps' delivery profiles add in Markets are not read
+  (`APP_PROVIDED_RATES_UNASSERTED`).
+- **Model switches.** Only a complete acquisition of the current model is published.
+  Moving to market-driven shipping retires the imported profile identities; a rollback
+  retires the market profile and restores them.
+- **Notifications.** `markets/create`, `markets/update` and `markets/delete` are refresh
+  hints like profile notifications; their payload carries only the numeric market ID.
+  Shopify does not document which shipping option edits update a market, and collection
+  or location changes send no shipping notification, so reconciliation within six hours
+  guarantees convergence and **Import shipping settings** refreshes at once.
+- **Alternatives.** Shopify recommends Contextual Product Feeds for sales channels. Their
+  per-variant delivery option estimates are contextualized checkout estimates, not the
+  merchant's options and conditions, and this app reads no product feed.
+- **Verification.** Tests cover initial import, rate and threshold edits, option and
+  market removal, multiple and nested markets, subdivisions, missing access, unsupported
+  fields, retries, model switches and read-only Shopify access against the recorded
+  2026-10 shapes. Before release, repeat this on a development store with the
+  **Market-driven shipping** feature preview and submit Shopify's compatibility
+  self-attestation.
 
 Status distinguishes queued work, acquisition, publication, partial progress,
 protected partner edits and applied operations. Applied means Aura committed the
@@ -338,7 +417,8 @@ S01 limits (100 profiles, 5,000 products, 4,000 pages, 4 MB). This covers profil
 assignment changes, product/variant membership and requires-shipping changes,
 origin-group/configuration changes and missed notifications independently of catalog
 EventBridge processing. It does not assume that profiles/update observes every
-assignment change. Unsupported origin or market-driven configurations remain
+assignment change. Market-driven shops get the same periodic read of their markets,
+regions and options. Unsupported origin or market configurations remain
 unasserted and actionable. This is acquisition of current state, never TTL renewal
 or a scan of backend CDC/SQS pending work. Existing installations enter this schedule
 on their next initial/manual import; there is no unbounded installation enumeration.
@@ -385,7 +465,8 @@ continuations and retry/DLQ controls.
 With the merchant's installation approval, Shopify provides shipping profile
 names/IDs, location-group identities, destination areas, advertised
 methods/conditions/prices and complete
-product/variant membership. Cloudflare stores bounded private job checkpoints,
+product/variant membership; for market-driven shops it provides market types,
+regions and shipping options/rates instead of profiles. Cloudflare stores bounded private job checkpoints,
 resource mappings and immutable pending typed requests. Aura Historia receives only
 the canonical terms, source-scoped membership and acquisition metadata through its
 authorized API. Shipping requests contain no provider domain, token, session, raw

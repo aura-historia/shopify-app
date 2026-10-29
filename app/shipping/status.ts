@@ -15,7 +15,8 @@ export function shippingIssueMessage(code: string) {
     case "SHOPIFY_OFFLINE_ACCESS_REQUIRED":
       return "Reopen the Shopify app to renew access, then import again.";
     case "MARKET_DRIVEN_SHIPPING_UNSUPPORTED":
-      return "This shop uses market-driven shipping. Importing that configuration is not supported yet.";
+      // Recorded by releases before market-driven shipping was imported.
+      return "This shop uses market-driven shipping. Import again to read the shipping options of its markets.";
     case "UNSUPPORTED_SHOPIFY_SCHEMA":
     case "UNSUPPORTED_SHOPIFY_API_VERSION":
       return "This shop's shipping API is not supported by the importer.";
@@ -68,6 +69,16 @@ export function shippingLimitationMessage(code: string) {
       return "Province-specific destination coverage remains unresolved.";
     case "MIXED_OR_UNKNOWN_MEMBERSHIP":
       return "Products with mixed or unknown variant membership do not inherit a shipping profile.";
+    case "MARKET_RATE_CONDITIONS_UNSUPPORTED":
+      return "Market shipping options whose rates vary by collection or fulfillment location remain conditional without a fixed rate.";
+    case "MARKET_RATE_TIER_LIMIT":
+      return "Market shipping options with more than 25 cart-value tiers remain conditional without a fixed rate.";
+    case "MARKET_OVERLAP_UNRESOLVED":
+      return "Destinations in overlapping markets without one most specific market remain unresolved.";
+    case "MARKET_CONTEXT_UNSUPPORTED":
+      return "Markets that apply by sales channel or combined conditions remain unasserted.";
+    case "APP_PROVIDED_RATES_UNASSERTED":
+      return "Shipping rates that other apps provide in Markets are not imported.";
     default:
       return "Some settings remain unasserted because they are not supported yet.";
   }

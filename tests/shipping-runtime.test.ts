@@ -4,9 +4,13 @@ import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { describe, it } from "node:test";
 import type { AppLoadContext } from "react-router";
+import type { GraphqlRequestFn } from "../app/backfill.server";
 import { buildAuraHistoriaOAuthAuthorizeUrl } from "../app/oauth.server";
 import { mapShipping } from "../app/shipping/mapper";
-import { SHIPPING_LIMITS } from "../app/shipping/model";
+import {
+  MARKET_SHIPPING_OBJECT_KEY,
+  SHIPPING_LIMITS,
+} from "../app/shipping/model";
 import {
   beginPublication,
   type Publication,
@@ -24,6 +28,8 @@ import {
   fixture,
   fixtureGraphql,
   importIdentityRejection,
+  marketFixture,
+  marketGraphql,
   missingListingProblem,
 } from "./helpers/shipping-fixtures";
 
@@ -144,7 +150,6 @@ function isolatedRuntime() {
 }
 
 function refreshRuntime() {
-  const runtime = isolatedRuntime();
   const snapshot = structuredClone(fixture);
   delete snapshot.profiles["gid://shopify/DeliveryProfile/2"];
   delete snapshot.products["gid://shopify/Product/102"];
@@ -159,7 +164,17 @@ function refreshRuntime() {
     amount: "80.00",
     currencyCode: "EUR",
   };
-  const provider = fixtureGraphql(snapshot);
+  return coordinatorRuntime(fixtureGraphql(snapshot));
+}
+
+// Runs the actual coordinator against an isolated Shopify read model.
+function coordinatorRuntime<
+  Provider extends {
+    request: GraphqlRequestFn;
+    calls: { name: string; variables: Record<string, unknown> }[];
+  },
+>(provider: Provider) {
+  const runtime = isolatedRuntime();
   const controls = {
     denied: false,
     unavailable: false,
@@ -1990,5 +2005,326 @@ describe("OAuth connection replacement", () => {
       globalThis.fetch = original;
       Date.now = realNow;
     }
+  });
+});
+
+// Stores every profile under its creation key, so model switches can be
+// observed per identity.
+function keyedBackend() {
+  type StoredProfile = typeof contract.committedProfile;
+  const profiles = new Map<string, { key: string; body: StoredProfile }>();
+  const calls: {
+    method: string;
+    path: string;
+    body: Record<string, unknown> | null;
+  }[] = [];
+  let defaultId: string | null = null;
+  const fetcher: typeof fetch = async (input) => {
+    const request = input as Request;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const raw = await request.text();
+    const body = raw ? JSON.parse(raw) : null;
+    calls.push({ method: request.method, path, body });
+    const rejected = importIdentityRejection(request.method, path, body);
+    if (rejected) return rejected;
+    if (path.endsWith("/shipping-profiles")) {
+      if (request.method === "GET")
+        return Response.json(
+          [...profiles.values()]
+            .filter(({ key }) => key === url.searchParams.get("objectKey"))
+            .map(({ body }) => body),
+        );
+      const created = {
+        ...contract.committedProfile,
+        shippingProfileId: `shp_${profiles.size + 1}`,
+        content: body.content,
+      };
+      profiles.set(created.shippingProfileId, {
+        key: body.import.objectKey,
+        body: created,
+      });
+      return Response.json(created, { status: 201 });
+    }
+    const profile = /shipping-profiles\/([^/]+)/.exec(path);
+    if (profile) {
+      const stored = profiles.get(profile[1]);
+      assert.ok(stored);
+      if (request.method !== "GET")
+        stored.body = {
+          ...stored.body,
+          managementRevision: stored.body.managementRevision + 1,
+          lifecycle: request.method === "DELETE" ? "RETIRED" : "ACTIVE",
+          ...(body?.content ? { content: body.content } : {}),
+        };
+      return Response.json(stored.body);
+    }
+    if (path.endsWith("shipping-default")) {
+      if (request.method !== "GET") defaultId = body?.shippingProfileId ?? null;
+      return Response.json({ revision: 1, shippingProfileId: defaultId });
+    }
+    if (path.endsWith("delivery"))
+      return request.method === "GET"
+        ? Response.json({
+            expectedVersion: 1,
+            productListingId: "pl_fixture",
+            delivery: null,
+          })
+        : Response.json(contract.committedMembership);
+    assert.fail(`Unexpected shipping API call ${request.method} ${path}`);
+  };
+  return {
+    fetcher,
+    calls,
+    get defaultId() {
+      return defaultId;
+    },
+    profile(key: string) {
+      return [...profiles.values()].find((stored) => stored.key === key)?.body;
+    },
+  };
+}
+
+function marketCallback(
+  topic: string,
+  body: Record<string, unknown>,
+  id = crypto.randomUUID(),
+) {
+  return shippingCallback(topic, id, body);
+}
+
+describe("market-driven shipping coordinator", () => {
+  const standard = (provider: ReturnType<typeof marketGraphql>) =>
+    provider.markets[0].shipping?.optionDefinitions[0] as {
+      freeDeliveryMinimumValue: { amount: string };
+      flatGroups: { nodes: { rate: { price: { amount: string } } }[] };
+    };
+
+  it("imports markets and follows rate, threshold, option and market removals without changing Shopify", async () => {
+    const provider = marketGraphql();
+    const runtime = coordinatorRuntime(provider);
+    await runtime.installed();
+    const backend = keyedBackend();
+    const original = globalThis.fetch;
+    const realNow = Date.now;
+    globalThis.fetch = backend.fetcher;
+    const terms = () =>
+      JSON.stringify(backend.profile(MARKET_SHIPPING_OBJECT_KEY)?.content);
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      let status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.equal(status.failures, 0);
+      assert.equal(status.phase, "partial");
+      assert.ok(status.limitations.includes("APP_PROVIDED_RATES_UNASSERTED"));
+      const profile = backend.profile(MARKET_SHIPPING_OBJECT_KEY);
+      assert.equal(profile?.lifecycle, "ACTIVE");
+      assert.equal(backend.defaultId, profile?.shippingProfileId);
+      assert.match(terms(), /"amount_minor":1723/);
+      assert.match(
+        terms(),
+        /"code":"US".*"code":"DE".*"code":"FR".*"code":"AT"/,
+      );
+      const assignments = backend.calls.filter(
+        (call) => call.path.endsWith("delivery") && call.body,
+      );
+      assert.equal(assignments.length, 2);
+      for (const assignment of assignments)
+        assert.match(
+          JSON.stringify(assignment.body),
+          new RegExp(
+            `"kind":"EXPLICIT","profile_id":"${profile?.shippingProfileId}"`,
+          ),
+        );
+
+      // A rate and free threshold edit, notified through markets/update.
+      standard(provider).flatGroups.nodes[0].rate.price.amount = "18.50";
+      standard(provider).freeDeliveryMinimumValue.amount = "75.00";
+      const before = provider.calls.length;
+      const response = await receiveShippingWebhook(
+        marketCallback("markets/update", {
+          ...marketFixture.evidence.webhookPayload,
+          id: 1,
+        }),
+        runtime.context,
+      );
+      assert.equal(response.status, 200);
+      assert.equal(provider.calls.length, before);
+      runtime.evict();
+      await runtime.run();
+      assert.match(terms(), /"amount_minor":1850/);
+      assert.match(terms(), /"amount_minor":7500/);
+      assert.doesNotMatch(terms(), /"amount_minor":1723/);
+
+      // Shopify documents no notification for option edits; the periodic
+      // read removes the deleted Express option.
+      provider.markets[0].shipping?.optionDefinitions.splice(1, 1);
+      Date.now = () => realNow() + RECONCILIATION_INTERVAL + 1000;
+      await runtime.run();
+      assert.doesNotMatch(terms(), /DeliveryFlatRateOptionDefinition:12/);
+
+      // Removing Europe leaves Germany without shipping and keeps Austria.
+      provider.markets.splice(1, 1);
+      await receiveShippingWebhook(
+        marketCallback("markets/delete", { id: 2 }),
+        runtime.context,
+      );
+      await runtime.run();
+      assert.doesNotMatch(terms(), /"code":"DE"|"code":"FR"/);
+      assert.match(terms(), /"code":"AT"/);
+      status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.equal(status.failures, 0);
+      // Only reads reached Shopify, so merchant markets stay untouched.
+      assert.ok(
+        provider.calls.every((call) => /^Shipping[A-Z]\w+$/.test(call.name)),
+      );
+      assert.equal(
+        provider.calls.some((call) => call.name === "ShippingProfiles"),
+        false,
+      );
+    } finally {
+      globalThis.fetch = original;
+      Date.now = realNow;
+    }
+  });
+
+  it("withdraws the other model's terms when a shop moves to market-driven shipping and back", async () => {
+    const legacy = fixtureGraphql();
+    const markets = marketGraphql();
+    const provider = {
+      mode: "profiles",
+      calls: legacy.calls,
+      request: ((query, variables) =>
+        (provider.mode === "markets" ? markets : legacy).request(
+          query,
+          variables,
+        )) as GraphqlRequestFn,
+    };
+    const runtime = coordinatorRuntime(provider);
+    await runtime.installed();
+    const backend = keyedBackend();
+    const original = globalThis.fetch;
+    globalThis.fetch = backend.fetcher;
+    const lifecycle = (key: string) => backend.profile(key)?.lifecycle;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      assert.equal(lifecycle("shopify:delivery-profile:1"), "ACTIVE");
+      assert.equal(lifecycle("shopify:delivery-profile:2"), "ACTIVE");
+      provider.mode = "markets";
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      assert.equal(lifecycle("shopify:delivery-profile:1"), "RETIRED");
+      assert.equal(lifecycle("shopify:delivery-profile:2"), "RETIRED");
+      assert.equal(lifecycle(MARKET_SHIPPING_OBJECT_KEY), "ACTIVE");
+      assert.equal(
+        backend.defaultId,
+        backend.profile(MARKET_SHIPPING_OBJECT_KEY)?.shippingProfileId,
+      );
+      // A rollback to profiles restores those identities and retires markets.
+      provider.mode = "profiles";
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      assert.equal(lifecycle("shopify:delivery-profile:1"), "ACTIVE");
+      assert.equal(lifecycle(MARKET_SHIPPING_OBJECT_KEY), "RETIRED");
+      assert.equal((await runtime.coordinator.status()).failures, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("reports missing market access, imports once approved and retries unavailable reads", async () => {
+    const provider = marketGraphql();
+    provider.controls.scopes = ["read_shipping"];
+    const runtime = coordinatorRuntime(provider);
+    await runtime.installed();
+    const backend = keyedBackend();
+    const original = globalThis.fetch;
+    globalThis.fetch = backend.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      let status = await runtime.coordinator.status();
+      assert.equal(status.phase, "blocked");
+      assert.equal(status.error, "SHIPPING_PERMISSION_REQUIRED");
+      assert.equal(backend.profile(MARKET_SHIPPING_OBJECT_KEY), undefined);
+      provider.controls.scopes = ["read_shipping", "read_markets"];
+      await receiveShippingWebhook(
+        marketCallback("app/scopes_update", {
+          current: ["read_shipping", "read_markets"],
+          previous: ["read_shipping"],
+        }),
+        runtime.context,
+      );
+      await runtime.run();
+      status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.equal(
+        backend.profile(MARKET_SHIPPING_OBJECT_KEY)?.lifecycle,
+        "ACTIVE",
+      );
+      runtime.controls.unavailable = true;
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.coordinator.alarm();
+      status = await runtime.coordinator.status();
+      assert.equal(status.phase, "partial");
+      assert.equal(status.error, "SHIPPING_REQUEST_FAILED");
+      runtime.controls.unavailable = false;
+      await runtime.run();
+      status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.equal(status.failures, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("admits only well-formed market notifications for the bound installation", async () => {
+    const runtime = coordinatorRuntime(marketGraphql());
+    await runtime.installed();
+    await runtime.coordinator.requestShipping(shop);
+    for (const body of [
+      {},
+      { id: 0 },
+      { id: "market" },
+      { id: 2 ** 60 },
+      { id: 1, admin_graphql_api_id: "gid://shopify/Market/2" },
+      { id: 1, admin_graphql_api_id: "gid://shopify/DeliveryProfile/1" },
+    ])
+      assert.equal(
+        (
+          await receiveShippingWebhook(
+            marketCallback("markets/update", body),
+            runtime.context,
+          )
+        ).status,
+        400,
+        JSON.stringify(body),
+      );
+    assert.equal(runtime.storage.values.get("hintVersion"), undefined);
+    const delivery = crypto.randomUUID();
+    for (const topic of ["markets/create", "markets/update"])
+      assert.equal(
+        (
+          await receiveShippingWebhook(
+            marketCallback(
+              topic,
+              marketFixture.evidence.webhookPayload,
+              delivery,
+            ),
+            runtime.context,
+          )
+        ).status,
+        200,
+      );
+    // Deliveries are deduplicated per topic.
+    await receiveShippingWebhook(
+      marketCallback("markets/update", { id: "1" }, delivery),
+      runtime.context,
+    );
+    assert.equal(runtime.storage.values.get("hintVersion"), 2);
+    assert.equal((await runtime.coordinator.status()).phase, "queued");
   });
 });

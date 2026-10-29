@@ -547,9 +547,12 @@ export default function AppIndex() {
               </s-banner>
             )}
             <s-paragraph>
-              Current settings are imported after connection. Profile changes
-              refresh automatically, and periodic checks repair missed changes.
-              Product synchronization continues independently.
+              Current settings are imported after connection, from shipping
+              profiles or, with market-driven shipping, from the shipping
+              options of your markets. Reported changes refresh automatically;
+              periodic checks within six hours repair the rest, including market
+              shipping edits. Your markets and shipping settings are never
+              changed. Product synchronization continues independently.
             </s-paragraph>
             <s-stack direction="inline" gap="base">
               <IntentButton intent="import_shipping">

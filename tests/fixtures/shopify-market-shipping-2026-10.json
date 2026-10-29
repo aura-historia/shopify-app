@@ -1,0 +1,373 @@
+{
+  "apiVersion": "2026-10",
+  "evidence": {
+    "recordedAt": "2026-10-29",
+    "detection": "ShopFeatures.marketDrivenShipping",
+    "requiredScope": "read_markets",
+    "references": [
+      "https://shopify.dev/docs/apps/build/orders-fulfillment/market-driven-shipping/upgrade-your-app",
+      "https://shopify.dev/changelog/market-driven-delivery-profiles-admin-api",
+      "https://shopify.dev/changelog/merchant-owned-delivery-profile-apis-are-deprecated-for-market-driven-shipping",
+      "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Market",
+      "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ShippingConfiguration",
+      "https://shopify.dev/docs/api/admin-graphql/2026-10/interfaces/DeliveryOptionDefinition",
+      "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/DeliveryRateGroupConditions",
+      "https://shopify.dev/docs/api/admin-graphql/2026-10/input-objects/DeliveryRateConditionsCreateInput",
+      "https://shopify.dev/docs/apps/build/markets/market-inheritance",
+      "https://shopify.dev/docs/apps/build/markets/subdivision-markets",
+      "https://shopify.dev/docs/api/admin-graphql/2026-10/enums/WebhookSubscriptionTopic"
+    ],
+    "validatedOperations": [
+      "ShippingPreflight",
+      "ShippingMarkets",
+      "ShippingMarketRegions",
+      "ShippingMarketOptions"
+    ],
+    "validation": "Each operation passed 2026-10 schema validation through the shopify.dev Admin GraphQL proxy, which then denied the market fields without read_markets.",
+    "webhookTopics": ["markets/create", "markets/update", "markets/delete"],
+    "webhookPayload": {
+      "id": 188558248,
+      "name": "United States",
+      "type": "region",
+      "status": "active"
+    }
+  },
+  "markets": [
+    {
+      "id": "gid://shopify/Market/1",
+      "name": "United States",
+      "type": "REGION",
+      "status": "ACTIVE",
+      "conditions": {
+        "conditionTypes": ["REGION"],
+        "regionsCondition": { "applicationLevel": "SPECIFIED" }
+      },
+      "regions": [
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/1",
+          "code": "US"
+        }
+      ],
+      "shipping": {
+        "isEnabled": true,
+        "optionDefinitions": [
+          {
+            "__typename": "DeliveryFlatRateOptionDefinition",
+            "id": "gid://shopify/DeliveryFlatRateOptionDefinition/11",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": {
+              "amount": "50.00",
+              "currencyCode": "EUR"
+            },
+            "flatGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryFlatRateGroup/111",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  },
+                  "rate": {
+                    "id": "gid://shopify/DeliveryFlatRate/1111",
+                    "price": { "amount": "17.23", "currencyCode": "EUR" },
+                    "transitTimeMinSeconds": 259200,
+                    "transitTimeMaxSeconds": 432000
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          },
+          {
+            "__typename": "DeliveryFlatRateOptionDefinition",
+            "id": "gid://shopify/DeliveryFlatRateOptionDefinition/12",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "flatGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryFlatRateGroup/121",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  },
+                  "rate": {
+                    "id": "gid://shopify/DeliveryFlatRate/1211",
+                    "price": { "amount": "29.00", "currencyCode": "EUR" },
+                    "transitTimeMinSeconds": 86400,
+                    "transitTimeMaxSeconds": 172800
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "gid://shopify/Market/2",
+      "name": "Europe",
+      "type": "REGION",
+      "status": "ACTIVE",
+      "conditions": {
+        "conditionTypes": ["REGION"],
+        "regionsCondition": { "applicationLevel": "SPECIFIED" }
+      },
+      "regions": [
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/2",
+          "code": "DE"
+        },
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/3",
+          "code": "FR"
+        },
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/4",
+          "code": "AT"
+        }
+      ],
+      "shipping": {
+        "isEnabled": true,
+        "optionDefinitions": [
+          {
+            "__typename": "DeliveryValueBasedOptionDefinition",
+            "id": "gid://shopify/DeliveryValueBasedOptionDefinition/21",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "valueGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryValueBasedRateGroup/211",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  },
+                  "rates": {
+                    "nodes": [
+                      {
+                        "id": "gid://shopify/DeliveryValueBasedRate/2111",
+                        "price": { "amount": "9.90", "currencyCode": "EUR" },
+                        "minValue": { "amount": "0.00", "currencyCode": "EUR" },
+                        "maxValue": {
+                          "amount": "49.99",
+                          "currencyCode": "EUR"
+                        },
+                        "transitTimeMinSeconds": 172800,
+                        "transitTimeMaxSeconds": 345600
+                      },
+                      {
+                        "id": "gid://shopify/DeliveryValueBasedRate/2112",
+                        "price": { "amount": "0.00", "currencyCode": "EUR" },
+                        "minValue": {
+                          "amount": "50.00",
+                          "currencyCode": "EUR"
+                        },
+                        "maxValue": null,
+                        "transitTimeMinSeconds": 172800,
+                        "transitTimeMaxSeconds": 345600
+                      }
+                    ],
+                    "pageInfo": { "hasNextPage": false, "endCursor": "2" }
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          },
+          {
+            "__typename": "DeliveryFlatRateOptionDefinition",
+            "id": "gid://shopify/DeliveryFlatRateOptionDefinition/22",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "flatGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryFlatRateGroup/221",
+                  "conditions": {
+                    "collectionsCount": { "count": 1 },
+                    "originLocationsCount": { "count": 0 }
+                  },
+                  "rate": {
+                    "id": "gid://shopify/DeliveryFlatRate/2211",
+                    "price": { "amount": "45.00", "currencyCode": "EUR" },
+                    "transitTimeMinSeconds": null,
+                    "transitTimeMaxSeconds": null
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          },
+          {
+            "__typename": "DeliveryCarrierCalculatedOptionDefinition",
+            "id": "gid://shopify/DeliveryCarrierCalculatedOptionDefinition/23",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "carrierGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryCarrierCalculatedRateGroup/231",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          },
+          {
+            "__typename": "DeliveryWeightBasedOptionDefinition",
+            "id": "gid://shopify/DeliveryWeightBasedOptionDefinition/24",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "weightGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryWeightBasedRateGroup/241",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          },
+          {
+            "__typename": "DeliveryFlatRateOptionDefinition",
+            "id": "gid://shopify/DeliveryFlatRateOptionDefinition/25",
+            "isActive": false,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "flatGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryFlatRateGroup/251",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  },
+                  "rate": {
+                    "id": "gid://shopify/DeliveryFlatRate/2511",
+                    "price": { "amount": "1.00", "currencyCode": "EUR" },
+                    "transitTimeMinSeconds": null,
+                    "transitTimeMaxSeconds": null
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "gid://shopify/Market/3",
+      "name": "Germany",
+      "type": "REGION",
+      "status": "ACTIVE",
+      "conditions": {
+        "conditionTypes": ["REGION"],
+        "regionsCondition": { "applicationLevel": "SPECIFIED" }
+      },
+      "regions": [
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/5",
+          "code": "DE"
+        }
+      ],
+      "shipping": null
+    },
+    {
+      "id": "gid://shopify/Market/4",
+      "name": "Austria",
+      "type": "REGION",
+      "status": "ACTIVE",
+      "conditions": {
+        "conditionTypes": ["REGION"],
+        "regionsCondition": { "applicationLevel": "SPECIFIED" }
+      },
+      "regions": [
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/6",
+          "code": "AT"
+        }
+      ],
+      "shipping": {
+        "isEnabled": true,
+        "optionDefinitions": [
+          {
+            "__typename": "DeliveryFlatRateOptionDefinition",
+            "id": "gid://shopify/DeliveryFlatRateOptionDefinition/41",
+            "isActive": true,
+            "currency": "EUR",
+            "freeDeliveryMinimumValue": null,
+            "flatGroups": {
+              "nodes": [
+                {
+                  "id": "gid://shopify/DeliveryFlatRateGroup/411",
+                  "conditions": {
+                    "collectionsCount": null,
+                    "originLocationsCount": { "count": 0 }
+                  },
+                  "rate": {
+                    "id": "gid://shopify/DeliveryFlatRate/4111",
+                    "price": { "amount": "12.00", "currencyCode": "EUR" },
+                    "transitTimeMinSeconds": 5400,
+                    "transitTimeMaxSeconds": 7200
+                  }
+                }
+              ],
+              "pageInfo": { "hasNextPage": false, "endCursor": "1" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "gid://shopify/Market/5",
+      "name": "Wholesale",
+      "type": "COMPANY_LOCATION",
+      "status": "ACTIVE",
+      "conditions": {
+        "conditionTypes": ["COMPANY_LOCATION"],
+        "regionsCondition": null
+      },
+      "regions": [],
+      "shipping": { "isEnabled": true, "optionDefinitions": [] }
+    },
+    {
+      "id": "gid://shopify/Market/6",
+      "name": "Japan",
+      "type": "REGION",
+      "status": "DRAFT",
+      "conditions": {
+        "conditionTypes": ["REGION"],
+        "regionsCondition": { "applicationLevel": "SPECIFIED" }
+      },
+      "regions": [
+        {
+          "__typename": "MarketRegionCountry",
+          "id": "gid://shopify/MarketRegionCountry/7",
+          "code": "JP"
+        }
+      ],
+      "shipping": { "isEnabled": true, "optionDefinitions": [] }
+    }
+  ]
+}

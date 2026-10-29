@@ -4,15 +4,25 @@ import type {
   ShippingAreaData,
   ShippingCurrencyCode,
   ShippingMoneyData,
+  ShippingProfileContentData,
   ShippingServiceData,
+  ShippingTimeData,
   ShippingZoneData,
 } from "../generated/api/types.gen";
 import {
   type Acquisition,
+  type Condition,
+  isRegionMarket,
+  MARKET_SHIPPING_OBJECT_KEY,
   type Mapping,
+  type Market,
+  type MarketOption,
+  type MarketRate,
+  type MarketRegion,
   type Method,
   type Money,
   profileObjectKey,
+  type RateProvider,
   SHIPPING_LIMITS,
   ShippingReadError,
   sourceProductId,
@@ -49,9 +59,10 @@ export function unrestricted(): ShippingApplicabilityData {
 function service(
   method: Method,
   limitations: Set<string>,
+  code = `shopify:${method.id.split("/").at(-1)}`,
 ): ShippingServiceData {
   const result: ShippingServiceData = {
-    code: `shopify:${method.id.split("/").at(-1)}`,
+    code,
     applicability: unrestricted(),
     eligibility: "OFFERED",
     rate: null,
@@ -123,8 +134,317 @@ function service(
   return result;
 }
 
-export function mapShipping(acquisition: Acquisition): Mapping {
-  const limitations = new Set<string>();
+function content(
+  name: string,
+  zones: ShippingZoneData[],
+): ShippingProfileContentData {
+  return {
+    name,
+    attributedPartyId: null,
+    terms: {
+      schema: "SHIP_TERMS_V1",
+      collection: null,
+      shipping: {
+        kind: "COVERAGE",
+        coverage: {
+          reference_release: RELEASE,
+          completeness: "PARTIAL",
+          applicability: unrestricted(),
+          exclusions: [],
+          dispatch_origin: null,
+          zones,
+        },
+      },
+    },
+  };
+}
+
+function providerCode(id: string) {
+  const match = /^gid:\/\/shopify\/(\w+)\/(\d+)$/.exec(id);
+  if (!match) throw new ShippingReadError("INVALID_PROVIDER_ID");
+  return { type: match[1], id: match[2] };
+}
+
+// Shopify states transit in seconds without a business or calendar basis.
+// Only whole days or hours convert exactly; anything else stays unasserted.
+export function transitTime(rate?: MarketRate): ShippingTimeData | null {
+  const minimum = rate?.transitTimeMinSeconds;
+  const maximum = rate?.transitTimeMaxSeconds;
+  if (
+    !Number.isSafeInteger(minimum) ||
+    !Number.isSafeInteger(maximum) ||
+    (minimum as number) < 0 ||
+    (maximum as number) < (minimum as number)
+  )
+    return null;
+  for (const [unit, seconds] of [
+    ["DAYS", 86_400],
+    ["HOURS", 3_600],
+  ] as const) {
+    if ((minimum as number) % seconds || (maximum as number) % seconds)
+      continue;
+    if ((maximum as number) / seconds > 4_294_967_295) return null;
+    return {
+      minimum: (minimum as number) / seconds,
+      maximum: (maximum as number) / seconds,
+      unit,
+      basis: null,
+      trigger: null,
+    };
+  }
+  return null;
+}
+
+// Market options are expressed as the methods of the legacy expansion, so a
+// rate tier, free threshold, weight condition or carrier price keeps exactly
+// the semantics, limitations and charge basis of the profile importer.
+function marketServices(
+  option: MarketOption,
+  limitations: Set<string>,
+): ShippingServiceData[] {
+  const { type, id } = providerCode(option.id);
+  const code = `shopify:${type}:${id}`;
+  if (!option.uniform || option.rates === null) {
+    // Collection, origin-location or unread tiers vary the rate per item.
+    limitations.add(
+      option.kind === "UNKNOWN"
+        ? "UNSUPPORTED_RATE_PROVIDER"
+        : option.rates === null
+          ? "MARKET_RATE_TIER_LIMIT"
+          : "MARKET_RATE_CONDITIONS_UNSUPPORTED",
+    );
+    return [
+      service(
+        {
+          id: option.id,
+          name: "",
+          active: true,
+          methodConditions: [],
+          rateProvider: { __typename: "Unsupported", id: option.id },
+        },
+        new Set(),
+        code,
+      ),
+    ];
+  }
+  const atLeast = (money: Money): Condition => ({
+    field: "TOTAL_PRICE",
+    operator: "GREATER_THAN_OR_EQUAL_TO",
+    conditionCriteria: { __typename: "MoneyV2", ...money },
+  });
+  const fixed = (rate: MarketRate): RateProvider => ({
+    __typename: "DeliveryRateDefinition",
+    id: rate.id,
+    price: rate.price,
+  });
+  const offers: {
+    code: string;
+    conditions: Condition[];
+    provider: RateProvider;
+    rate?: MarketRate;
+  }[] = [];
+  if (option.kind === "FLAT") {
+    const rate = option.rates.length === 1 ? option.rates[0] : undefined;
+    offers.push({
+      code,
+      conditions: [],
+      provider: rate
+        ? fixed(rate)
+        : { __typename: "Unsupported", id: option.id },
+      rate,
+    });
+  } else if (option.kind === "VALUE") {
+    for (const rate of option.rates) {
+      const conditions: Condition[] = [];
+      if (rate.minValue && exactMoney(rate.minValue).amount_minor > 0)
+        conditions.push(atLeast(rate.minValue));
+      if (rate.maxValue)
+        conditions.push({
+          field: "TOTAL_PRICE",
+          operator: "LESS_THAN_OR_EQUAL_TO",
+          conditionCriteria: { __typename: "MoneyV2", ...rate.maxValue },
+        });
+      offers.push({
+        code: `${code}:${providerCode(rate.id).id}`,
+        conditions,
+        provider: fixed(rate),
+        rate,
+      });
+    }
+  } else if (option.kind === "WEIGHT") {
+    offers.push({
+      code,
+      conditions: [
+        {
+          field: "TOTAL_WEIGHT",
+          operator: "GREATER_THAN_OR_EQUAL_TO",
+          conditionCriteria: { __typename: "Weight" },
+        },
+      ],
+      provider: { __typename: "DeliveryRateDefinition", id: option.id },
+    });
+  } else {
+    offers.push({
+      code,
+      conditions: [],
+      provider: { __typename: "DeliveryParticipant", id: option.id },
+    });
+  }
+  // The free threshold is the option's cart subtotal, independent of tiers.
+  if (option.freeMinimum)
+    offers.push({
+      code: `${code}:free`,
+      conditions: [atLeast(option.freeMinimum)],
+      provider: {
+        __typename: "DeliveryRateDefinition",
+        id: option.id,
+        price: { amount: "0", currencyCode: option.currency },
+      },
+      rate: option.kind === "FLAT" ? option.rates[0] : undefined,
+    });
+  return offers.map((offer) => {
+    const result = service(
+      {
+        id: option.id,
+        name: "",
+        active: true,
+        methodConditions: offer.conditions,
+        rateProvider: offer.provider,
+      },
+      limitations,
+      offer.code,
+    );
+    if (result.rate) result.lead_times.transit = transitTime(offer.rate);
+    return result;
+  });
+}
+
+// A buyer belongs to the most specific market covering the destination. A
+// market without its own shipping inherits from the next wider market, and
+// the widest one from the store default of no shipping. Shopify infers that
+// lineage from strict region subsets, so equal or crossing markets stay
+// unresolved instead of guessing which one applies.
+function marketZones(
+  markets: Record<string, Market>,
+  limitations: Set<string>,
+): ShippingZoneData[] {
+  const regional = Object.values(markets).filter(isRegionMarket);
+  for (const market of Object.values(markets))
+    if (
+      market.status === "ACTIVE" &&
+      !isRegionMarket(market) &&
+      !["COMPANY_LOCATION", "LOCATION", "NONE"].includes(market.type)
+    )
+      limitations.add("MARKET_CONTEXT_UNSUPPORTED");
+  const contains = (market: Market, region: MarketRegion) =>
+    market.allRegions ||
+    market.regions.some(
+      (own) =>
+        own.country === region.country &&
+        (own.subdivision === null || own.subdivision === region.subdivision),
+    );
+  const within = (inner: Market, outer: Market) =>
+    outer.allRegions ||
+    (!inner.allRegions &&
+      inner.regions.every((region) => contains(outer, region)));
+  const resolve = (candidates: Market[]) => {
+    let remaining = candidates;
+    while (remaining.length) {
+      const specific = remaining.find((market) =>
+        remaining.every(
+          (other) =>
+            other === market ||
+            (within(market, other) && !within(other, market)),
+        ),
+      );
+      if (!specific) return undefined;
+      if (specific.shipping) return specific;
+      remaining = remaining.filter((market) => market !== specific);
+    }
+    return null;
+  };
+  const areas = new Map<Market, Map<string, ShippingAreaData>>();
+  const cover = (
+    market: Market | null | undefined,
+    area: ShippingAreaData,
+    limitation?: string,
+  ) => {
+    if (market === undefined) limitations.add("MARKET_OVERLAP_UNRESOLVED");
+    else if (market?.shipping?.enabled) {
+      if (limitation) limitations.add(limitation);
+      const owned = areas.get(market) ?? new Map();
+      owned.set(JSON.stringify(area), area);
+      areas.set(market, owned);
+    }
+  };
+  const regions = new Map<string, MarketRegion>();
+  for (const market of regional)
+    for (const region of market.regions) {
+      if (!/^[A-Z]{2}$/.test(region.country))
+        throw new ShippingReadError("INVALID_COUNTRY");
+      regions.set(`${region.country}:${region.subdivision ?? ""}`, region);
+    }
+  // Shopify subdivision codes are not ISO 3166-2 codes. A country that is
+  // split between markets is never asserted country-wide.
+  const split = new Set(
+    [...regions.values()]
+      .filter((region) => region.subdivision !== null)
+      .map((region) => region.country),
+  );
+  for (const region of regions.values()) {
+    const owner = resolve(
+      regional.filter((market) => contains(market, region)),
+    );
+    if (split.has(region.country))
+      cover(
+        owner,
+        {
+          kind: "UNRESOLVED",
+          assertion: `Shopify market regions in ${region.country}`,
+        },
+        "SUBDIVISION_MAPPING_UNAVAILABLE",
+      );
+    else
+      cover(owner, {
+        kind: "COUNTRY",
+        code: region.country,
+        reference_release: RELEASE,
+      });
+  }
+  const universal = regional.filter((market) => market.allRegions);
+  if (universal.length)
+    cover(
+      resolve(universal),
+      { kind: "UNRESOLVED", assertion: "Shopify market for all other regions" },
+      "REST_OF_WORLD_UNRESOLVED",
+    );
+  const zones: ShippingZoneData[] = [];
+  for (const market of regional) {
+    const owned = areas.get(market);
+    if (!owned) continue;
+    const services = (market.shipping?.options ?? [])
+      .filter((option) => option.active)
+      .flatMap((option) => marketServices(option, limitations));
+    if (!services.length) continue;
+    if (services.length > 64)
+      throw new ShippingReadError("AURA_POLICY_LIMIT_EXCEEDED");
+    const sorted = [...owned.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, area]) => area);
+    // Equal services per chunk keep a large market within the zone limit.
+    for (let i = 0; i < sorted.length; i += 64)
+      zones.push({
+        areas: sorted.slice(i, i + 64),
+        applicability: unrestricted(),
+        services,
+      });
+  }
+  if (zones.length > 64)
+    throw new ShippingReadError("AURA_POLICY_LIMIT_EXCEEDED");
+  return zones;
+}
+
+function mapProfiles(acquisition: Acquisition, limitations: Set<string>) {
   const profiles: Mapping["profiles"] = [];
   for (const profile of Object.values(acquisition.profiles)) {
     if (
@@ -178,31 +498,48 @@ export function mapShipping(acquisition: Acquisition): Mapping {
       objectKey: profileObjectKey(profile.id),
       providerId: profile.id,
       isDefault: profile.default,
-      content: {
-        name: profile.name,
-        attributedPartyId: null,
-        terms: {
-          schema: "SHIP_TERMS_V1",
-          collection: null,
-          shipping: {
-            kind: "COVERAGE",
-            coverage: {
-              reference_release: RELEASE,
-              completeness: "PARTIAL",
-              applicability: unrestricted(),
-              exclusions: [],
-              dispatch_origin: null,
-              zones,
-            },
-          },
-        },
-      },
+      content: content(profile.name, zones),
     });
   }
+  return profiles;
+}
+
+// Identities a complete acquisition confirms as current. Only previously
+// published profiles outside this set are retired, so switching between the
+// profile and market models withdraws the terms of the other model.
+export function observedProfileKeys(acquisition: Acquisition) {
+  return acquisition.markets
+    ? [MARKET_SHIPPING_OBJECT_KEY]
+    : Object.keys(acquisition.profiles).map(profileObjectKey);
+}
+
+export function mapShipping(acquisition: Acquisition): Mapping {
+  const limitations = new Set<string>();
+  let profiles: Mapping["profiles"];
+  let universal: string[];
+  if (acquisition.markets) {
+    // Market options apply to every shippable item, like a shop-wide
+    // profile. Other apps' delivery profiles are not read for such shops.
+    limitations.add("APP_PROVIDED_RATES_UNASSERTED");
+    profiles = [
+      {
+        objectKey: MARKET_SHIPPING_OBJECT_KEY,
+        providerId: "shopify:markets",
+        isDefault: true,
+        content: content(
+          "Shopify market shipping",
+          marketZones(acquisition.markets, limitations),
+        ),
+      },
+    ];
+    universal = [MARKET_SHIPPING_OBJECT_KEY];
+  } else {
+    profiles = mapProfiles(acquisition, limitations);
+    universal = Object.values(acquisition.profiles)
+      .filter((profile) => profile.coversAllItems)
+      .map((profile) => profileObjectKey(profile.id));
+  }
   const memberships: Mapping["memberships"] = [];
-  const universal = Object.values(acquisition.profiles).filter(
-    (profile) => profile.coversAllItems,
-  );
   for (const product of Object.values(acquisition.products)) {
     const selected = new Set<string>();
     let complete =
@@ -213,11 +550,13 @@ export function mapShipping(acquisition: Acquisition): Mapping {
         ? product.shippableVariants?.includes(variant)
           ? universal
           : []
-        : Object.values(acquisition.profiles).filter((profile) =>
-            profile.memberships[product.id]?.includes(variant),
-          );
+        : Object.values(acquisition.profiles)
+            .filter((profile) =>
+              profile.memberships[product.id]?.includes(variant),
+            )
+            .map((profile) => profileObjectKey(profile.id));
       if (candidates.length !== 1) complete = false;
-      else selected.add(profileObjectKey(candidates[0].id));
+      else selected.add(candidates[0]);
     }
     const objectKey = complete && selected.size === 1 ? [...selected][0] : null;
     const mapped = profiles.some((profile) => profile.objectKey === objectKey);
