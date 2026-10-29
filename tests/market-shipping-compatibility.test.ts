@@ -13,13 +13,10 @@ import {
   marketGraphql,
 } from "./helpers/shipping-fixtures";
 
-// Shopify's upgrade guide asks apps to audit these merchant-owned delivery
-// profile APIs before attesting market-driven shipping compatibility. For
-// market-driven shops their reads can return a stale snapshot, and their
-// writes no longer change the merchant's live shipping settings.
+// The upgrade guide's audit lists the merchant-owned delivery profile
+// operations. Shopify deprecated them for market-driven shops: reads can
+// return a stale snapshot and writes no longer change live shipping.
 const MERCHANT_PROFILE_API = /\bdeliveryProfile\w*/;
-const SHIPPING_WRITE =
-  /\b(?:deliveryProfile(?:Create|Update|Remove)|market(?:Create|Update|Delete))\b/;
 
 async function sentQueries(request: GraphqlRequestFn) {
   const queries: string[] = [];
@@ -47,7 +44,7 @@ const sources = ["app", "workers"].flatMap(sourceFiles).map((path) => ({
 describe("market-driven shipping compatibility", () => {
   it("reads market-driven shops through Markets without merchant delivery profile APIs", async () => {
     const queries = await sentQueries(marketGraphql().request);
-    assert.ok(queries.some((query) => /\bdelivery \{ shipping\b/.test(query)));
+    assert.ok(queries.some((query) => /delivery\s*\{\s*shipping/.test(query)));
     for (const query of queries)
       assert.doesNotMatch(query, MERCHANT_PROFILE_API);
   });
@@ -58,13 +55,20 @@ describe("market-driven shipping compatibility", () => {
     for (const query of queries) assert.doesNotMatch(query, /\bmarkets?\(/);
   });
 
-  it("never writes merchant delivery profiles or markets", () => {
-    assert.ok(sources.length > 0);
-    for (const { path, text } of sources)
-      assert.doesNotMatch(text, SHIPPING_WRITE, path);
+  // Shipping, market and delivery settings stay the merchant's. A new
+  // mutation needs a review of the compatibility record in the README.
+  it("sends no GraphQL mutation besides the channel connection and bulk export", () => {
+    const mutations = sources.flatMap(({ text }) =>
+      [...text.matchAll(/\bmutation\s*(\w*)\s*[({]/g)].map(([, name]) => name),
+    );
+    assert.deepEqual(mutations.sort(), [
+      "AuraChannelCreate",
+      "AuraChannelUpdate",
+      "BulkOperationRunQuery",
+    ]);
   });
 
-  it("confines merchant delivery profile reads to the legacy acquisition", () => {
+  it("references merchant delivery profile APIs only in the shipping acquisition", () => {
     assert.deepEqual(
       sources
         .filter(({ text }) => MERCHANT_PROFILE_API.test(text))
