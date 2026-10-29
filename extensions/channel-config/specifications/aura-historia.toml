@@ -12,11 +12,11 @@ unlistedProducts = true
 scheduledPublishing = false
 
 [requirements]
-# One connection must work for any store, whether it sells worldwide, to a few
-# countries or in a single market. When parity is required, `channelCreate`
-# refuses a store unless every declared country has a matching region market.
-# Shoppers still check out in the merchant's store, and the app imports the
-# products' own variant prices in the store currency, not feed prices.
+# One connection must work for any store, whatever its market coverage:
+# worldwide, a few countries or a single market. When parity is required,
+# `channelCreate` refuses a store unless every declared country has a matching
+# region market. Shoppers still check out in the merchant's store, and the app
+# imports each product's own price in the store currency, not feed prices.
 expectsOnlineStoreParity = false
 merchantOfRecord = "merchant"
 

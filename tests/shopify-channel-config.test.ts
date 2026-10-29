@@ -318,8 +318,11 @@ describe("Shopify sales channel config extension", () => {
   it("lets any store connect regardless of its market coverage", () => {
     // Required parity makes `channelCreate` refuse a store unless every
     // declared country has a matching region market (#378).
-    assert.match(channelSpec, /^expectsOnlineStoreParity = false$/m);
-    assert.match(channelSpec, /^merchantOfRecord = "merchant"$/m);
+    const requirements = /^\[requirements\]$([\s\S]*?)^\[/m.exec(
+      channelSpec,
+    )?.[1];
+    assert.match(requirements ?? "", /^expectsOnlineStoreParity = false$/m);
+    assert.match(requirements ?? "", /^merchantOfRecord = "merchant"$/m);
   });
 
   it("makes conservative capability claims", () => {
