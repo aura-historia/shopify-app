@@ -145,6 +145,7 @@ describe("public install flow", () => {
     );
     assert.ok(marketingRoute.includes("product_listings/add"));
     assert.ok(marketingRoute.includes("read_product_listings"));
+    assert.ok(marketingRoute.includes("read_publications"));
     assert.ok(marketingRoute.includes("customers/data_request"));
     assert.ok(marketingRoute.includes("read_locales"));
     assert.ok(marketingRoute.includes("read_shipping"));

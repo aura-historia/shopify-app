@@ -82,7 +82,7 @@ describe("shopify.app.toml", () => {
       const scopes = config.match(/^scopes = "([^"]*)"$/m)?.[1];
       assert.equal(
         scopes,
-        "read_products,read_product_listings,read_locales,read_shipping,read_markets",
+        "read_products,read_product_listings,read_publications,read_locales,read_shipping,read_markets",
       );
       // Shopify rejects static subscriptions whose scope is only optional.
       assert.ok(scopes.split(",").includes(fixture.requiredScope));
@@ -90,6 +90,9 @@ describe("shopify.app.toml", () => {
         scopes.split(",").includes(marketFixture.evidence.requiredScope),
       );
       assert.ok(scopes.split(",").includes("read_product_listings"));
+      // The channel's publication and the catalog import's membership reads
+      // are publication fields; every installation needs them.
+      assert.ok(scopes.split(",").includes("read_publications"));
       assert.doesNotMatch(config, /^optional_scopes\b/m);
       assert.ok(wrangler.includes(`"SCOPES": "${scopes}"`));
     }

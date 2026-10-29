@@ -945,12 +945,13 @@ function stepGraphql({
   rootObjectCount = "0",
   ...channel
 }: { rootObjectCount?: string } & ChannelState = {}): GraphqlRequestFn {
-  return async (query) =>
+  return async (query, variables) =>
     isChannelQuery(query)
-      ? channelResponse(query, {
-          publication: { id: publicationId },
-          ...channel,
-        })
+      ? channelResponse(
+          query,
+          { publication: { id: publicationId }, ...channel },
+          variables,
+        )
       : {
           data: {
             node: {
@@ -1440,7 +1441,7 @@ describe("catalog import steps", () => {
             newJob(),
             makeContext(),
             async (query, variables) => {
-              if (query.includes("AuraChannelPublication"))
+              if (query.includes("AuraChannelCatalogPublication"))
                 throw new Error("Network connection lost");
               return readable(query, variables);
             },
@@ -1498,8 +1499,18 @@ describe("catalog import steps", () => {
   });
 });
 
-const publicationResponse = (query: string, state: ChannelState = {}) =>
-  channelResponse(query, { publication: { id: publicationId }, ...state });
+type Variables = Record<string, unknown>;
+
+const publicationResponse = (
+  query: string,
+  variables: Variables,
+  state: ChannelState = {},
+) =>
+  channelResponse(
+    query,
+    { publication: { id: publicationId }, ...state },
+    variables,
+  );
 
 describe("configureShopifyListingSource and triggerBackfill", () => {
   const validatedMetadata: ValidatedShopifyMetadata = {
@@ -1508,7 +1519,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
   };
 
   function graphqlRequest(): GraphqlRequestFn {
-    return mock.fn(async (query: string) =>
+    return mock.fn(async (query: string, variables: Variables) =>
       query.includes("shopLocales")
         ? {
             data: {
@@ -1517,7 +1528,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
             },
           }
         : isChannelQuery(query)
-          ? publicationResponse(query)
+          ? publicationResponse(query, variables)
           : {
               data: {
                 bulkOperationRunQuery: {
@@ -1569,8 +1580,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         );
         assert.equal(fetchMock.mock.callCount(), 1);
       });
-      // Metadata, the idempotent connection check, publication and export.
-      assert.equal(graphql.mock.callCount(), 7);
+      // Metadata, the idempotent connection check, the catalog scan, the own
+      // catalog's publication and export.
+      assert.equal(graphql.mock.callCount(), 8);
       const stored = await loadBackfillContext(kv as never, shopDomain);
       assert.ok(stored);
       assert.equal(stored.listingSourceId, listingSourceId);
@@ -1634,8 +1646,8 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
 
   it("submits bulk work without metadata fetch or provider PUT and does not invent locale", async () => {
     const kv = makeKv();
-    const graphql = mock.fn(async (query: string) => {
-      if (isChannelQuery(query)) return publicationResponse(query);
+    const graphql = mock.fn(async (query: string, variables: Variables) => {
+      if (isChannelQuery(query)) return publicationResponse(query, variables);
       assert.match(query, /bulkOperationRunQuery/);
       return {
         data: {
@@ -1666,7 +1678,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       );
     });
     assert.equal(fetchMock.mock.callCount(), 0);
-    assert.equal(graphql.mock.callCount(), 6);
+    assert.equal(graphql.mock.callCount(), 7);
     const stored = await loadBackfillContext(kv as never, shopDomain);
     assert.ok(stored);
     assert.equal(stored.currencyCode, "JPY");
@@ -1678,9 +1690,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
 
   it("does not store context if bulk submission fails", async () => {
     const kv = makeKv();
-    const graphql: GraphqlRequestFn = async (query) =>
+    const graphql: GraphqlRequestFn = async (query, variables) =>
       isChannelQuery(query)
-        ? publicationResponse(query)
+        ? publicationResponse(query, variables)
         : { errors: "Already running" };
     assert.equal(
       await triggerBackfill(
@@ -1710,9 +1722,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     });
     assert.equal(
       await triggerBackfill(
-        async (query) =>
+        async (query, variables) =>
           isChannelQuery(query)
-            ? publicationResponse(query)
+            ? publicationResponse(query, variables)
             : {
                 data: {
                   bulkOperationRunQuery: {
@@ -1739,7 +1751,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     );
   });
 
-  const refuse = (query: string) =>
+  const refuse = (query: string, variables: Variables) =>
     query.includes("AuraChannelCreate")
       ? {
           data: {
@@ -1749,20 +1761,37 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
             },
           },
         }
-      : publicationResponse(query, { channel: null });
+      : publicationResponse(query, variables, { channel: null });
   for (const [name, respond, error] of [
     [
       "a missing read_product_listings grant",
-      (query: string) =>
-        publicationResponse(query, {
+      (query: string, variables: Variables) =>
+        publicationResponse(query, variables, {
           scopes: ["read_products", "read_locales"],
+        }),
+      "MISSING_SCOPE",
+    ],
+    [
+      // The exact grants of an installation approved before
+      // `read_publications` was required (#392).
+      "a missing read_publications grant",
+      (query: string, variables: Variables) =>
+        publicationResponse(query, variables, {
+          scopes: [
+            "read_locales",
+            "read_markets",
+            "read_product_listings",
+            "read_products",
+            "read_shipping",
+          ],
         }),
       "MISSING_SCOPE",
     ],
     ["a refused channel connection", refuse, "CHANNEL_REJECTED"],
     [
       "a missing app publication",
-      (query: string) => publicationResponse(query, { publication: null }),
+      (query: string, variables: Variables) =>
+        publicationResponse(query, variables, { publication: null }),
       "MISSING_PUBLICATION",
     ],
     [
@@ -1772,8 +1801,8 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     ],
     [
       "a malformed publication",
-      (query: string) =>
-        publicationResponse(query, {
+      (query: string, variables: Variables) =>
+        publicationResponse(query, variables, {
           publication: { id: "gid://shopify/Channel/1" },
         }),
       "SHOPIFY_READ_FAILED",
@@ -1784,9 +1813,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       const queries: string[] = [];
       assert.equal(
         await triggerBackfill(
-          async (query) => {
+          async (query, variables) => {
             queries.push(query);
-            if (isChannelQuery(query)) return respond(query);
+            if (isChannelQuery(query)) return respond(query, variables);
             throw new Error("No bulk export without a verified publication");
           },
           kv as never,
@@ -1799,6 +1828,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         false,
       );
       assert.ok(queries.every(isChannelQuery));
+      // Missing access is detected before any publication read.
+      if (error === "MISSING_SCOPE")
+        assert.ok(!queries.some((query) => /AuraChannelCatalog/.test(query)));
       assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
       const status = await loadCatalogImportStatus(kv as never, shopDomain);
       assert.equal(status?.phase, "failed");
@@ -1820,7 +1852,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
             return { data: { channelCreate: { channel, userErrors: [] } } };
           }
           if (isChannelQuery(query))
-            return publicationResponse(query, { channel });
+            return publicationResponse(query, variables, { channel });
           assert.match(query, /bulkOperationRunQuery/);
           return {
             data: {

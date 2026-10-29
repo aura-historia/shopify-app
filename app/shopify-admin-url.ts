@@ -20,3 +20,19 @@ export function createShopifyAdminAppUrl(
 
   return url;
 }
+
+// Shopify's managed-installation page for this app. For an installation with
+// pending required scopes it asks the merchant to approve the updated access,
+// then returns to the app.
+export function createShopifyPermissionsUrl(
+  shopifyStoreName: string,
+  clientId: string,
+) {
+  const url = new URL(
+    `https://admin.shopify.com/store/${encodeURIComponent(
+      shopifyStoreName,
+    )}/oauth/install`,
+  );
+  url.searchParams.set("client_id", clientId);
+  return url;
+}

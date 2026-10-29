@@ -9,15 +9,19 @@ export const AURA_CHANNEL_SPECIFICATION_HANDLE = "aura-historia";
 const AURA_CHANNEL_ACCOUNT_NAME = "Aura Historia";
 
 const CHANNEL_GID = /^gid:\/\/shopify\/Channel\/([1-9]\d*)$/;
+const APP_CATALOG_GID = /^gid:\/\/shopify\/AppCatalog\/([1-9]\d*)$/;
 export const PUBLICATION_GID = /^gid:\/\/shopify\/Publication\/([1-9]\d*)$/;
 
-// Shopify scope for the app's own channel listings: channel connections, the
-// listing webhooks and per-publication membership reads depend on it. The
-// write scope implies it.
-const PRODUCT_LISTINGS_SCOPES = new Set([
+// Shopify scope for the app's own channel listings: channel connections and
+// the listing webhooks depend on it. The write scope implies it.
+const PRODUCT_LISTINGS_SCOPES = [
   "read_product_listings",
   "write_product_listings",
-]);
+];
+// Shopify scope for publication fields: the publication of the channel's app
+// catalog and every product's `publishedOnPublication` membership are denied
+// without it. The write scope implies it.
+const PUBLICATIONS_SCOPES = ["read_publications", "write_publications"];
 
 // Bounds the app catalog scan: 20 pages of 25 catalogs.
 const CATALOG_PAGE_SIZE = 25;
@@ -42,8 +46,9 @@ export type ListingAccess = "granted" | "missing" | "unavailable";
 // configuration is not proof that the merchant approved the new scope.
 // Scopes are read on their own because the Admin client throws on any GraphQL
 // error, which would hide a denial behind a generic failure.
-export async function readListingAccess(
+async function readAccess(
   graphql: GraphqlRequestFn,
+  required: string[][],
 ): Promise<ListingAccess> {
   try {
     const response = await graphql(
@@ -58,16 +63,33 @@ export async function readListingAccess(
         | undefined
     )?.currentAppInstallation?.accessScopes;
     if (response.errors || !Array.isArray(granted)) return "unavailable";
-    return granted.some(
-      (scope: { handle?: unknown } | null) =>
-        typeof scope?.handle === "string" &&
-        PRODUCT_LISTINGS_SCOPES.has(scope.handle),
+    const handles = new Set(
+      granted.map((scope: { handle?: unknown } | null) => scope?.handle),
+    );
+    return required.every((scopes) =>
+      scopes.some((scope) => handles.has(scope)),
     )
       ? "granted"
       : "missing";
   } catch {
     return "unavailable";
   }
+}
+
+// Access to create, rebind and receive the listings of the channel connection.
+export function readListingAccess(
+  graphql: GraphqlRequestFn,
+): Promise<ListingAccess> {
+  return readAccess(graphql, [PRODUCT_LISTINGS_SCOPES]);
+}
+
+// Access to resolve the connection's publication and read every product's
+// membership in it. Installations approved before `read_publications` was
+// required lack it until the merchant approves the updated access.
+export function readCatalogAccess(
+  graphql: GraphqlRequestFn,
+): Promise<ListingAccess> {
+  return readAccess(graphql, [PRODUCT_LISTINGS_SCOPES, PUBLICATIONS_SCOPES]);
 }
 
 function parseChannel(value: unknown): AuraChannel | null | undefined {
@@ -237,81 +259,126 @@ export type ChannelPublicationLookup =
   | { state: "missing" }
   | { state: "unavailable" };
 
+interface CatalogChannels {
+  nodes?: Array<{ id?: unknown } | null>;
+  pageInfo?: { hasNextPage?: unknown };
+}
+
 interface CatalogPage {
   catalogs?: {
-    nodes?: Array<{
-      publication?: { id?: unknown } | null;
-      channels?: {
-        nodes?: Array<{ id?: unknown }>;
-        pageInfo?: { hasNextPage?: unknown };
-      };
-    }>;
+    nodes?: Array<{ id?: unknown; channels?: CatalogChannels } | null>;
     pageInfo?: { hasNextPage?: unknown; endCursor?: unknown };
   };
 }
 
+interface CatalogPublication {
+  catalog?: {
+    publication?: { id?: unknown } | null;
+    channels?: CatalogChannels;
+  } | null;
+}
+
+// Whether a catalog lists the channel. Unreadable or cut-off channels are
+// unknown: such a catalog might list it.
+function listsChannel(
+  channels: CatalogChannels | undefined,
+  channelId: string,
+): boolean | undefined {
+  if (!Array.isArray(channels?.nodes)) return undefined;
+  if (channels.nodes.some((channel) => channel?.id === channelId)) return true;
+  return channels.pageInfo?.hasNextPage === false ? false : undefined;
+}
+
+// Finds the one app catalog that lists the channel. The scan reads only
+// catalog identity and channels, which every app catalog exposes to this app,
+// so other apps' catalogs never fail the lookup.
+async function findChannelCatalog(
+  graphql: GraphqlRequestFn,
+  channelId: string,
+): Promise<
+  | { state: "ready"; catalogId: string }
+  | Exclude<ChannelPublicationLookup, { state: "ready" }>
+> {
+  const found = new Set<string>();
+  let truncated = false;
+  let after: string | null = null;
+  for (let page = 0; page < CATALOG_MAX_PAGES; page++) {
+    const response = await graphql(
+      `query AuraChannelCatalogs($first: Int!, $after: String) {
+      catalogs(type: APP, first: $first, after: $after) {
+        nodes {
+          id
+          ... on AppCatalog {
+            channels(first: 10) { nodes { id } pageInfo { hasNextPage } }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }`,
+      { first: CATALOG_PAGE_SIZE, after },
+    );
+    const catalogs = (response.data as CatalogPage | undefined)?.catalogs;
+    if (response.errors || !Array.isArray(catalogs?.nodes))
+      return { state: "unavailable" };
+    for (const catalog of catalogs.nodes) {
+      const listed = listsChannel(catalog?.channels, channelId);
+      // An unknown catalog rules out a confirmed missing publication.
+      if (listed === undefined) truncated = true;
+      else if (listed) {
+        if (
+          typeof catalog?.id !== "string" ||
+          !APP_CATALOG_GID.test(catalog.id)
+        )
+          return { state: "unavailable" };
+        found.add(catalog.id);
+      }
+    }
+    const next = catalogs.pageInfo;
+    if (next?.hasNextPage === false) {
+      // One channel belongs to exactly one app catalog; anything else is not
+      // a trustworthy selection.
+      if (found.size === 1) return { state: "ready", catalogId: [...found][0] };
+      return found.size === 0 && !truncated
+        ? { state: "missing" }
+        : { state: "unavailable" };
+    }
+    if (typeof next?.endCursor !== "string") return { state: "unavailable" };
+    after = next.endCursor;
+  }
+  return { state: "unavailable" };
+}
+
 // `currentAppInstallation.publication` is deprecated in 2026-10 and does not
-// identify an explicit channel connection; the `publications` successor needs
-// `read_publications`, which is not requested. The app catalog that lists this
+// identify an explicit channel connection. The app catalog that lists this
 // channel holds the publication the merchant's product selection is recorded
-// on.
+// on. Its `publication` field needs `read_publications` and is read on that
+// catalog only.
 export async function findChannelPublication(
   graphql: GraphqlRequestFn,
   channelId: string,
 ): Promise<ChannelPublicationLookup> {
   try {
-    const found = new Set<string>();
-    let truncated = false;
-    let after: string | null = null;
-    for (let page = 0; page < CATALOG_MAX_PAGES; page++) {
-      const response = await graphql(
-        `query AuraChannelPublication($first: Int!, $after: String) {
-        catalogs(type: APP, first: $first, after: $after) {
-          nodes {
-            ... on AppCatalog {
-              publication { id }
-              channels(first: 10) { nodes { id } pageInfo { hasNextPage } }
-            }
-          }
-          pageInfo { hasNextPage endCursor }
-        }
-      }`,
-        { first: CATALOG_PAGE_SIZE, after },
-      );
-      const catalogs = (response.data as CatalogPage | undefined)?.catalogs;
-      if (response.errors || !Array.isArray(catalogs?.nodes))
-        return { state: "unavailable" };
-      for (const catalog of catalogs.nodes) {
-        const channels = catalog?.channels;
-        // A catalog whose channels are unreadable or cut off might list this
-        // channel, so it rules out a confirmed missing publication.
-        if (!Array.isArray(channels?.nodes)) {
-          truncated = true;
-        } else if (
-          channels.nodes.some((channel) => channel?.id === channelId)
-        ) {
-          const id = catalog.publication?.id;
-          if (typeof id !== "string" || !PUBLICATION_GID.test(id))
-            return { state: "unavailable" };
-          found.add(id);
-        } else if (channels.pageInfo?.hasNextPage !== false) {
-          truncated = true;
+    const lookup = await findChannelCatalog(graphql, channelId);
+    if (lookup.state !== "ready") return lookup;
+    const response = await graphql(
+      `query AuraChannelCatalogPublication($id: ID!) {
+      catalog(id: $id) {
+        ... on AppCatalog {
+          publication { id }
+          channels(first: 10) { nodes { id } pageInfo { hasNextPage } }
         }
       }
-      const next = catalogs.pageInfo;
-      if (next?.hasNextPage === false) {
-        // One channel belongs to exactly one publication; anything else is
-        // not a trustworthy selection.
-        if (found.size === 1)
-          return { state: "ready", publicationId: [...found][0] };
-        return found.size === 0 && !truncated
-          ? { state: "missing" }
-          : { state: "unavailable" };
-      }
-      if (typeof next?.endCursor !== "string") return { state: "unavailable" };
-      after = next.endCursor;
-    }
-    return { state: "unavailable" };
+    }`,
+      { id: lookup.catalogId },
+    );
+    const catalog = (response.data as CatalogPublication | undefined)?.catalog;
+    // The catalog must still list the channel when its publication is read.
+    if (response.errors || listsChannel(catalog?.channels, channelId) !== true)
+      return { state: "unavailable" };
+    const id = catalog?.publication?.id;
+    return typeof id === "string" && PUBLICATION_GID.test(id)
+      ? { state: "ready", publicationId: id }
+      : { state: "unavailable" };
   } catch {
     return { state: "unavailable" };
   }

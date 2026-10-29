@@ -244,7 +244,7 @@ function connectedEnv({ refuseChannel = false } = {}) {
       };
     }
     if (isChannelQuery(query))
-      return channelResponse(query, { channel: shopify.channel });
+      return channelResponse(query, { channel: shopify.channel }, variables);
     assert.match(query, /bulkOperationRunQuery/);
     shopify.exports++;
     return {

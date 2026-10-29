@@ -37,7 +37,12 @@ const accessSections = [
       {
         name: "read_product_listings",
         description:
-          "Reads which products are published to this sales channel for the initial import and repairs.",
+          "Sets up the Aura Historia sales channel connection and receives the listings of products published to it.",
+      },
+      {
+        name: "read_publications",
+        description:
+          "Reads which products are published to this sales channel for the initial import and repairs. Publishing is never changed.",
       },
       {
         name: "product_listings/add",

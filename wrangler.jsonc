@@ -30,7 +30,7 @@
   "vars": {
     "SHOPIFY_API_VERSION": "2026-10",
     "SHOPIFY_APP_URL": "https://partner-connect.aura-historia.com",
-    "SCOPES": "read_products,read_product_listings,read_locales,read_shipping,read_markets",
+    "SCOPES": "read_products,read_product_listings,read_publications,read_locales,read_shipping,read_markets",
     "AURA_HISTORIA_API_BASE_URL": "https://api.aura-historia.com",
     "AURA_HISTORIA_OAUTH_ENV": "prod",
     "AURA_HISTORIA_OAUTH_SCOPE": "listing-sources:read listing-sources:write product-listings:read product-listings:write",
