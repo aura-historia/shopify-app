@@ -52,8 +52,12 @@ type IntegrationStatus =
 const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   MISSING_SCOPE:
     "Aura Historia lacks Shopify access to this channel's product listings. Approve the app's permissions in Shopify, then import the catalog again.",
+  MISSING_CHANNEL:
+    "The Aura Historia sales channel is not set up for this listing source in Shopify. Import the catalog again to set it up.",
+  CHANNEL_REJECTED:
+    "Shopify did not accept the Aura Historia sales channel for this store. Your store settings are unchanged. Import the catalog again later or contact support.",
   MISSING_PUBLICATION:
-    "The Aura Historia sales channel was not found in Shopify. Reinstall the channel or contact support.",
+    "Shopify did not return the product selection of the Aura Historia sales channel. Import the catalog again or contact support.",
   SHOPIFY_READ_FAILED:
     "Shopify product data could not be read. Retry the import or contact support.",
   PUBLICATION_CHANGED:
@@ -126,6 +130,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
       ? await getChannelPublication(
           offlineGraphql(context, session.shop),
           session.shop,
+          credentials.listingSourceId,
         )
       : null,
     credentials: credentials
@@ -375,6 +380,14 @@ export default function AppIndex() {
                     again. No catalog import runs until then.
                   </s-paragraph>
                 </s-banner>
+              ) : publication?.state === "missing_channel" ? (
+                <s-banner tone="critical" heading="Sales channel not set up">
+                  <s-paragraph>
+                    {CATALOG_ISSUE_MESSAGES.MISSING_CHANNEL} Products cannot be
+                    selected for Aura Historia and no catalog import runs until
+                    then.
+                  </s-paragraph>
+                </s-banner>
               ) : publication?.state === "missing_publication" ? (
                 <s-banner tone="critical" heading="Sales channel not found">
                   <s-paragraph>
@@ -388,7 +401,7 @@ export default function AppIndex() {
                     ? "The Aura Historia channel selection is unavailable. Refresh this page or contact support if the issue continues."
                     : publication.count === null
                       ? "The number of products selected for this channel is unavailable."
-                      : `${publication.atLeast ? "At least " : ""}${publication.count} active products are selected for the Aura Historia channel in Shopify. The count can include products scheduled for later publication; only published products are imported.`}
+                      : `${publication.atLeast ? "At least " : ""}${publication.count} active products are published to the Aura Historia channel in Shopify. This is Shopify's channel selection, not an import count.`}
                 </s-paragraph>
               )}
               <s-paragraph>

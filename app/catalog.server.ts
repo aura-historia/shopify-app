@@ -1,20 +1,22 @@
 import type { GraphqlRequestFn } from "./backfill.server";
+import {
+  type AuraChannel,
+  type ChannelProvisioning,
+  findChannelPublication,
+  isBoundChannel,
+  PUBLICATION_GID,
+  readAuraChannel,
+  readListingAccess,
+} from "./channel.server";
 import { getShopifyStoreName } from "./shopify-admin-url";
 
 type KV = Pick<CloudflareBindings["KV"], "get" | "put" | "delete">;
 const STATUS_PREFIX = "aura-historia:catalog-status:";
 
-// Shopify scope for the app's own channel listings: the listing webhooks and
-// per-publication membership reads depend on it. The write scope implies it.
-export const PRODUCT_LISTINGS_SCOPE = "read_product_listings";
-const PRODUCT_LISTINGS_SCOPES = new Set([
-  PRODUCT_LISTINGS_SCOPE,
-  "write_product_listings",
-]);
-export const PUBLICATION_GID = /^gid:\/\/shopify\/Publication\/([1-9]\d*)$/;
-
 export const CATALOG_IMPORT_ERRORS = [
   "MISSING_SCOPE",
+  "MISSING_CHANNEL",
+  "CHANNEL_REJECTED",
   "MISSING_PUBLICATION",
   "SHOPIFY_READ_FAILED",
   "PUBLICATION_CHANGED",
@@ -127,6 +129,7 @@ export async function clearCatalogImportStatus(
 
 export type ChannelPublicationState =
   | "missing_scope"
+  | "missing_channel"
   | "missing_publication"
   | "unavailable";
 
@@ -139,99 +142,73 @@ export const CHANNEL_PUBLICATION_ERRORS: Record<
   CatalogImportError
 > = {
   missing_scope: "MISSING_SCOPE",
+  missing_channel: "MISSING_CHANNEL",
   missing_publication: "MISSING_PUBLICATION",
   unavailable: "SHOPIFY_READ_FAILED",
 };
 
-interface ChannelPublicationData {
-  currentAppInstallation?: {
-    accessScopes?: Array<{ handle?: unknown }>;
-    publication?: {
-      id?: unknown;
-      includedProductsCount?: { count?: unknown; precision?: unknown };
-    } | null;
-  };
-}
+export const CHANNEL_PROVISIONING_ERRORS: Record<
+  Exclude<ChannelProvisioning["state"], "ready">,
+  CatalogImportError
+> = {
+  missing_scope: "MISSING_SCOPE",
+  rejected: "CHANNEL_REJECTED",
+  unavailable: "SHOPIFY_READ_FAILED",
+};
 
 async function readChannelPublication(
   graphql: GraphqlRequestFn,
+  listingSourceId: string,
   includeCount: boolean,
 ): Promise<{
   resolution: ChannelPublicationResolution;
-  publication?: NonNullable<
-    NonNullable<ChannelPublicationData["currentAppInstallation"]>["publication"]
-  >;
+  channel?: AuraChannel;
 }> {
-  try {
-    // Verify the access actually granted to this installation: a changed
-    // configuration is not proof that the merchant approved the new scope.
-    // Scopes are read on their own because the Admin client throws on any
-    // GraphQL error, which would hide a denial behind a generic failure.
-    const scopes = await graphql(
-      `query AuraChannelAccess {
-      currentAppInstallation { accessScopes { handle } }
-    }`,
-      {},
-    );
-    const granted = (scopes.data as ChannelPublicationData | undefined)
-      ?.currentAppInstallation?.accessScopes;
-    if (scopes.errors || !Array.isArray(granted))
-      return { resolution: { state: "unavailable" } };
-    if (
-      !granted.some(
-        (scope) =>
-          typeof scope?.handle === "string" &&
-          PRODUCT_LISTINGS_SCOPES.has(scope.handle),
-      )
-    )
-      return { resolution: { state: "missing_scope" } };
-
-    // `currentAppInstallation.publication` is deprecated without a successor
-    // in 2026-10, but it is the only reference to this app's own channel.
-    const response = await graphql(
-      `query AuraChannelPublication {
-      currentAppInstallation {
-        publication {
-          id
-          ${includeCount ? 'includedProductsCount(query: "status:active") { count precision }' : ""}
-        }
-      }
-    }`,
-      {},
-    );
-    if (response.errors) return { resolution: { state: "unavailable" } };
-    const installation = (response.data as ChannelPublicationData | undefined)
-      ?.currentAppInstallation;
-    const publication = installation?.publication;
-    if (publication === null)
-      return { resolution: { state: "missing_publication" } };
-    if (
-      typeof publication?.id !== "string" ||
-      !PUBLICATION_GID.test(publication.id)
-    )
-      return { resolution: { state: "unavailable" } };
+  const access = await readListingAccess(graphql);
+  if (access !== "granted")
     return {
-      resolution: { state: "ready", publicationId: publication.id },
-      publication,
+      resolution: {
+        state: access === "missing" ? "missing_scope" : "unavailable",
+      },
     };
-  } catch {
-    return { resolution: { state: "unavailable" } };
-  }
+  const channel = await readAuraChannel(graphql, includeCount);
+  if (channel === undefined) return { resolution: { state: "unavailable" } };
+  // Only the connection bound to the authorized listing source selects the
+  // products imported into it.
+  if (!isBoundChannel(channel, listingSourceId))
+    return { resolution: { state: "missing_channel" } };
+  const publication = await findChannelPublication(graphql, channel.id);
+  if (publication.state !== "ready")
+    return {
+      resolution: {
+        state:
+          publication.state === "missing"
+            ? "missing_publication"
+            : "unavailable",
+      },
+    };
+  return {
+    resolution: { state: "ready", publicationId: publication.publicationId },
+    channel,
+  };
 }
 
-// Resolves the current installation's own channel publication. Missing access,
-// a missing publication or a failed read never fall back to another channel.
+// Resolves the publication of this installation's channel connection for the
+// given listing source. Missing access, a missing or foreign connection and
+// failed reads never fall back to another channel.
 export async function resolveChannelPublication(
   graphql: GraphqlRequestFn,
+  listingSourceId: string,
 ): Promise<ChannelPublicationResolution> {
-  return (await readChannelPublication(graphql, false)).resolution;
+  return (await readChannelPublication(graphql, listingSourceId, false))
+    .resolution;
 }
 
 export type ChannelPublication =
   | {
       state: "ready";
-      // Products selected for the channel in Shopify. Included products may
-      // still be scheduled for later publication; this is not an import count.
+      // Active products published to the channel in Shopify. This is not an
+      // import count.
       count: number | null;
       atLeast: boolean;
       editorUrl: string;
@@ -241,15 +218,17 @@ export type ChannelPublication =
 export async function getChannelPublication(
   graphql: GraphqlRequestFn,
   shop: string,
+  listingSourceId: string,
 ): Promise<ChannelPublication> {
-  const { resolution, publication } = await readChannelPublication(
+  const { resolution, channel } = await readChannelPublication(
     graphql,
+    listingSourceId,
     true,
   );
   if (resolution.state !== "ready") return resolution;
   const id = PUBLICATION_GID.exec(resolution.publicationId)?.[1] ?? "";
-  const count = publication?.includedProductsCount?.count;
-  const precision = publication?.includedProductsCount?.precision;
+  const count = channel?.productsCount?.count;
+  const precision = channel?.productsCount?.precision;
   const counted =
     Number.isSafeInteger(count) &&
     (count as number) >= 0 &&

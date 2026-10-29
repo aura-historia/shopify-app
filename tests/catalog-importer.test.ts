@@ -8,6 +8,7 @@ import {
 } from "../app/backfill.server";
 import { loadCatalogImportStatus } from "../app/catalog.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
+import { channelResponse, isChannelQuery } from "./helpers/channel-fixtures";
 
 // Run the actual importer against isolated storage and the platform base
 // class shim. No live Shopify installation, Cloudflare binding or Aura source.
@@ -114,20 +115,11 @@ function shopify({ fail = false, publicationFailures = 0 } = {}) {
       publicationReads++ < publicationFailures
     )
       throw new Error("Network connection lost");
-    if (query.includes("AuraChannelAccess"))
-      return {
-        data: {
-          currentAppInstallation: {
-            accessScopes: [{ handle: "read_product_listings" }],
-          },
-        },
-      };
-    if (query.includes("AuraChannelPublication"))
-      return {
-        data: {
-          currentAppInstallation: { publication: { id: publicationId } },
-        },
-      };
+    if (isChannelQuery(query))
+      return channelResponse(query, {
+        scopes: ["read_product_listings"],
+        publication: { id: publicationId },
+      });
     return {
       data: {
         node: {

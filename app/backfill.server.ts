@@ -1,10 +1,11 @@
 import {
   type CatalogImportStatus,
+  CHANNEL_PROVISIONING_ERRORS,
   CHANNEL_PUBLICATION_ERRORS,
-  PUBLICATION_GID,
   resolveChannelPublication,
   saveCatalogImportStatus,
 } from "./catalog.server";
+import { ensureAuraChannel, PUBLICATION_GID } from "./channel.server";
 import { CURRENCY_MINOR_UNITS } from "./currency";
 import { createClient } from "./generated/api/client";
 import {
@@ -146,7 +147,7 @@ export interface BackfillContext {
   shopDomain: string;
 
   bulkOperationId: string;
-  // The app publication whose membership the snapshot reads.
+  // The channel publication whose membership the snapshot reads.
   publicationId: string;
   createdAt: string;
 }
@@ -942,9 +943,13 @@ export async function runCatalogImportStep(
     job.result ??
     (await fetchBulkOperationResult(graphqlRequest, job.bulkOperationId));
   // Every step writes with the current installation's access and publication.
-  // A revoked scope or replaced channel invalidates the whole snapshot; an
-  // unreadable publication is a transient read failure.
-  const publication = await resolveChannelPublication(graphqlRequest);
+  // A revoked scope, a channel rebound to another source or a replaced
+  // publication invalidates the whole snapshot; an unreadable publication is a
+  // transient read failure.
+  const publication = await resolveChannelPublication(
+    graphqlRequest,
+    context.listingSourceId,
+  );
   if (publication.state === "unavailable")
     throw new Error("Shopify channel publication could not be read");
   if (
@@ -1034,9 +1039,28 @@ export async function triggerBackfill(
   validatedMetadata: ValidatedShopifyMetadata,
 ): Promise<boolean> {
   try {
+    // Every import first (re)binds the installation's channel connection to
+    // the authorized source, so a failed or missing setup is repaired by
+    // importing again. A refusal is reported, never treated as connected.
+    const channel = await ensureAuraChannel(graphqlRequest, listingSourceId);
+    if (channel.state !== "ready") {
+      await saveCatalogImportStatus(kv, shopDomain, {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: CHANNEL_PROVISIONING_ERRORS[channel.state],
+      });
+      console.warn(
+        `Backfill not submitted for ${shopDomain}: channel ${channel.state}`,
+      );
+      return false;
+    }
     // Missing access, a missing publication or a failed read is a recoverable
     // sync state. It never falls back to importing every active product.
-    const publication = await resolveChannelPublication(graphqlRequest);
+    const publication = await resolveChannelPublication(
+      graphqlRequest,
+      listingSourceId,
+    );
     if (publication.state !== "ready") {
       await saveCatalogImportStatus(kv, shopDomain, {
         phase: "failed",

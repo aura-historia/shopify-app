@@ -3,4 +3,7 @@ type = "channel_config"
 name = "Aura Historia channel config"
 description = "Sales channel configuration for publishing Shopify products to Aura Historia discovery surfaces."
 handle = "channel-config"
+# No channel is created on install. After the merchant authorizes Aura
+# Historia, the app creates or rebinds one explicit connection with
+# `channelCreate`/`channelUpdate` (app/channel.server.ts).
 create_legacy_channel_on_app_install = false
