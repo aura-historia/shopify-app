@@ -46,8 +46,9 @@ function listing(id: unknown) {
 // Answers this app's channel reads as Shopify 2026-10 shapes them: granted
 // scopes, the explicit connection by handle and the app catalogs listing it.
 // Another app's catalog is always present. Publications are publication
-// fields: without `read_publications` Shopify denies them, and this fixture
-// serves one only for the channel's own catalog.
+// fields: without `read_publications` Shopify denies them, which the offline
+// Admin client raises as an error, and this fixture serves one only for the
+// channel's own catalog, never in the catalog scan.
 export function channelResponse(
   query: string,
   {
@@ -75,6 +76,8 @@ export function channelResponse(
       : channelId;
   if (query.includes("AuraChannelCatalogs")) {
     if (publication instanceof Error) throw publication;
+    if (/publication/.test(query))
+      throw new Error("Publication read outside the app's own catalog");
     return {
       data: {
         catalogs: {
@@ -101,16 +104,7 @@ export function channelResponse(
       !scopes.includes("read_publications") &&
       !scopes.includes("write_publications")
     )
-      return {
-        data: { catalog: { publication: null, channels: listing(listed) } },
-        errors: [
-          {
-            message: "Access denied for publication field.",
-            extensions: { code: "ACCESS_DENIED" },
-            path: ["catalog", "publication"],
-          },
-        ],
-      };
+      throw new Error("Access denied for publication field.");
     return { data: { catalog: { publication, channels: listing(listed) } } };
   }
   throw new Error(`Unexpected channel query: ${query.slice(0, 60)}`);

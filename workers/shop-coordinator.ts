@@ -5,7 +5,10 @@ import {
   InvalidJwtError,
 } from "@shopify/shopify-api";
 import { SessionNotFoundError } from "@shopify/shopify-app-react-router/server";
-import type { GraphqlRequestFn } from "../app/backfill.server";
+import {
+  type GraphqlRequestFn,
+  resumeCatalogImport,
+} from "../app/backfill.server";
 import {
   getAuraHistoriaApiBaseUrl,
   getAuraHistoriaOAuthConfig,
@@ -275,6 +278,28 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         throw new ShippingReadError("SHOPIFY_OFFLINE_ACCESS_REQUIRED");
       }
       throw error;
+    }
+  }
+
+  // Approved scopes can also unblock a catalog import that stopped for
+  // missing access. This runs inside the serialized alarm, so its Shopify
+  // reads use the provider directly; it never fails shipping.
+  private async resumeCatalog(
+    shop: string,
+    credentials: ShopCredentialsRecord,
+  ) {
+    try {
+      await resumeCatalogImport(
+        (query, variables) => this.providerGraphql(shop, query, variables),
+        this.env.KV,
+        shop,
+        credentials.listingSourceId,
+        credentials.accessToken,
+        getAuraHistoriaApiBaseUrl(this.env) ??
+          new URL(getAuraHistoriaOAuthConfig(this.env).tokenUrl).origin,
+      );
+    } catch {
+      console.warn(`Catalog import did not resume for ${shop}`);
     }
   }
 
@@ -760,6 +785,8 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             state.job = undefined;
           }
           this.enqueue(state, state.binding.shop, credentials, false);
+          if (scopeChanged)
+            await this.resumeCatalog(state.binding.shop, credentials);
         }
       }
       if (

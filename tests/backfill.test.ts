@@ -26,6 +26,7 @@ import {
   putShopifyIngestionConfiguration,
   requireSupportedShopifyCurrency,
   resolveLanguage,
+  resumeCatalogImport,
   runCatalogImportStep,
   sendProductBatch,
   storeBackfillContext,
@@ -35,7 +36,11 @@ import {
   triggerBackfill,
   type ValidatedShopifyMetadata,
 } from "../app/backfill.server";
-import { loadCatalogImportStatus } from "../app/catalog.server";
+import {
+  type CatalogImportStatus,
+  loadCatalogImportStatus,
+  saveCatalogImportStatus,
+} from "../app/catalog.server";
 import {
   boundChannel,
   type ChannelState,
@@ -1243,6 +1248,14 @@ describe("catalog import steps", () => {
       "MISSING_SCOPE",
     ],
     [
+      "a revoked publication scope",
+      stepGraphql({
+        rootObjectCount: "1",
+        scopes: ["read_products", "read_product_listings"],
+      }),
+      "MISSING_SCOPE",
+    ],
+    [
       "a removed channel connection",
       stepGraphql({ rootObjectCount: "1", channel: null }),
       "MISSING_CHANNEL",
@@ -1916,5 +1929,132 @@ describe("backfill configuration", () => {
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
     );
     assert.ok(pkg.scripts["openapi:generate"]);
+  });
+});
+
+describe("resumeCatalogImport after a scope update", () => {
+  // Shopify after the merchant approved `read_publications`, and Aura
+  // accepting the ingestion configuration.
+  function approvedShop(scopes?: string[]) {
+    const queries: string[] = [];
+    const graphql: GraphqlRequestFn = async (query, variables) => {
+      queries.push(query);
+      if (query.includes("shopLocales"))
+        return {
+          data: {
+            shopLocales: [{ locale: "de", primary: true }],
+            shop: { currencyCode: "EUR" },
+          },
+        };
+      if (isChannelQuery(query))
+        return publicationResponse(query, variables, scopes ? { scopes } : {});
+      assert.match(query, /bulkOperationRunQuery/);
+      return {
+        data: {
+          bulkOperationRunQuery: {
+            bulkOperation: { id: bulkOperationId, status: "CREATED" },
+            userErrors: [],
+          },
+        },
+      };
+    };
+    return { graphql, queries };
+  }
+
+  async function blocked(
+    status: Omit<CatalogImportStatus, "updatedAt"> | null = {
+      phase: "failed",
+      total: 0,
+      failed: 0,
+      error: "MISSING_SCOPE",
+    },
+  ) {
+    const kv = makeKv();
+    if (status) await saveCatalogImportStatus(kv as never, shopDomain, status);
+    return kv;
+  }
+
+  const resume = (graphql: GraphqlRequestFn, kv: ReturnType<typeof makeKv>) =>
+    resumeCatalogImport(
+      graphql,
+      kv as never,
+      shopDomain,
+      listingSourceId,
+      accessToken,
+      apiBaseUrl,
+    );
+
+  it("resumes an import that stopped for missing access once it is granted", async () => {
+    const kv = await blocked();
+    const shopify = approvedShop();
+    const fetchMock = mock.fn(async () => new Response(null, { status: 204 }));
+    await withFetch(fetchMock as typeof fetch, async () => {
+      assert.equal(await resume(shopify.graphql, kv), true);
+    });
+    assert.equal(fetchMock.mock.callCount(), 1);
+    assert.equal(
+      (await loadCatalogImportStatus(kv as never, shopDomain))?.phase,
+      "queued",
+    );
+    assert.equal(
+      (await loadBackfillContext(kv as never, shopDomain))?.publicationId,
+      publicationId,
+    );
+  });
+
+  it("leaves every other import state to the merchant", async () => {
+    for (const status of [
+      null,
+      { phase: "queued", total: 0, failed: 0 },
+      { phase: "submitted", total: 1, failed: 0 },
+      { phase: "failed", total: 0, failed: 0, error: "SHOPIFY_READ_FAILED" },
+      { phase: "failed", total: 0, failed: 0, error: "MISSING_CHANNEL" },
+    ] as const) {
+      const kv = await blocked(status);
+      const shopify = approvedShop();
+      const fetchMock = mock.fn(
+        async () => new Response(null, { status: 204 }),
+      );
+      await withFetch(fetchMock as typeof fetch, async () => {
+        assert.equal(await resume(shopify.graphql, kv), false);
+      });
+      assert.deepEqual(shopify.queries, []);
+      assert.equal(fetchMock.mock.callCount(), 0);
+    }
+  });
+
+  it("stays blocked while publication access is still missing", async () => {
+    const kv = await blocked();
+    const shopify = approvedShop(["read_products", "read_product_listings"]);
+    const fetchMock = mock.fn(async () => new Response(null, { status: 204 }));
+    await withFetch(fetchMock as typeof fetch, async () => {
+      assert.equal(await resume(shopify.graphql, kv), false);
+    });
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal(
+      (await loadCatalogImportStatus(kv as never, shopDomain))?.error,
+      "MISSING_SCOPE",
+    );
+  });
+
+  it("never throws or logs the Aura token when the resume fails", async () => {
+    const errors: string[] = [];
+    mock.method(console, "error", (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    try {
+      const kv = await blocked();
+      const fetchMock = mock.fn(async () => {
+        throw new Error(`Connection reset for ${accessToken}`);
+      });
+      await withFetch(fetchMock as typeof fetch, async () => {
+        assert.equal(await resume(approvedShop().graphql, kv), false);
+      });
+      assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+      assert.ok(errors.length > 0);
+      assert.ok(errors.every((line) => !line.includes(accessToken)));
+    } finally {
+      mock.restoreAll();
+    }
   });
 });

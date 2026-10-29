@@ -461,6 +461,39 @@ describe("Aura channel publication lookup", () => {
     );
   });
 
+  it("logs Shopify's reason for a failed publication read", async () => {
+    const warnings: string[] = [];
+    mock.method(console, "warn", (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      for (const read of [
+        () => ({
+          errors: [
+            {
+              message: "Access denied for publication field.",
+              extensions: { code: "ACCESS_DENIED" },
+            },
+          ],
+        }),
+        // The offline Admin client raises GraphQL errors.
+        () => {
+          throw new Error("Access denied for publication field.");
+        },
+      ]) {
+        const shop = catalogShop([catalogPage([own])], read);
+        assert.deepEqual(await findChannelPublication(shop.graphql, channel), {
+          state: "unavailable",
+        });
+      }
+    } finally {
+      mock.restoreAll();
+    }
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /ACCESS_DENIED Access denied for publication/);
+    assert.match(warnings[1], /Access denied for publication field/);
+  });
+
   it("never trusts a denied, missing or changed publication read", async () => {
     const catalog = ownPublication.data.catalog;
     for (const read of [

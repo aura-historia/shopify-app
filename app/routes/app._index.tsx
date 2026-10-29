@@ -485,7 +485,10 @@ export default function AppIndex() {
                 >
                   {catalogImport?.phase === "failed" && catalogImport.error && (
                     <s-paragraph>
-                      {CATALOG_ISSUE_MESSAGES[catalogImport.error]}
+                      {catalogImport.error === "MISSING_SCOPE" &&
+                      publication?.state === "ready"
+                        ? "Shopify access to this channel's product selection is now granted. Import the catalog again."
+                        : CATALOG_ISSUE_MESSAGES[catalogImport.error]}
                     </s-paragraph>
                   )}
                   <s-paragraph>

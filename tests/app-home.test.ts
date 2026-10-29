@@ -144,6 +144,26 @@ describe("Aura channel selection in the embedded home", () => {
       /Review app permissions in Shopify/,
     );
   });
+  it("asks for another import once the missing permission was granted", () => {
+    const html = renderHome(null, "", {
+      publication: {
+        state: "ready",
+        count: 3,
+        atLeast: false,
+        editorUrl:
+          "https://admin.shopify.com/store/example/bulk?edit=publications.1.published_at",
+      },
+      catalogImport: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "MISSING_SCOPE",
+      },
+    });
+    assert.match(html, /product selection is now granted/);
+    assert.doesNotMatch(html, /Review app permissions in Shopify/);
+    assert.doesNotMatch(html, /Shopify permission required/);
+  });
   it("reports a missing channel publication", () => {
     const html = renderHome(null, "", {
       publication: { state: "missing_publication" },

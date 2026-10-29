@@ -18,9 +18,10 @@ const PRODUCT_LISTINGS_SCOPES = [
   "read_product_listings",
   "write_product_listings",
 ];
-// Shopify scope for publication fields: the publication of the channel's app
-// catalog and every product's `publishedOnPublication` membership are denied
-// without it. The write scope implies it.
+// Shopify scope for publication fields: Shopify denies the publication of the
+// channel's app catalog without it, and its access-scope reference places
+// products' publication fields, such as the `publishedOnPublication`
+// membership, under it as well. The write scope implies it.
 const PUBLICATIONS_SCOPES = ["read_publications", "write_publications"];
 
 // Bounds the app catalog scan: 20 pages of 25 catalogs.
@@ -278,6 +279,29 @@ interface CatalogPublication {
   } | null;
 }
 
+// Shopify's error text names the failed or denied field, never credentials,
+// so a failed publication read stays diagnosable in the Worker log.
+function warnPublicationRead(error: unknown) {
+  const text = Array.isArray(error)
+    ? error
+        .map(
+          (
+            entry: {
+              message?: unknown;
+              extensions?: { code?: unknown };
+            } | null,
+          ) => `${entry?.extensions?.code ?? "ERROR"} ${entry?.message ?? ""}`,
+        )
+        .join("; ")
+    : error instanceof Error
+      ? error.message
+      : String(error);
+  console.warn(
+    "Shopify channel publication read failed:",
+    text.replace(/\s+/g, " ").slice(0, 300),
+  );
+}
+
 // Whether a catalog lists the channel. Unreadable or cut-off channels are
 // unknown: such a catalog might list it.
 function listsChannel(
@@ -318,6 +342,7 @@ async function findChannelCatalog(
       { first: CATALOG_PAGE_SIZE, after },
     );
     const catalogs = (response.data as CatalogPage | undefined)?.catalogs;
+    if (response.errors) warnPublicationRead(response.errors);
     if (response.errors || !Array.isArray(catalogs?.nodes))
       return { state: "unavailable" };
     for (const catalog of catalogs.nodes) {
@@ -372,6 +397,7 @@ export async function findChannelPublication(
       { id: lookup.catalogId },
     );
     const catalog = (response.data as CatalogPublication | undefined)?.catalog;
+    if (response.errors) warnPublicationRead(response.errors);
     // The catalog must still list the channel when its publication is read.
     if (response.errors || listsChannel(catalog?.channels, channelId) !== true)
       return { state: "unavailable" };
@@ -379,7 +405,9 @@ export async function findChannelPublication(
     return typeof id === "string" && PUBLICATION_GID.test(id)
       ? { state: "ready", publicationId: id }
       : { state: "unavailable" };
-  } catch {
+  } catch (error) {
+    // The offline Admin client throws on any GraphQL error, such as a denial.
+    warnPublicationRead(error);
     return { state: "unavailable" };
   }
 }

@@ -21,9 +21,9 @@ export function createShopifyAdminAppUrl(
   return url;
 }
 
-// Shopify's managed-installation page for this app. For an installation with
-// pending required scopes it asks the merchant to approve the updated access,
-// then returns to the app.
+// Shopify's installation page for this app, the page Shopify documents for
+// requesting scopes an installation has not granted. Shopify also asks for
+// added required scopes when the merchant next opens the app.
 export function createShopifyPermissionsUrl(
   shopifyStoreName: string,
   clientId: string,

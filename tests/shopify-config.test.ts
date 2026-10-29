@@ -68,7 +68,7 @@ describe("shopify.app.toml", () => {
       }
     }
   });
-  it("requires the shipping scope of the static profile subscriptions in every environment", () => {
+  it("requires the scopes of the static subscriptions and catalog reads in every environment", () => {
     const wrangler = readFileSync(
       resolve(process.cwd(), "wrangler.jsonc"),
       "utf8",

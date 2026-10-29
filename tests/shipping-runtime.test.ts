@@ -25,6 +25,11 @@ import {
 } from "../app/shop-credentials.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
 import {
+  boundChannel,
+  channelResponse,
+  isChannelQuery,
+} from "./helpers/channel-fixtures";
+import {
   fixture,
   fixtureGraphql,
   importIdentityRejection,
@@ -181,6 +186,9 @@ function coordinatorRuntime<
     beforeRead: async () => {},
     afterRead: async () => {},
   };
+  // The installation's granted scopes for catalog reads and the catalog
+  // exports started through this coordinator.
+  const catalog = { scopes: [] as string[], exports: 0 };
   class FixtureCoordinator extends ShopCoordinator {
     protected override async providerGraphql(
       _shop: string,
@@ -196,8 +204,27 @@ function coordinatorRuntime<
             shop: { currencyCode: "EUR" },
           },
         };
-      if (query.includes("query AuraChannelAccess"))
-        return { data: { currentAppInstallation: { accessScopes: [] } } };
+      if (isChannelQuery(query))
+        return channelResponse(
+          query,
+          {
+            scopes: catalog.scopes,
+            channel: boundChannel({ accountId: credentials.listingSourceId }),
+          },
+          variables,
+        );
+      if (query.includes("bulkOperationRunQuery"))
+        return {
+          data: {
+            bulkOperationRunQuery: {
+              bulkOperation: {
+                id: `gid://shopify/BulkOperation/${++catalog.exports}`,
+                status: "CREATED",
+              },
+              userErrors: [],
+            },
+          },
+        };
       await controls.beforeRead();
       if (controls.denied)
         return { errors: [{ extensions: { code: "ACCESS_DENIED" } }] };
@@ -228,6 +255,7 @@ function coordinatorRuntime<
     ...runtime,
     provider,
     controls,
+    catalog,
     context,
     get coordinator() {
       return coordinator;
@@ -2425,5 +2453,69 @@ describe("market-driven shipping coordinator", () => {
     );
     assert.equal(runtime.storage.values.get("hintVersion"), 2);
     assert.equal((await runtime.coordinator.status()).phase, "queued");
+  });
+});
+
+describe("catalog access approval", () => {
+  it("asks for missing publication access and resumes the blocked import once approved", async () => {
+    const runtime = connectionRuntime();
+    const scopeUpdate = (current: string[]) =>
+      receiveShippingWebhook(
+        shippingCallback("app/scopes_update", crypto.randomUUID(), {
+          current,
+          previous: ["read_products"],
+        }),
+        runtime.context,
+      );
+    await runtime.installed();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      // The grants of an installation approved before `read_publications`
+      // was required (#392).
+      const before = [
+        "read_locales",
+        "read_markets",
+        "read_product_listings",
+        "read_products",
+        "read_shipping",
+      ];
+      runtime.catalog.scopes = before;
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+      await runtime.run();
+      assert.equal(
+        (await runtime.act("retry_backfill")).get("backfill"),
+        "not_queued",
+      );
+      let data = (await runtime.home()) as HomeData;
+      assert.deepEqual(data.publication, { state: "missing_scope" });
+      assert.equal(data.catalogImport?.error, "MISSING_SCOPE");
+      assert.equal(
+        data.permissionsUrl,
+        "https://admin.shopify.com/store/shipping-fixture/oauth/install?client_id=test-shipping-runtime",
+      );
+      // A scope notification without publication access changes nothing.
+      assert.equal((await scopeUpdate(before)).status, 200);
+      await runtime.run();
+      assert.equal(runtime.catalog.exports, 0);
+
+      runtime.catalog.scopes = [...before, "read_publications"];
+      assert.equal((await scopeUpdate(runtime.catalog.scopes)).status, 200);
+      await runtime.run();
+      assert.equal(runtime.catalog.exports, 1);
+      data = (await runtime.home()) as HomeData;
+      assert.equal(data.publication?.state, "ready");
+      assert.equal(data.permissionsUrl, null);
+      assert.equal(data.catalogImport?.phase, "queued");
+      assert.equal(data.catalogImport?.error, undefined);
+      // Shipping keeps running, and a later notification never restarts the
+      // admitted import.
+      assert.equal((await runtime.coordinator.status()).error, undefined);
+      await scopeUpdate(runtime.catalog.scopes);
+      await runtime.run();
+      assert.equal(runtime.catalog.exports, 1);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
