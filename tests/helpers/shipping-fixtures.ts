@@ -49,18 +49,26 @@ function page<T>(nodes: T[], after: unknown): Connection<T> {
   };
 }
 
+// Shopify rejects declared variables that the operation never references.
+// Check the actual generated documents before returning fixture data.
+function operation(query: string) {
+  const declarations = query.slice(0, query.indexOf("{"));
+  const selection = query.slice(query.indexOf("{"));
+  for (const [variable] of declarations.matchAll(/\$\w+/g)) {
+    assert.ok(selection.includes(variable), `Unused variable ${variable}`);
+  }
+  // Shipping reads Shopify only. A mutation would change merchant settings.
+  assert.match(query.trimStart(), /^query \w+/);
+  return /query (\w+)/.exec(query)?.[1] ?? "";
+}
+
 export function fixtureGraphql(snapshot = structuredClone(fixture)) {
   const calls: { name: string; variables: Record<string, unknown> }[] = [];
   const request: GraphqlRequestFn = async (query, variables) => {
-    // Shopify rejects declared variables that the operation never references.
-    // Check the actual generated documents before returning fixture data.
-    const declarations = query.slice(0, query.indexOf("{"));
-    const selection = query.slice(query.indexOf("{"));
-    for (const [variable] of declarations.matchAll(/\$\w+/g)) {
-      assert.ok(selection.includes(variable), `Unused variable ${variable}`);
-    }
-    const name = /query (\w+)/.exec(query)?.[1] ?? "";
+    const name = operation(query);
     calls.push({ name, variables });
+    if (name === "ShippingModel")
+      return { data: { shop: { features: { marketDrivenShipping: false } } } };
     if (name === "ShippingPreflight")
       return {
         data: {
@@ -182,4 +190,139 @@ export function fixtureGraphql(snapshot = structuredClone(fixture)) {
     throw new Error(`Unexpected fixture operation ${name}`);
   };
   return { request, calls, snapshot };
+}
+
+export interface RawMarket {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  conditions: {
+    conditionTypes: string[];
+    regionsCondition: { applicationLevel: string } | null;
+  } | null;
+  regions: Record<string, unknown>[];
+  shipping: {
+    isEnabled: boolean;
+    optionDefinitions: Record<string, unknown>[];
+  } | null;
+}
+// Synthetic markets in the 2026-10 response shape, including the aliases the
+// importer selects. Values are not recorded from a live shop.
+export const marketFixture = JSON.parse(
+  readFileSync(
+    new URL(
+      "../fixtures/shopify-market-shipping-2026-10.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as {
+  evidence: Record<string, unknown> & {
+    requiredScope: string;
+    webhookTopics: string[];
+    webhookPayload: Record<string, unknown>;
+  };
+  markets: RawMarket[];
+};
+
+export function marketGraphql(
+  markets = structuredClone(marketFixture.markets),
+  products = structuredClone(fixture.products),
+) {
+  const controls = { scopes: ["read_markets"], marketDriven: true };
+  // Product traversal is shared with the profile model.
+  const catalog = fixtureGraphql({
+    profiles: {},
+    products,
+    acquiredAt: fixture.acquiredAt,
+  });
+  const calls = catalog.calls;
+  const market = (id: unknown) => {
+    const found = markets.find((candidate) => candidate.id === id);
+    return found ? { ...found } : null;
+  };
+  // Like a decoded response, returned data never aliases the fixture state.
+  const request: GraphqlRequestFn = async (query, variables) =>
+    structuredClone(await respond(query, variables));
+  const respond: GraphqlRequestFn = async (query, variables) => {
+    const name = operation(query);
+    if (name === "ShippingProducts" || /^ShippingV/.test(name))
+      return catalog.request(query, variables);
+    calls.push({ name, variables });
+    if (name === "ShippingModel")
+      return {
+        data: {
+          shop: { features: { marketDrivenShipping: controls.marketDriven } },
+        },
+      };
+    if (name === "ShippingPreflight")
+      return {
+        data: {
+          currentAppInstallation: {
+            accessScopes: controls.scopes.map((handle) => ({ handle })),
+          },
+          shop: { features: { marketDrivenShipping: controls.marketDriven } },
+          method: {
+            fields: [{ name: "rateProvider" }, { name: "methodConditions" }],
+          },
+          shipping: {
+            fields: [{ name: "isEnabled" }, { name: "optionDefinitions" }],
+          },
+        },
+      };
+    if (name === "ShippingMarkets")
+      return {
+        data: {
+          markets: page(
+            markets.map((node) => ({
+              id: node.id,
+              type: node.type,
+              status: node.status,
+              conditions: node.conditions,
+              delivery: {
+                shipping: node.shipping
+                  ? { isEnabled: node.shipping.isEnabled }
+                  : null,
+              },
+            })),
+            variables.after,
+          ),
+        },
+      };
+    const node = market(variables.id);
+    if (name === "ShippingMarketRegions")
+      return {
+        data: {
+          market: node && {
+            conditions: node.conditions && {
+              regionsCondition: node.conditions.regionsCondition && {
+                regions: page(node.regions, variables.after),
+              },
+            },
+          },
+        },
+      };
+    if (name === "ShippingMarketOptions") {
+      assert.equal(variables.first, 5);
+      return {
+        data: {
+          market: node && {
+            delivery: {
+              shipping: node.shipping && {
+                isEnabled: node.shipping.isEnabled,
+                optionDefinitions: page(
+                  node.shipping.optionDefinitions,
+                  variables.after,
+                ),
+              },
+            },
+          },
+        },
+      };
+    }
+    // Legacy delivery profiles never stand in for market configuration.
+    throw new Error(`Unexpected market-driven operation ${name}`);
+  };
+  return { request, calls, markets, products, controls };
 }

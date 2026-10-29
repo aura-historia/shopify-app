@@ -9,7 +9,7 @@ application_url = "https://partner-connect.aura-historia.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_products,read_product_listings,read_locales,read_shipping"
+scopes = "read_products,read_product_listings,read_locales,read_shipping,read_markets"
 use_legacy_install_flow = false
 
 [webhooks]
@@ -21,6 +21,10 @@ api_version = "2026-10"
 
   [[webhooks.subscriptions]]
   topics = ["profiles/create", "profiles/update", "profiles/delete"]
+  uri = "https://partner-connect.aura-historia.com/webhooks/shipping"
+
+  [[webhooks.subscriptions]]
+  topics = ["markets/create", "markets/update", "markets/delete"]
   uri = "https://partner-connect.aura-historia.com/webhooks/shipping"
 
   [[webhooks.subscriptions]]

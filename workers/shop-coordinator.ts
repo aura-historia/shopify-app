@@ -17,9 +17,9 @@ import {
   beginAcquisition,
   type ShippingAcquisitionState,
 } from "../app/shipping/acquisition.server";
-import { mapShipping } from "../app/shipping/mapper";
+import { mapShipping, observedProfileKeys } from "../app/shipping/mapper";
 import {
-  profileObjectKey,
+  MARKET_SHIPPING_OBJECT_KEY,
   SHIPPING_API_VERSION,
   SHIPPING_LIMITS,
   ShippingReadError,
@@ -35,6 +35,7 @@ import {
   readyPublicationWork,
 } from "../app/shipping/publisher.server";
 import {
+  hintResource,
   SHIPPING_TOPICS,
   type ShippingHint,
 } from "../app/shipping/webhooks.server";
@@ -387,12 +388,15 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
   }
 
   async admitShippingHint(shop: string, hint: ShippingHint) {
+    const resource = SHIPPING_TOPICS.includes(hint.topic)
+      ? hintResource(hint.topic)
+      : undefined;
     if (
-      !SHIPPING_TOPICS.includes(hint.topic) ||
+      resource === undefined ||
       !/^[A-Za-z0-9-]{1,128}$/.test(hint.deliveryId) ||
-      (hint.topic !== "APP_SCOPES_UPDATE" &&
-        !/^gid:\/\/shopify\/DeliveryProfile\/[1-9]\d*$/.test(
-          hint.profileId ?? "",
+      (resource !== null &&
+        !new RegExp(`^gid://shopify/${resource}/[1-9]\\d*$`).test(
+          hint.resourceId ?? "",
         ))
     )
       throw new Error("INVALID_SHIPPING_HINT");
@@ -890,7 +894,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
             );
             addConfirmedRemovals(
               job.publication,
-              Object.keys(next.snapshot.profiles).map(profileObjectKey),
+              observedProfileKeys(next.snapshot),
             );
             addConfirmedMembershipRemovals(
               job.publication,
@@ -1032,6 +1036,21 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         } else {
           state.status.phase = "blocked";
           job.paused = true;
+        }
+        // Once the preflight found market-driven shipping, terms imported
+        // from profiles are known to be stale. Until a market publication
+        // replaces them, a blocked market import withdraws them instead of
+        // leaving them current. The cleanup keeps its own copy of the
+        // identities, so a later import does not retire them twice.
+        if (
+          job.paused &&
+          job.acquisition?.snapshot.markets &&
+          !(MARKET_SHIPPING_OBJECT_KEY in state.mappings) &&
+          Object.keys(state.mappings).length &&
+          (await this.startCleanup(state, job.shop, credentials, false, false))
+        ) {
+          state.mappings = {};
+          state.memberships = [];
         }
       }
       await this.save(state);

@@ -22,6 +22,11 @@ const accessSections = [
         description:
           "Approved at installation. Shipping profiles, destinations, rates and variant membership are translated by this app and sent to Aura Historia.",
       },
+      {
+        name: "read_markets",
+        description:
+          "Approved at installation. For shops with market-driven shipping, the regions and shipping options of each market are read instead of shipping profiles. Markets are never changed.",
+      },
     ],
   },
   {

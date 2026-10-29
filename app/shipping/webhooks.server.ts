@@ -7,12 +7,26 @@ export const SHIPPING_TOPICS = [
   "PROFILES_CREATE",
   "PROFILES_UPDATE",
   "PROFILES_DELETE",
+  // Market-driven shops keep merchant shipping in Markets. Shopify does not
+  // document which shipping edits update a market; periodic reads cover them.
+  "MARKETS_CREATE",
+  "MARKETS_UPDATE",
+  "MARKETS_DELETE",
   "APP_SCOPES_UPDATE",
 ] as const;
 export interface ShippingHint {
   topic: (typeof SHIPPING_TOPICS)[number];
   deliveryId: string;
-  profileId?: string;
+  // The profile or market a notification names; scope changes name none.
+  resourceId?: string;
+}
+
+export function hintResource(topic: ShippingHint["topic"]) {
+  return topic.startsWith("PROFILES_")
+    ? "DeliveryProfile"
+    : topic.startsWith("MARKETS_")
+      ? "Market"
+      : null;
 }
 
 // Bound the stream before passing its original bytes to Shopify's HMAC verifier.
@@ -73,15 +87,25 @@ export async function receiveShippingWebhook(
   const body = payload as Record<string, unknown>;
   if (!body || typeof body !== "object" || Array.isArray(body))
     return new Response(null, { status: 400 });
-  let profileId: string | undefined;
-  if (topic !== "APP_SCOPES_UPDATE") {
-    profileId = String(body.admin_graphql_api_id ?? "");
-    if (!/^gid:\/\/shopify\/DeliveryProfile\/[1-9]\d*$/.test(profileId))
-      return new Response(null, { status: 400 });
+  const resource = hintResource(topic as ShippingHint["topic"]);
+  let resourceId: string | undefined;
+  if (resource) {
     // Do not round numeric identities or accept contradictory metadata.
+    const id =
+      (typeof body.id === "number" && Number.isSafeInteger(body.id)) ||
+      typeof body.id === "string"
+        ? String(body.id)
+        : undefined;
+    if (body.id !== undefined && id === undefined)
+      return new Response(null, { status: 400 });
+    // Market payloads carry only the numeric ID; profile payloads the GID.
+    resourceId = String(
+      body.admin_graphql_api_id ??
+        (resource === "Market" && id ? `gid://shopify/Market/${id}` : ""),
+    );
     if (
-      body.id !== undefined &&
-      String(body.id) !== profileId.split("/").at(-1)
+      !new RegExp(`^gid://shopify/${resource}/[1-9]\\d*$`).test(resourceId) ||
+      (id !== undefined && id !== resourceId.split("/").at(-1))
     )
       return new Response(null, { status: 400 });
   }
@@ -89,7 +113,7 @@ export async function receiveShippingWebhook(
     await shopCoordinator(context, shop).admitShippingHint(shop, {
       topic: topic as ShippingHint["topic"],
       deliveryId,
-      profileId,
+      resourceId,
     });
     return new Response(null, { status: 200 });
   } catch {

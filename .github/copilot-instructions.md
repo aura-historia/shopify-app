@@ -10,7 +10,7 @@
 
 - Keep the app focused on authentication, the embedded app shell, KV session storage, initial catalog backfill, advertised shipping imports, and uninstall cleanup.
 - Product webhooks and compliance webhooks are declared in `shopify.app.toml`.
-- Uninstall, bulk-operation completion, shipping profile and scope-change webhooks are processed directly by this app. Product and compliance events use EventBridge.
+- Uninstall, bulk-operation completion, shipping profile, market and scope-change webhooks are processed directly by this app. Product and compliance events use EventBridge.
 - Shipping acquisition, mapping and publication share the implementation in `app/shipping`; per-shop Durable Objects coordinate offline Shopify access for catalog and shipping. Catalog exports are processed by the per-shop `CatalogImporter` in bounded, checkpointed alarm steps, never in a request's `waitUntil`. Keep provider credentials inside the app's protected sessions.
 - Avoid adding demo pages, sample mutations, placeholder business logic, or unnecessary UI.
 
@@ -37,7 +37,8 @@
 - Keep `app/shopify.server.ts` API version aligned with `shopify.app.toml`.
 - Keep production-only webhook differences in `shopify.app.prod.toml` instead of trying to drive EventBridge ARNs from `shopify.web.toml`.
 - Do not widen Shopify access scopes unless there is a documented product requirement.
-- Static webhook subscriptions need their topic's scope in `access_scopes.scopes`; Shopify rejects topics whose scope is only in `optional_scopes`. Keep `read_shipping` required for the profile subscriptions and mirror the scope list in the `SCOPES` variable of `wrangler.jsonc`.
+- Static webhook subscriptions need their topic's scope in `access_scopes.scopes`; Shopify rejects topics whose scope is only in `optional_scopes`. Keep `read_shipping` required for the profile subscriptions and `read_markets` for the market subscriptions, and mirror the scope list in the `SCOPES` variable of `wrangler.jsonc`.
+- Shops with `marketDrivenShipping` keep merchant shipping in Markets. Read it only through `Market.delivery.shipping`; never read or fall back to legacy delivery profiles for such shops, and never call `marketCreate`/`marketUpdate`.
 - If you change authentication behavior, keep `authPathPrefix = "/auth"` and ensure the redirect URLs still include the callback route.
 - Prefer Shopify-provided install context such as `shop` and `host` query parameters. Treat manual `myshopify.com` entry as a fallback only.
 - Preserve the post-install redirect from the auth callback flow to `/success` unless the onboarding flow changes deliberately.

@@ -16,9 +16,15 @@ const fixture = JSON.parse(
     "utf8",
   ),
 );
+const marketFixture = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/shopify-market-shipping-2026-10.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("shopify.app.toml", () => {
-  it("delivers all profile hints and scope changes to the app in every environment", () => {
+  it("delivers all profile and market hints and scope changes to the app in every environment", () => {
     for (const name of [
       "shopify.app.toml",
       "shopify.app.prod.toml",
@@ -27,7 +33,11 @@ describe("shopify.app.toml", () => {
       const config = readFileSync(resolve(process.cwd(), name), "utf8");
       assert.match(config, new RegExp(`api_version = "${fixture.apiVersion}"`));
       const blocks = config.split("[[webhooks.subscriptions]]");
-      for (const topic of [...fixture.topics, "app/scopes_update"]) {
+      for (const topic of [
+        ...fixture.topics,
+        ...marketFixture.evidence.webhookTopics,
+        "app/scopes_update",
+      ]) {
         const subscriptions = blocks.filter((block) =>
           block.includes(`"${topic}"`),
         );
@@ -72,10 +82,13 @@ describe("shopify.app.toml", () => {
       const scopes = config.match(/^scopes = "([^"]*)"$/m)?.[1];
       assert.equal(
         scopes,
-        "read_products,read_product_listings,read_locales,read_shipping",
+        "read_products,read_product_listings,read_locales,read_shipping,read_markets",
       );
       // Shopify rejects static subscriptions whose scope is only optional.
       assert.ok(scopes.split(",").includes(fixture.requiredScope));
+      assert.ok(
+        scopes.split(",").includes(marketFixture.evidence.requiredScope),
+      );
       assert.ok(scopes.split(",").includes("read_product_listings"));
       assert.doesNotMatch(config, /^optional_scopes\b/m);
       assert.ok(wrangler.includes(`"SCOPES": "${scopes}"`));

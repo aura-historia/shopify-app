@@ -245,10 +245,11 @@ describe("Shopify shipping acquisition and canonical mapping", () => {
     );
   });
 
-  it("reports permission, incompatible schema and market-driven capability gaps before acquiring profiles", async () => {
+  it("reports missing permission and incompatible schema before acquiring profiles", async () => {
     for (const [scope, market, fields, expected] of [
       ["read_assigned_shipping", false, true, "SHIPPING_PERMISSION_REQUIRED"],
-      ["read_shipping", true, true, "MARKET_DRIVEN_SHIPPING_UNSUPPORTED"],
+      // Market-driven shops are read from Markets, never from profiles.
+      ["read_shipping", true, true, "SHIPPING_PERMISSION_REQUIRED"],
       ["read_shipping", false, false, "UNSUPPORTED_SHOPIFY_SCHEMA"],
     ] as const) {
       const state = beginAcquisition(fixture.acquiredAt);
