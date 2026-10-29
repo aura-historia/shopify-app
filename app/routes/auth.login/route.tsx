@@ -1,5 +1,6 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { useLoaderData } from "react-router";
+import { documentTitle } from "../../document-title";
 import { getShopify } from "../../shopify.server";
 import styles from "../../styles/public-page.module.css";
 import { loginErrorMessage } from "./error.server";
@@ -18,6 +19,10 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     errors: loginErrorMessage(await getShopify(context).login(request)),
   };
 };
+
+export const meta: MetaFunction = () => [
+  { title: documentTitle("Install from Shopify") },
+];
 
 export default function AuthLogin() {
   const { errors } = useLoaderData<typeof loader>();

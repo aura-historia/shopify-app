@@ -1,5 +1,6 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { useLoaderData } from "react-router";
+import { documentTitle } from "../document-title";
 import styles from "../styles/public-page.module.css";
 
 const legalLinks = [
@@ -33,6 +34,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     missingConfig,
   };
 };
+
+export const meta: MetaFunction = () => [
+  { title: documentTitle("Installation approved") },
+];
 
 export default function SuccessPage() {
   const { appUrl, integration, missingConfig, shop } =

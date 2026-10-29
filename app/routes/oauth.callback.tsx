@@ -1,9 +1,10 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { redirect, useLoaderData } from "react-router";
 import {
   configureShopifyListingSource,
   triggerBackfill,
 } from "../backfill.server";
+import { documentTitle } from "../document-title";
 import {
   clearOAuthPendingContext,
   connectAuraHistoriaShop,
@@ -192,6 +193,10 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     );
   }
 };
+
+export const meta: MetaFunction = () => [
+  { title: documentTitle("Connection failed") },
+];
 
 export default function OAuthCallbackResult() {
   const data = useLoaderData<typeof loader>();
