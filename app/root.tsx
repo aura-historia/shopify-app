@@ -1,6 +1,10 @@
-import type { LinksFunction } from "react-router";
+import type { LinksFunction, MetaFunction } from "react-router";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import { APP_TITLE } from "./document-title";
 import tokensHref from "./styles/tokens.css?url";
+
+// Fallback for every public document without its own title.
+export const meta: MetaFunction = () => [{ title: APP_TITLE }];
 
 export const links: LinksFunction = () => [
   { rel: "preconnect", href: "https://cdn.shopify.com/" },
