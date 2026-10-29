@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import { describe, it } from "node:test";
-import { createElement, Fragment } from "react";
+import { describe, it, mock } from "node:test";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createRoutesStub, Meta, Outlet } from "react-router";
+import { createRoutesStub, Outlet } from "react-router";
 
 // Node cannot load the stylesheets the route modules import; titles do not
 // depend on them.
@@ -28,14 +28,27 @@ const login = await import("../app/routes/auth.login/route");
 const callback = await import("../app/routes/oauth.callback");
 const success = await import("../app/routes/success");
 
+// The stub has no client build, so <Scripts> preloads empty hrefs and React
+// warns about each one.
+const consoleError = console.error;
+mock.method(console, "error", (...args: unknown[]) => {
+  if (!String(args[0]).startsWith('An empty string ("") was passed to the'))
+    consoleError(...args);
+});
+
+const code = "synthetic-authorization-code";
+const state = "synthetic-oauth-state";
+const errorText = "synthetic-error-text";
+const shop = "synthetic-shop.myshopify.com";
+
 const Empty = () => null;
 const Stub = createRoutesStub([
   {
     id: "root",
     path: "/",
     meta: root.meta,
-    Component: () =>
-      createElement(Fragment, null, createElement(Meta), createElement(Outlet)),
+    links: root.links,
+    Component: root.default,
     children: [
       { id: "routes/_index/route", index: true, Component: Empty },
       {
@@ -68,69 +81,70 @@ const Stub = createRoutesStub([
   },
 ]);
 
-function renderHead(
+function documentTitles(
   url: string,
   hydrationData: Parameters<typeof Stub>[0]["hydrationData"] = {},
 ) {
-  return renderToStaticMarkup(
+  const html = renderToStaticMarkup(
     createElement(Stub, { initialEntries: [url], hydrationData }),
   );
+  const head = /<head>(.*)<\/head>/s.exec(html)?.[1] ?? "";
+  assert.equal(
+    html.split("<title>").length,
+    head.split("<title>").length,
+    "every <title> belongs in <head>",
+  );
+  return [...head.matchAll(/<title>(.*?)<\/title>/g)].map(([, title]) => title);
 }
 
 describe("document titles", () => {
   it("names the public landing page", () => {
-    assert.equal(
-      renderHead("/"),
-      "<title>Aura Historia Partner Connect</title>",
-    );
+    assert.deepEqual(documentTitles("/"), ["Aura Historia Partner Connect"]);
   });
 
   it("gives login, callback and success documents static titles", () => {
-    const secrets = [
-      "synthetic-code-marker",
-      "synthetic-state-marker",
-      "synthetic-error-marker",
-      "synthetic-shop-marker",
-    ];
-    const cases = [
-      {
-        url: `/auth/login?shop=${secrets[3]}.myshopify.com`,
+    assert.deepEqual(
+      documentTitles(`/auth/login?shop=${shop}`, {
         loaderData: {
-          "routes/auth.login/route": { errors: { shop: secrets[2] } },
+          "routes/auth.login/route": { errors: { shop: errorText } },
         },
-        title: "Install from Shopify · Aura Historia Partner Connect",
-      },
-      {
-        url: `/oauth/callback?code=${secrets[0]}&state=${secrets[1]}&error_description=${secrets[2]}`,
-        loaderData: {
-          "routes/oauth.callback": { ok: false, message: secrets[2] },
-        },
-        title: "Connection failed · Aura Historia Partner Connect",
-      },
-      {
-        url: `/success?shop=${secrets[3]}.myshopify.com&integration=oauth-config-missing&missing=${secrets[2]}`,
-        loaderData: {
-          "routes/success": {
-            shop: `${secrets[3]}.myshopify.com`,
-            appUrl: null,
-            integration: "oauth-config-missing",
-            missingConfig: secrets[2],
+      }),
+      ["Install from Shopify · Aura Historia Partner Connect"],
+    );
+    assert.deepEqual(
+      documentTitles(
+        `/oauth/callback?code=${code}&state=${state}&error_description=${errorText}`,
+        {
+          loaderData: {
+            "routes/oauth.callback": { ok: false, message: errorText },
           },
         },
-        title: "Installation approved · Aura Historia Partner Connect",
-      },
-    ];
-
-    for (const { url, loaderData, title } of cases) {
-      assert.equal(renderHead(url, { loaderData }), `<title>${title}</title>`);
-    }
+      ),
+      ["Connection failed · Aura Historia Partner Connect"],
+    );
+    assert.deepEqual(
+      documentTitles(
+        `/success?shop=${shop}&integration=oauth-config-missing&missing=${errorText}`,
+        {
+          loaderData: {
+            "routes/success": {
+              shop,
+              appUrl: null,
+              integration: "oauth-config-missing",
+              missingConfig: errorText,
+            },
+          },
+        },
+      ),
+      ["Installation approved · Aura Historia Partner Connect"],
+    );
   });
 
-  it("leaves embedded app documents untitled for App Bridge", () => {
-    assert.equal(renderHead("/app?embedded=1&host=aG9zdA"), "");
-    assert.equal(
-      renderHead("/app", { errors: { "routes/app": new Error("boom") } }),
-      "",
+  it("leaves Admin app documents untitled for App Bridge", () => {
+    assert.deepEqual(documentTitles(`/app?shop=${shop}&host=aG9zdA`), []);
+    assert.deepEqual(
+      documentTitles("/app", { errors: { "routes/app": new Error("boom") } }),
+      [],
     );
   });
 });

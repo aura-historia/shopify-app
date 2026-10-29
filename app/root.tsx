@@ -3,7 +3,8 @@ import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 import { APP_TITLE } from "./document-title";
 import tokensHref from "./styles/tokens.css?url";
 
-// Fallback for every public document without its own title.
+// Fallback title for public pages without their own. Root-level error
+// documents keep React Router's built-in title.
 export const meta: MetaFunction = () => [{ title: APP_TITLE }];
 
 export const links: LinksFunction = () => [
