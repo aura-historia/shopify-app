@@ -19,10 +19,12 @@ import {
   beginWithdrawal,
   publishShippingStep,
 } from "../app/shipping/publisher.server";
+import { shippingIssueMessage } from "../app/shipping/status";
 import {
   fixture,
   fixtureGraphql,
   importIdentityRejection,
+  missingListingProblem,
 } from "./helpers/shipping-fixtures";
 
 const contract = JSON.parse(
@@ -141,11 +143,7 @@ function auraMock(
         eligibility: null,
       });
     if (url.pathname.endsWith("delivery")) {
-      if (options.missingListing)
-        return Response.json(
-          { error: "SHIPPING_IMPORT_DEPENDENCY_MISSING" },
-          { status: 404 },
-        );
+      if (options.missingListing) return missingListingProblem();
       if (request.method === "GET")
         return Response.json({
           productListingId: "pl_test",
@@ -675,19 +673,137 @@ describe("typed shipping publication", () => {
     for (let i = 0; i < 12; i++)
       await publishShippingStep(state, context, Date.now(), mock.fetcher);
     assert.ok(state.committed > 0);
+    const assignments = state.work.filter(
+      (work) => work.resource.kind === "membership",
+    );
     assert.ok(
-      state.work.some(
+      assignments.every(
         (work) =>
-          work.resource.kind === "membership" &&
-          !work.done &&
-          work.attempts > 0,
+          !work.done && !work.pending && !work.exhausted && work.attempts > 0,
       ),
     );
+    assert.equal(state.failures, 0);
+    assert.equal(state.lastError, "SHIPPING_IMPORT_DEPENDENCY_MISSING");
+    assert.match(
+      shippingIssueMessage(state.lastError),
+      /catalog listings are not available yet.*retried automatically/,
+    );
+    assert.doesNotMatch(JSON.stringify(state), /PRODUCT_LISTING_NOT_FOUND/);
     assert.ok(
       mock.calls.every((call) => !call.path.endsWith("product-listings")),
     );
     mock.options.missingListing = false;
     await finish(state, mock);
+    assert.ok(assignments.every((work) => work.done && !work.failed));
+    assert.equal(state.failures, 0);
+  });
+
+  it("treats only the assignment lookup's missing-listing problem as a catalog dependency", async () => {
+    const assignment = () => {
+      const state = beginPublication(
+        {
+          profiles: [],
+          memberships: [
+            { sourceListingId: "999", profileObjectKey: null, variants: null },
+          ],
+          limitations: [],
+        },
+        "run-1",
+        1,
+        fixture.acquiredAt,
+        {},
+      );
+      state.work = state.work.filter(
+        (work) => work.resource.kind === "membership",
+      );
+      return state;
+    };
+    for (const [response, expected] of [
+      [missingListingProblem, "SHIPPING_IMPORT_DEPENDENCY_MISSING"],
+      [
+        () =>
+          Response.json(
+            {
+              status: 404,
+              title: "Not Found",
+              error: "LISTING_SOURCE_NOT_FOUND",
+            },
+            { status: 404 },
+          ),
+        "AURA_HTTP_404",
+      ],
+      [() => new Response(null, { status: 404 }), "AURA_HTTP_404"],
+      [
+        () => Response.json({ message: "Not Found" }, { status: 404 }),
+        "AURA_HTTP_404",
+      ],
+      [
+        () => new Response("PRODUCT_LISTING_NOT_FOUND", { status: 404 }),
+        "AURA_HTTP_404",
+      ],
+      [
+        () =>
+          Response.json(
+            { code: "PRODUCT_LISTING_NOT_FOUND", detail: "listing 999" },
+            { status: 404 },
+          ),
+        "AURA_HTTP_404",
+      ],
+      [
+        () =>
+          Response.json(
+            {
+              status: 503,
+              title: "Service Unavailable",
+              error: "PRODUCT_LISTING_NOT_FOUND",
+            },
+            { status: 503 },
+          ),
+        "AURA_HTTP_503",
+      ],
+    ] as const) {
+      const state = assignment();
+      await publishShippingStep(state, context, 0, async () => response());
+      assert.equal(state.lastError, expected);
+      assert.equal(state.work[0].attempts, 1);
+      assert.equal(state.work[0].done, undefined);
+    }
+
+    // The same problem elsewhere does not describe a pending catalog listing.
+    const profile = publication();
+    await publishShippingStep(profile, context, 0, async () =>
+      missingListingProblem(),
+    );
+    assert.equal(profile.lastError, "AURA_HTTP_404");
+    const removal = beginWithdrawal(
+      {},
+      ["999"],
+      "run-1",
+      1,
+      fixture.acquiredAt,
+    );
+    removal.work = removal.work.filter(
+      (work) => work.resource.kind === "removeMembership",
+    );
+    await publishShippingStep(removal, context, 0, async () =>
+      missingListingProblem(),
+    );
+    assert.equal(removal.lastError, "AURA_HTTP_404");
+    const command = assignment();
+    await publishShippingStep(command, context, 0, async () =>
+      Response.json({
+        productListingId: "pl_test",
+        expectedVersion: 1,
+        delivery: null,
+      }),
+    );
+    const pending = structuredClone(command.work[0].pending);
+    assert.ok(pending);
+    await publishShippingStep(command, context, 0, async () =>
+      missingListingProblem(),
+    );
+    assert.equal(command.lastError, "AURA_HTTP_404");
+    assert.deepEqual(command.work[0].pending, pending);
   });
 
   it("preserves explicit partner edits/clears and requests reacquisition for revision conflicts", async () => {

@@ -29,6 +29,15 @@ export function importIdentityRejection(
   );
 }
 
+// Mirrors the backend's listing-delivery lookup (partner_product_listings/
+// delivery.rs) for a source listing that catalog ingestion has not created.
+export function missingListingProblem() {
+  return Response.json(
+    { status: 404, title: "Not Found", error: "PRODUCT_LISTING_NOT_FOUND" },
+    { status: 404, headers: { "Content-Type": "application/problem+json" } },
+  );
+}
+
 function page<T>(nodes: T[], after: unknown): Connection<T> {
   const start = after ? Number(after) : 0;
   return {

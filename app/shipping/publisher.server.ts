@@ -249,6 +249,20 @@ function revision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+// Catalog ingestion creates source-local listings independently of shipping.
+// Only the documented missing-listing problem is that retryable dependency; a
+// missing source, an unknown route or any other 404 keeps its HTTP category.
+function missingCatalogListing(result: {
+  error?: unknown;
+  response?: Response;
+}) {
+  return (
+    result.response?.status === 404 &&
+    record(result.error) &&
+    result.error.error === "PRODUCT_LISTING_NOT_FOUND"
+  );
+}
+
 function validProfile(value: unknown) {
   return (
     record(value) &&
@@ -588,7 +602,19 @@ export async function publishShippingStep(
       },
     });
     if (!result.data || !revision(result.data.expectedVersion)) {
-      fail(publication, work, result, now);
+      // An assignment can precede its product's catalog listing. A removal
+      // targets a listing that was assigned before, so absence is not pending.
+      fail(
+        publication,
+        work,
+        resource.kind === "membership" && missingCatalogListing(result)
+          ? {
+              response: result.response,
+              error: { code: "SHIPPING_IMPORT_DEPENDENCY_MISSING" },
+            }
+          : result,
+        now,
+      );
       return;
     }
     if (resource.kind === "removeMembership") {

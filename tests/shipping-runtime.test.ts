@@ -12,6 +12,7 @@ import {
   type Publication,
   publishShippingStep,
 } from "../app/shipping/publisher.server";
+import { shippingIssueMessage } from "../app/shipping/status";
 import { receiveShippingWebhook } from "../app/shipping/webhooks.server";
 import {
   getShopCredentialsStorageKey,
@@ -23,6 +24,7 @@ import {
   fixture,
   fixtureGraphql,
   importIdentityRejection,
+  missingListingProblem,
 } from "./helpers/shipping-fixtures";
 
 // Run the actual coordinator against isolated storage and the platform base
@@ -315,11 +317,7 @@ function backendFixture() {
     if (path.endsWith("shipping-default"))
       return Response.json({ revision: 1, shippingProfileId: null });
     if (path.endsWith("delivery")) {
-      if (controls.missingListing)
-        return Response.json(
-          { error: "SHIPPING_IMPORT_DEPENDENCY_MISSING" },
-          { status: 404 },
-        );
+      if (controls.missingListing) return missingListingProblem();
       if (request.method === "GET")
         return Response.json({
           expectedVersion: 1,
@@ -378,6 +376,25 @@ async function seedPublication(
       },
     }),
   });
+}
+
+// Product 102 has no profile dependency; only its catalog listing is awaited.
+async function seedMissingListing(
+  runtime: ReturnType<typeof isolatedRuntime>,
+  attempts = 0,
+) {
+  const publication = beginPublication(
+    mapShipping(fixture),
+    "missing-listing",
+    1,
+    fixture.acquiredAt,
+    {},
+  );
+  publication.work = publication.work.filter(
+    (work) => work.key === "listing:102",
+  );
+  publication.work[0].attempts = attempts;
+  await seedPublication(runtime, publication);
 }
 
 describe("server-side shipping coordinator", () => {
@@ -491,6 +508,85 @@ describe("server-side shipping coordinator", () => {
       assert.ok(Number.isFinite(runtime.storage.alarm));
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("reports a missing catalog listing as a retried dependency and assigns it once listed", async () => {
+    const runtime = isolatedRuntime();
+    await seedMissingListing(runtime);
+    const backend = backendFixture();
+    backend.controls.missingListing = true;
+    const coordinator = runtime.create(ShopCoordinator);
+    const original = globalThis.fetch;
+    const realNow = Date.now;
+    globalThis.fetch = backend.fetcher;
+    try {
+      await coordinator.alarm();
+      const waiting = await coordinator.status();
+      assert.equal(waiting.phase, "partial");
+      assert.equal(waiting.error, "SHIPPING_IMPORT_DEPENDENCY_MISSING");
+      assert.match(
+        shippingIssueMessage(waiting.error ?? ""),
+        /catalog listings are not available yet.*retried automatically/,
+      );
+      assert.equal(waiting.pending, 1);
+      assert.equal(waiting.failures, 0);
+      assert.ok((runtime.storage.alarm ?? 0) > Date.now());
+      assert.doesNotMatch(
+        JSON.stringify(await storedState(runtime.storage)),
+        /PRODUCT_LISTING_NOT_FOUND/,
+      );
+
+      backend.controls.missingListing = false;
+      Date.now = () => realNow() + 60_000;
+      await coordinator.alarm();
+      await coordinator.alarm();
+      const applied = await coordinator.status();
+      assert.equal(applied.phase, "applied");
+      assert.equal(applied.error, undefined);
+      assert.equal(applied.committed, 1);
+      assert.equal(applied.pending, 0);
+      const assignments = backend.calls.filter(
+        (call) => call.method === "PATCH",
+      );
+      assert.equal(assignments.length, 1);
+      const body = assignments[0].body as { import: { requestKey: string } };
+      assert.equal(body.import.requestKey, "missing-listing:listing:102");
+      // Shipping work only waits for the catalog; it never creates listings.
+      assert.ok(
+        backend.calls.every((call) =>
+          call.path.endsWith(
+            `/listing-sources/${credentials.listingSourceId}/product-listings/by-source-id/102/delivery`,
+          ),
+        ),
+      );
+    } finally {
+      globalThis.fetch = original;
+      Date.now = realNow;
+    }
+  });
+
+  it("pauses a still-missing catalog listing at the retry limit", async () => {
+    const runtime = isolatedRuntime();
+    await seedMissingListing(runtime, SHIPPING_LIMITS.retries - 1);
+    const backend = backendFixture();
+    backend.controls.missingListing = true;
+    const coordinator = runtime.create(ShopCoordinator);
+    const original = globalThis.fetch;
+    globalThis.fetch = backend.fetcher;
+    try {
+      await coordinator.alarm();
+      const status = await coordinator.status();
+      assert.equal(status.phase, "blocked");
+      assert.equal(status.error, "SHIPPING_RETRY_LIMIT_REACHED");
+      assert.equal(status.pending, 1);
+      const { job } = await storedState(runtime.storage);
+      assert.equal(job.paused, true);
+      assert.equal(job.publication.work[0].exhausted, true);
+      assert.equal(job.publication.work[0].done, undefined);
+      assert.equal(runtime.storage.alarm, null);
+    } finally {
+      globalThis.fetch = original;
     }
   });
 
