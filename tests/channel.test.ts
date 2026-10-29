@@ -212,8 +212,7 @@ describe("Aura channel connection lifecycle", () => {
 
   it("reports a refused connection without retrying or claiming success", async () => {
     const shopify = fakeShopify({
-      refuse:
-        "Channel specification requires online store parity but countries AC, AD do not have matching region markets",
+      refuse: "Channel specification aura-historia was not found",
     });
     assert.deepEqual(
       await ensureAuraChannel(shopify.graphql, listingSourceId),
@@ -226,7 +225,7 @@ describe("Aura channel connection lifecycle", () => {
       shopify.calls.filter((call) => call === "AuraChannelCreate").length,
       1,
     );
-    assert.match(warnings.join("\n"), /requires online store parity/);
+    assert.match(warnings.join("\n"), /aura-historia was not found/);
   });
 
   it("reports a refused rebinding", async () => {
