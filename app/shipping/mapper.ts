@@ -195,41 +195,48 @@ export function transitTime(rate?: MarketRate): ShippingTimeData | null {
   return null;
 }
 
+type MarketOffer = {
+  code: string;
+  conditions: Condition[];
+  provider: RateProvider;
+  rate?: MarketRate;
+  // The option's availability is unknown where this offer would apply.
+  unasserted?: boolean;
+};
+
+const MONEY_REPRESENTATION = new Set([
+  "UNSUPPORTED_CURRENCY",
+  "INEXACT_MINOR_UNITS",
+  "MONEY_OUT_OF_RANGE",
+]);
+
+function unassertedService(option: MarketOption, code: string) {
+  return service(
+    {
+      id: option.id,
+      name: "",
+      active: true,
+      methodConditions: [],
+      rateProvider: { __typename: "Unsupported", id: option.id },
+    },
+    new Set(),
+    code,
+  );
+}
+
 // Market options are expressed as the methods of the legacy expansion, so a
 // rate tier, free threshold, weight condition or carrier price keeps exactly
 // the semantics, limitations and charge basis of the profile importer.
-function marketServices(
-  option: MarketOption,
-  limitations: Set<string>,
-): ShippingServiceData[] {
-  const { type, id } = providerCode(option.id);
-  const code = `shopify:${type}:${id}`;
-  if (!option.uniform || option.rates === null) {
-    // Collection, origin-location or unread tiers vary the rate per item.
-    limitations.add(
-      option.kind === "UNKNOWN"
-        ? "UNSUPPORTED_RATE_PROVIDER"
-        : option.rates === null
-          ? "MARKET_RATE_TIER_LIMIT"
-          : "MARKET_RATE_CONDITIONS_UNSUPPORTED",
-    );
-    return [
-      service(
-        {
-          id: option.id,
-          name: "",
-          active: true,
-          methodConditions: [],
-          rateProvider: { __typename: "Unsupported", id: option.id },
-        },
-        new Set(),
-        code,
-      ),
-    ];
-  }
+function marketOffers(option: MarketOption, code: string): MarketOffer[] {
+  const rates = option.rates ?? [];
   const atLeast = (money: Money): Condition => ({
     field: "TOTAL_PRICE",
     operator: "GREATER_THAN_OR_EQUAL_TO",
+    conditionCriteria: { __typename: "MoneyV2", ...money },
+  });
+  const below = (money: Money): Condition => ({
+    field: "TOTAL_PRICE",
+    operator: "LESS_THAN",
     conditionCriteria: { __typename: "MoneyV2", ...money },
   });
   const fixed = (rate: MarketRate): RateProvider => ({
@@ -237,14 +244,9 @@ function marketServices(
     id: rate.id,
     price: rate.price,
   });
-  const offers: {
-    code: string;
-    conditions: Condition[];
-    provider: RateProvider;
-    rate?: MarketRate;
-  }[] = [];
+  const offers: MarketOffer[] = [];
   if (option.kind === "FLAT") {
-    const rate = option.rates.length === 1 ? option.rates[0] : undefined;
+    const rate = rates.length === 1 ? rates[0] : undefined;
     offers.push({
       code,
       conditions: [],
@@ -254,7 +256,7 @@ function marketServices(
       rate,
     });
   } else if (option.kind === "VALUE") {
-    for (const rate of option.rates) {
+    for (const rate of rates) {
       const conditions: Condition[] = [];
       if (rate.minValue && exactMoney(rate.minValue).amount_minor > 0)
         conditions.push(atLeast(rate.minValue));
@@ -290,40 +292,103 @@ function marketServices(
       provider: { __typename: "DeliveryParticipant", id: option.id },
     });
   }
-  // The free threshold is the option's cart subtotal, independent of tiers.
-  if (option.freeMinimum)
-    offers.push({
-      code: `${code}:free`,
-      conditions: [atLeast(option.freeMinimum)],
-      provider: {
-        __typename: "DeliveryRateDefinition",
-        id: option.id,
-        price: { amount: "0", currencyCode: option.currency },
-      },
-      rate: option.kind === "FLAT" ? option.rates[0] : undefined,
-    });
-  return offers.map((offer) => {
-    const result = service(
-      {
-        id: option.id,
-        name: "",
-        active: true,
-        methodConditions: offer.conditions,
-        rateProvider: offer.provider,
-      },
-      limitations,
-      offer.code,
-    );
-    if (result.rate) result.lead_times.transit = transitTime(offer.rate);
-    return result;
+  const minimum = option.freeMinimum;
+  if (!minimum) return offers;
+  const free = exactMoney(minimum);
+  // At and above the minimum the whole option is free. Below it, its rates
+  // carry an upper bound that Aura cannot express.
+  for (const offer of offers)
+    if (!offer.provider.price || exactMoney(offer.provider.price).amount_minor)
+      offer.conditions.push(below(minimum));
+  // The free price is offered only where the option itself certainly is:
+  // a flat rate, or a cart-value tier open from the minimum upwards. Weight
+  // tiers and carriers can offer nothing for a cart.
+  const available =
+    option.kind === "FLAT"
+      ? rates.length === 1
+      : option.kind === "VALUE" &&
+        rates.some((rate) => {
+          const from = rate.minValue && exactMoney(rate.minValue);
+          return (
+            !rate.maxValue &&
+            (!from ||
+              (from.currency === free.currency &&
+                from.amount_minor <= free.amount_minor))
+          );
+        });
+  offers.push({
+    code: `${code}:free`,
+    conditions: [atLeast(minimum)],
+    provider: {
+      __typename: "DeliveryRateDefinition",
+      id: option.id,
+      price: { amount: "0", currencyCode: option.currency },
+    },
+    rate: option.kind === "FLAT" ? rates[0] : undefined,
+    unasserted: !available,
   });
+  return offers;
+}
+
+function marketServices(
+  option: MarketOption,
+  limitations: Set<string>,
+): ShippingServiceData[] {
+  const { type, id } = providerCode(option.id);
+  const code = `shopify:${type}:${id}`;
+  if (!option.uniform || option.rates === null) {
+    // Collection, origin-location or unread tiers vary the rate per item.
+    limitations.add(
+      option.kind === "UNKNOWN"
+        ? "UNSUPPORTED_RATE_PROVIDER"
+        : option.rates === null
+          ? "MARKET_RATE_TIER_LIMIT"
+          : "MARKET_RATE_CONDITIONS_UNSUPPORTED",
+    );
+    return [unassertedService(option, code)];
+  }
+  // Each market sets its own option currencies. One that Aura cannot
+  // represent exactly leaves only that option unasserted.
+  const own = new Set<string>();
+  try {
+    const services = marketOffers(option, code).map((offer) => {
+      if (offer.unasserted) {
+        own.add("UNSUPPORTED_RATE_CONDITION");
+        return unassertedService(option, offer.code);
+      }
+      const result = service(
+        {
+          id: option.id,
+          name: "",
+          active: true,
+          methodConditions: offer.conditions,
+          rateProvider: offer.provider,
+        },
+        own,
+        offer.code,
+      );
+      if (result.rate) result.lead_times.transit = transitTime(offer.rate);
+      return result;
+    });
+    for (const limitation of own) limitations.add(limitation);
+    return services;
+  } catch (error) {
+    if (
+      !(error instanceof ShippingReadError) ||
+      !MONEY_REPRESENTATION.has(error.code)
+    )
+      throw error;
+    limitations.add("MARKET_CURRENCY_UNSUPPORTED");
+    return [unassertedService(option, code)];
+  }
 }
 
 // A buyer belongs to the most specific market covering the destination. A
 // market without its own shipping inherits from the next wider market, and
 // the widest one from the store default of no shipping. Shopify infers that
-// lineage from strict region subsets, so equal or crossing markets stay
-// unresolved instead of guessing which one applies.
+// lineage from strict region subsets, so crossing markets stay unresolved
+// unless they lead to the same shipping. Channel markets only shape that
+// channel's product feed; buyers from Aura check out in the online store.
 function marketZones(
   markets: Record<string, Market>,
   limitations: Set<string>,
@@ -347,21 +412,33 @@ function marketZones(
     outer.allRegions ||
     (!inner.allRegions &&
       inner.regions.every((region) => contains(outer, region)));
+  const narrower = (inner: Market, outer: Market) =>
+    within(inner, outer) && !within(outer, inner);
+  // The buyer's most specific markets are the candidates without a narrower
+  // one, and each inherits from the candidates containing it. Crossing
+  // markets resolve only if every path reaches the same shipping.
   const resolve = (candidates: Market[]) => {
-    let remaining = candidates;
-    while (remaining.length) {
-      const specific = remaining.find((market) =>
-        remaining.every(
-          (other) =>
-            other === market ||
-            (within(market, other) && !within(other, market)),
-        ),
-      );
-      if (!specific) return undefined;
-      if (specific.shipping) return specific;
-      remaining = remaining.filter((market) => market !== specific);
+    const inherited = new Map<Market, Market | null | undefined>();
+    function effective(market: Market): Market | null | undefined {
+      if (market.shipping) return market;
+      if (!inherited.has(market))
+        inherited.set(
+          market,
+          outcome(candidates.filter((other) => narrower(market, other))),
+        );
+      return inherited.get(market);
     }
-    return null;
+    function outcome(markets: Market[]): Market | null | undefined {
+      const results = new Set(
+        markets
+          .filter((market) => !markets.some((other) => narrower(other, market)))
+          .map(effective),
+      );
+      // No market at all inherits the store default of no shipping.
+      if (!results.size) return null;
+      return results.size === 1 ? [...results][0] : undefined;
+    }
+    return outcome(candidates);
   };
   const areas = new Map<Market, Map<string, ShippingAreaData>>();
   const cover = (
@@ -384,32 +461,39 @@ function marketZones(
         throw new ShippingReadError("INVALID_COUNTRY");
       regions.set(`${region.country}:${region.subdivision ?? ""}`, region);
     }
-  // Shopify subdivision codes are not ISO 3166-2 codes. A country that is
-  // split between markets is never asserted country-wide.
-  const split = new Set(
-    [...regions.values()]
-      .filter((region) => region.subdivision !== null)
-      .map((region) => region.country),
-  );
-  for (const region of regions.values()) {
-    const owner = resolve(
-      regional.filter((market) => contains(market, region)),
+  const countries = new Map<string, MarketRegion[]>();
+  for (const region of regions.values())
+    countries.set(region.country, [
+      ...(countries.get(region.country) ?? []),
+      region,
+    ]);
+  for (const [country, members] of countries) {
+    const owners = members.map((region) =>
+      resolve(regional.filter((market) => contains(market, region))),
     );
-    if (split.has(region.country))
+    if (
+      members.some((region) => region.subdivision === null) &&
+      owners.every((owner) => owner === owners[0])
+    ) {
+      cover(owners[0], {
+        kind: "COUNTRY",
+        code: country,
+        reference_release: RELEASE,
+      });
+      continue;
+    }
+    // Shopify subdivision codes are not ISO 3166-2 codes. A country whose
+    // parts resolve differently, or that is only partly covered, is never
+    // asserted country-wide.
+    for (const owner of owners)
       cover(
         owner,
         {
           kind: "UNRESOLVED",
-          assertion: `Shopify market regions in ${region.country}`,
+          assertion: `Shopify market regions in ${country}`,
         },
         "SUBDIVISION_MAPPING_UNAVAILABLE",
       );
-    else
-      cover(owner, {
-        kind: "COUNTRY",
-        code: region.country,
-        reference_release: RELEASE,
-      });
   }
   const universal = regional.filter((market) => market.allRegions);
   if (universal.length)

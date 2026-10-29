@@ -26,6 +26,7 @@ import {
 import { shippingLimitationMessage } from "../app/shipping/status";
 import {
   fixture,
+  fixtureGraphql,
   marketFixture,
   marketGraphql,
 } from "./helpers/shipping-fixtures";
@@ -156,6 +157,7 @@ describe("market-driven Shopify shipping", () => {
     ]);
     assert.deepEqual(evidence.validatedOperations, [
       "ShippingPreflight",
+      "ShippingModel",
       "ShippingMarkets",
       "ShippingMarketRegions",
       "ShippingMarketOptions",
@@ -225,12 +227,13 @@ describe("market-driven Shopify shipping", () => {
     assert.deepEqual(areas(austria), ["AT"]);
     const standard = "shopify:DeliveryFlatRateOptionDefinition:11";
     assert.deepEqual(offers(unitedStates), [
+      // Below the free-delivery minimum only: an upper bound Aura lacks.
       {
         code: standard,
-        eligibility: "OFFERED",
-        price: { kind: "FIXED", amount: eur(1723) },
+        eligibility: null,
+        price: null,
         threshold: null,
-        transit: days(3, 5),
+        transit: null,
       },
       {
         code: `${standard}:free`,
@@ -358,13 +361,30 @@ describe("market-driven Shopify shipping", () => {
     assert.ok(
       crossing.mapping.limitations.includes("MARKET_OVERLAP_UNRESOLVED"),
     );
+    // A subdivision market that inherits leaves the whole country uniform.
+    const inheriting = resolve(market(8, [["US", "CA"]], null));
+    assert.deepEqual(inheriting.coverage[0], [
+      "shopify:DeliveryFlatRateOptionDefinition:11",
+      ["US"],
+    ]);
     // Shopify subdivision codes are not ISO codes; a split country is never
     // asserted country-wide, also for the market that covers the rest of it.
-    const california = resolve(market(8, [["US", "CA"]], null));
-    assert.deepEqual(california.coverage[0], [
-      "shopify:DeliveryFlatRateOptionDefinition:11",
-      ["Shopify market regions in US"],
-    ]);
+    const california = resolve(market(8, [["US", "CA"]], flat(81, "4.00")));
+    assert.deepEqual(
+      california.coverage.filter(([, codes]) =>
+        codes.includes("Shopify market regions in US"),
+      ),
+      [
+        [
+          "shopify:DeliveryFlatRateOptionDefinition:11",
+          ["Shopify market regions in US"],
+        ],
+        [
+          "shopify:DeliveryFlatRateOptionDefinition:81",
+          ["Shopify market regions in US"],
+        ],
+      ],
+    );
     assert.ok(
       california.mapping.limitations.includes(
         "SUBDIVISION_MAPPING_UNAVAILABLE",
@@ -392,6 +412,31 @@ describe("market-driven Shopify shipping", () => {
     assert.ok(
       worldwide.mapping.limitations.includes("REST_OF_WORLD_UNRESOLVED"),
     );
+    // Crossing markets resolve when every path reaches the same shipping.
+    const parents = [
+      market(13, [["PL"], ["CH"]], null),
+      market(14, [["PL"], ["IT"]], null),
+      market(10, [], flat(101, "25.00"), { allRegions: true }),
+    ] as const;
+    assert.deepEqual(resolve(...parents).coverage.at(-1), [
+      "shopify:DeliveryFlatRateOptionDefinition:101",
+      ["CH", "IT", "PL", "Shopify market for all other regions"],
+    ]);
+    const diverging = resolve(
+      market(13, [["PL"], ["CH"]], flat(131, "3.00")),
+      parents[1],
+      parents[2],
+    );
+    assert.deepEqual(diverging.coverage.slice(-2), [
+      ["shopify:DeliveryFlatRateOptionDefinition:131", ["CH"]],
+      [
+        "shopify:DeliveryFlatRateOptionDefinition:101",
+        ["IT", "Shopify market for all other regions"],
+      ],
+    ]);
+    assert.ok(
+      diverging.mapping.limitations.includes("MARKET_OVERLAP_UNRESOLVED"),
+    );
     // Disabled shipping in the most specific market offers nothing there.
     const disabled = structuredClone(base);
     const austria = disabled.markets?.["gid://shopify/Market/4"];
@@ -412,6 +457,17 @@ describe("market-driven Shopify shipping", () => {
       channel.mapping.limitations.includes("MARKET_CONTEXT_UNSUPPORTED"),
     );
     assert.deepEqual(channel.coverage, resolve().coverage);
+    // A channel-scoped region market shapes that channel's product feed; the
+    // region market still decides the online store checkout.
+    const combined = resolve(
+      market(15, [["US"]], flat(151, "1.00"), {
+        conditionTypes: ["CHANNEL", "REGION"],
+      }),
+    );
+    assert.ok(
+      combined.mapping.limitations.includes("MARKET_CONTEXT_UNSUPPORTED"),
+    );
+    assert.deepEqual(combined.coverage, resolve().coverage);
   });
 
   it("keeps currencies exact and splits large markets within Aura zone limits", async () => {
@@ -425,10 +481,32 @@ describe("market-driven Shopify shipping", () => {
       kind: "FIXED",
       amount: { amount_minor: 1200, currency: "JPY" },
     });
-    option.rates[0].price = { amount: "1200.5", currencyCode: "JPY" };
-    assert.throws(() => mapShipping(yen), /INEXACT_MINOR_UNITS/);
-    option.rates[0].price = { amount: "12.00", currencyCode: "XXX" };
-    assert.throws(() => mapShipping(yen), /UNSUPPORTED_CURRENCY/);
+    // Markets set their own currencies. An option Aura cannot represent
+    // exactly stays unasserted without failing the other markets.
+    for (const [amount, currencyCode] of [
+      ["1200.5", "JPY"],
+      ["12.00", "ILS"],
+    ]) {
+      option.currency = currencyCode;
+      option.rates[0].price = { amount, currencyCode };
+      const mapping = mapShipping(yen);
+      const [austria] = zones(mapping).slice(2);
+      assert.deepEqual(
+        austria.services.map((service) => [
+          service.code,
+          service.eligibility,
+          service.rate,
+        ]),
+        [["shopify:DeliveryFlatRateOptionDefinition:41", null, null]],
+      );
+      assert.ok(mapping.limitations.includes("MARKET_CURRENCY_UNSUPPORTED"));
+      assert.equal(
+        zones(mapping)[0].services.at(-1)?.rate?.price.kind,
+        "FIXED",
+      );
+    }
+    option.rates[0].price = { amount: "twelve", currencyCode: "EUR" };
+    assert.throws(() => mapShipping(yen), /INVALID_MONEY/);
     const large = structuredClone(base);
     const countries = Array.from({ length: 70 }, (_, i) =>
       String.fromCharCode(65 + Math.floor(i / 26), 65 + (i % 26)),
@@ -445,6 +523,97 @@ describe("market-driven Shopify shipping", () => {
       [64, countries.length - 64],
     );
     assert.deepEqual(split[0].services, split[1].services);
+  });
+
+  it("never asserts a paid price above a free-delivery minimum or a free price the option may not offer", async () => {
+    const snapshot = await marketSnapshot();
+    const europe = snapshot.markets?.["gid://shopify/Market/2"].shipping;
+    assert.ok(europe);
+    const [value, , carrier, weight] = europe.options;
+    for (const option of [value, carrier, weight])
+      option.freeMinimum = { amount: "40.00", currencyCode: "EUR" };
+    const mapping = mapShipping(snapshot);
+    const services = Object.fromEntries(
+      zones(mapping)[1].services.map((service) => [
+        service.code.replace(/^shopify:Delivery/, ""),
+        [
+          service.eligibility,
+          service.rate?.price.kind ?? null,
+          service.applicability.threshold?.minimum.amount_minor ?? null,
+        ],
+      ]),
+    );
+    assert.deepEqual(services, {
+      // The 0.00 tier from 50 stays free; the paid tier only applies below 40.
+      "ValueBasedOptionDefinition:21:2111": [null, null, null],
+      "ValueBasedOptionDefinition:21:2112": ["OFFERED", "FREE", 5000],
+      // The open tier starts above 40, so 40-49.99 carts may get no offer.
+      "ValueBasedOptionDefinition:21:free": [null, null, null],
+      "FlatRateOptionDefinition:22": [null, null, null],
+      "CarrierCalculatedOptionDefinition:23": [null, null, null],
+      "CarrierCalculatedOptionDefinition:23:free": [null, null, null],
+      "WeightBasedOptionDefinition:24": [null, null, null],
+      "WeightBasedOptionDefinition:24:free": [null, null, null],
+    });
+    // A value tier open from the minimum keeps the free price asserted.
+    value.freeMinimum = { amount: "50.00", currencyCode: "EUR" };
+    assert.deepEqual(
+      zones(mapShipping(snapshot))[1]
+        .services.filter((service) => service.code.endsWith(":free"))
+        .map((service) => [service.code, service.eligibility]),
+      [
+        ["shopify:DeliveryValueBasedOptionDefinition:21:free", "OFFERED"],
+        ["shopify:DeliveryCarrierCalculatedOptionDefinition:23:free", null],
+        ["shopify:DeliveryWeightBasedOptionDefinition:24:free", null],
+      ],
+    );
+  });
+
+  it("reads all-region markets without a region list and treats absent rate groups as unrepresentable", async () => {
+    const markets = structuredClone(marketFixture.markets);
+    markets[2].conditions = {
+      conditionTypes: ["REGION"],
+      regionsCondition: { applicationLevel: "ALL" },
+    };
+    markets[2].regions = [];
+    markets[2].shipping = structuredClone(markets[3].shipping);
+    const option = markets[2].shipping?.optionDefinitions[0] as Record<
+      string,
+      unknown
+    >;
+    option.id = "gid://shopify/DeliveryFlatRateOptionDefinition/31";
+    option.flatGroups = null;
+    const mock = marketGraphql(markets);
+    const mapping = mapShipping(await acquire(mock.request));
+    assert.equal(
+      mock.calls.some(
+        (call) =>
+          call.name === "ShippingMarketRegions" &&
+          call.variables.id === markets[2].id,
+      ),
+      false,
+    );
+    // Germany's market now covers all regions and owns Austria's old options.
+    const worldwide = zones(mapping).find((zone) =>
+      zone.services.some(
+        (service) =>
+          service.code === "shopify:DeliveryFlatRateOptionDefinition:31",
+      ),
+    );
+    assert.deepEqual(worldwide?.areas, [
+      { kind: "UNRESOLVED", assertion: "Shopify market for all other regions" },
+    ]);
+    assert.deepEqual(
+      worldwide?.services.map((service) => [
+        service.code,
+        service.eligibility,
+        service.rate,
+      ]),
+      [["shopify:DeliveryFlatRateOptionDefinition:31", null, null]],
+    );
+    assert.ok(
+      mapping.limitations.includes("MARKET_RATE_CONDITIONS_UNSUPPORTED"),
+    );
   });
 
   it("leaves conditioned, multi-group and over-long options conditional", async () => {
@@ -519,6 +688,24 @@ describe("market-driven Shopify shipping", () => {
           await acquireShippingStep(state, mock.request);
       }, /SHOPIFY_CHANGED_DURING_READ/);
     }
+    // A shop that moves to Markets while its profiles are read is not
+    // published from the deprecated, unchanged profile snapshot.
+    const legacy = fixtureGraphql();
+    let moved = false;
+    const switching: GraphqlRequestFn = async (query, variables) => {
+      const body = await legacy.request(query, variables);
+      if (moved && query.includes("ShippingModel"))
+        return { data: { shop: { features: { marketDrivenShipping: true } } } };
+      return body;
+    };
+    const profileRead = beginAcquisition(fixture.acquiredAt);
+    while (!profileRead.verifying)
+      await acquireShippingStep(profileRead, switching);
+    moved = true;
+    await assert.rejects(async () => {
+      while (profileRead.tasks.length)
+        await acquireShippingStep(profileRead, switching);
+    }, /SHOPIFY_CHANGED_DURING_READ/);
     // A market removed between its header and options page is a change too.
     const mock = marketGraphql();
     const state = beginAcquisition(fixture.acquiredAt);

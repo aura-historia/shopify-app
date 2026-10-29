@@ -19,6 +19,7 @@ import {
 } from "../app/shipping/acquisition.server";
 import { mapShipping, observedProfileKeys } from "../app/shipping/mapper";
 import {
+  MARKET_SHIPPING_OBJECT_KEY,
   SHIPPING_API_VERSION,
   SHIPPING_LIMITS,
   ShippingReadError,
@@ -1035,6 +1036,21 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         } else {
           state.status.phase = "blocked";
           job.paused = true;
+        }
+        // Once the preflight found market-driven shipping, terms imported
+        // from profiles are known to be stale. Until a market publication
+        // replaces them, a blocked market import withdraws them instead of
+        // leaving them current. The cleanup keeps its own copy of the
+        // identities, so a later import does not retire them twice.
+        if (
+          job.paused &&
+          job.acquisition?.snapshot.markets &&
+          !(MARKET_SHIPPING_OBJECT_KEY in state.mappings) &&
+          Object.keys(state.mappings).length &&
+          (await this.startCleanup(state, job.shop, credentials, false, false))
+        ) {
+          state.mappings = {};
+          state.memberships = [];
         }
       }
       await this.save(state);

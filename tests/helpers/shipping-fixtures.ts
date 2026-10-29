@@ -67,6 +67,8 @@ export function fixtureGraphql(snapshot = structuredClone(fixture)) {
   const request: GraphqlRequestFn = async (query, variables) => {
     const name = operation(query);
     calls.push({ name, variables });
+    if (name === "ShippingModel")
+      return { data: { shop: { features: { marketDrivenShipping: false } } } };
     if (name === "ShippingPreflight")
       return {
         data: {
@@ -205,7 +207,8 @@ export interface RawMarket {
     optionDefinitions: Record<string, unknown>[];
   } | null;
 }
-// Recorded 2026-10 Markets shapes, including the aliases the importer selects.
+// Synthetic markets in the 2026-10 response shape, including the aliases the
+// importer selects. Values are not recorded from a live shop.
 export const marketFixture = JSON.parse(
   readFileSync(
     new URL(
@@ -247,6 +250,12 @@ export function marketGraphql(
     if (name === "ShippingProducts" || /^ShippingV/.test(name))
       return catalog.request(query, variables);
     calls.push({ name, variables });
+    if (name === "ShippingModel")
+      return {
+        data: {
+          shop: { features: { marketDrivenShipping: controls.marketDriven } },
+        },
+      };
     if (name === "ShippingPreflight")
       return {
         data: {

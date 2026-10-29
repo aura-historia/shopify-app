@@ -76,7 +76,9 @@ export function shippingLimitationMessage(code: string) {
     case "MARKET_OVERLAP_UNRESOLVED":
       return "Destinations in overlapping markets without one most specific market remain unresolved.";
     case "MARKET_CONTEXT_UNSUPPORTED":
-      return "Markets that apply by sales channel or combined conditions remain unasserted.";
+      return "Shipping of channel markets and markets with combined conditions is not imported; region markets decide shipping at your store's checkout.";
+    case "MARKET_CURRENCY_UNSUPPORTED":
+      return "Market shipping options in a currency or precision that cannot be represented exactly remain conditional without a rate.";
     case "APP_PROVIDED_RATES_UNASSERTED":
       return "Shipping rates that other apps provide in Markets are not imported.";
     default:

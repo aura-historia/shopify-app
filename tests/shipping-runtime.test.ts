@@ -2094,8 +2094,8 @@ function marketCallback(
 }
 
 describe("market-driven shipping coordinator", () => {
-  const standard = (provider: ReturnType<typeof marketGraphql>) =>
-    provider.markets[0].shipping?.optionDefinitions[0] as {
+  const option = (provider: ReturnType<typeof marketGraphql>, index: number) =>
+    provider.markets[0].shipping?.optionDefinitions[index] as {
       freeDeliveryMinimumValue: { amount: string };
       flatGroups: { nodes: { rate: { price: { amount: string } } }[] };
     };
@@ -2121,7 +2121,10 @@ describe("market-driven shipping coordinator", () => {
       const profile = backend.profile(MARKET_SHIPPING_OBJECT_KEY);
       assert.equal(profile?.lifecycle, "ACTIVE");
       assert.equal(backend.defaultId, profile?.shippingProfileId);
-      assert.match(terms(), /"amount_minor":1723/);
+      // Standard is free from EUR 50; its EUR 17.23 applies only below that.
+      assert.doesNotMatch(terms(), /"amount_minor":1723/);
+      assert.match(terms(), /"amount_minor":5000/);
+      assert.match(terms(), /"amount_minor":2900/);
       assert.match(
         terms(),
         /"code":"US".*"code":"DE".*"code":"FR".*"code":"AT"/,
@@ -2139,8 +2142,8 @@ describe("market-driven shipping coordinator", () => {
         );
 
       // A rate and free threshold edit, notified through markets/update.
-      standard(provider).flatGroups.nodes[0].rate.price.amount = "18.50";
-      standard(provider).freeDeliveryMinimumValue.amount = "75.00";
+      option(provider, 1).flatGroups.nodes[0].rate.price.amount = "31.50";
+      option(provider, 0).freeDeliveryMinimumValue.amount = "75.00";
       const before = provider.calls.length;
       const response = await receiveShippingWebhook(
         marketCallback("markets/update", {
@@ -2153,9 +2156,33 @@ describe("market-driven shipping coordinator", () => {
       assert.equal(provider.calls.length, before);
       runtime.evict();
       await runtime.run();
-      assert.match(terms(), /"amount_minor":1850/);
-      assert.match(terms(), /"amount_minor":7500/);
-      assert.doesNotMatch(terms(), /"amount_minor":1723/);
+      const unitedStates = JSON.parse(terms()).terms.shipping.coverage.zones[0];
+      assert.deepEqual(
+        unitedStates.services.map(
+          (service: {
+            code: string;
+            applicability: { threshold: { minimum: unknown } | null };
+            rate: { price: unknown } | null;
+          }) => [
+            service.code.split(":").slice(2).join(":"),
+            service.applicability.threshold?.minimum ?? null,
+            service.rate?.price ?? null,
+          ],
+        ),
+        [
+          ["11", null, null],
+          [
+            "11:free",
+            { amount_minor: 7500, currency: "EUR" },
+            { kind: "FREE", currency: "EUR" },
+          ],
+          [
+            "12",
+            null,
+            { kind: "FIXED", amount: { amount_minor: 3150, currency: "EUR" } },
+          ],
+        ],
+      );
 
       // Shopify documents no notification for option edits; the periodic
       // read removes the deleted Express option.
@@ -2190,18 +2217,25 @@ describe("market-driven shipping coordinator", () => {
     }
   });
 
-  it("withdraws the other model's terms when a shop moves to market-driven shipping and back", async () => {
+  // A shop that moves between Shopify's profile and market models.
+  const switchingProvider = () => {
     const legacy = fixtureGraphql();
     const markets = marketGraphql();
     const provider = {
       mode: "profiles",
       calls: legacy.calls,
+      markets,
       request: ((query, variables) =>
         (provider.mode === "markets" ? markets : legacy).request(
           query,
           variables,
         )) as GraphqlRequestFn,
     };
+    return provider;
+  };
+
+  it("withdraws the other model's terms when a shop moves to market-driven shipping and back", async () => {
+    const provider = switchingProvider();
     const runtime = coordinatorRuntime(provider);
     await runtime.installed();
     const backend = keyedBackend();
@@ -2230,6 +2264,71 @@ describe("market-driven shipping coordinator", () => {
       assert.equal(lifecycle("shopify:delivery-profile:1"), "ACTIVE");
       assert.equal(lifecycle(MARKET_SHIPPING_OBJECT_KEY), "RETIRED");
       assert.equal((await runtime.coordinator.status()).failures, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("withdraws stale profile terms while a market-driven import is blocked", async () => {
+    const provider = switchingProvider();
+    const runtime = coordinatorRuntime(provider);
+    await runtime.installed();
+    const backend = keyedBackend();
+    const original = globalThis.fetch;
+    globalThis.fetch = backend.fetcher;
+    const retired = () =>
+      backend.calls.filter(
+        (call) =>
+          call.method === "DELETE" && call.path.includes("shipping-profiles/"),
+      ).length;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      assert.ok(backend.defaultId);
+      provider.mode = "markets";
+      const regions = provider.markets.markets[0].regions;
+      provider.markets.markets[0].regions = [
+        { __typename: "MarketRegionFuture", id: "gid://shopify/Future/1" },
+      ];
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      let status = await runtime.coordinator.status();
+      assert.equal(status.phase, "blocked");
+      assert.equal(status.error, "UNSUPPORTED_SHOPIFY_SCHEMA");
+      assert.equal(status.cleanup, "committed");
+      assert.equal(
+        backend.profile("shopify:delivery-profile:1")?.lifecycle,
+        "RETIRED",
+      );
+      assert.equal(
+        backend.profile("shopify:delivery-profile:2")?.lifecycle,
+        "RETIRED",
+      );
+      assert.equal(backend.defaultId, null);
+      assert.equal(backend.profile(MARKET_SHIPPING_OBJECT_KEY), undefined);
+      const cleared = backend.calls.filter(
+        (call) =>
+          call.path.endsWith("delivery") &&
+          JSON.stringify(call.body).includes('"selection":{"state":"CLEAR"}'),
+      );
+      assert.equal(cleared.length, 2);
+      assert.equal(retired(), 2);
+      // A repaired configuration publishes Markets without a second retire.
+      provider.markets.markets[0].regions = regions;
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.equal(status.failures, 0);
+      assert.equal(
+        backend.profile(MARKET_SHIPPING_OBJECT_KEY)?.lifecycle,
+        "ACTIVE",
+      );
+      assert.equal(
+        backend.defaultId,
+        backend.profile(MARKET_SHIPPING_OBJECT_KEY)?.shippingProfileId,
+      );
+      assert.equal(retired(), 2);
     } finally {
       globalThis.fetch = original;
     }

@@ -323,34 +323,47 @@ market settings; returning to legacy profiles is never required.
   `delivery.shipping.optionDefinitions` (5 per page, each with its first rate group and
   up to 25 cart-value tiers). Product and variant traversal is shared with the profile
   importer. Markets have no version, so a second complete read must reproduce the same
-  configuration before publication; any difference restarts the acquisition. Every
-  operation passed 2026-10 schema validation; the sources and recorded shapes are in
-  `tests/fixtures/shopify-market-shipping-2026-10.json`.
+  configuration, in any page order, before publication; any difference restarts the
+  acquisition. The final verification also re-reads `marketDrivenShipping`, so a shop
+  that moves to Markets during a profile read is never published from the deprecated,
+  unchanged profiles. Only region markets count toward the 100-market limit. Every
+  operation passed 2026-10 schema validation; the sources and the response shapes are in
+  `tests/fixtures/shopify-market-shipping-2026-10.json` (values are synthetic).
 - **Applicable markets.** Active region markets decide the options of buyers who check
   out from Aura Historia. Company-location (B2B), retail-location (POS) and draft
-  markets are not used. Channel markets and markets with combined conditions are
-  reported (`MARKET_CONTEXT_UNSUPPORTED`) and not applied.
+  markets are not used. Channel markets shape the product feed of a sales channel
+  connection; buyers from Aura Historia check out in the online store, where region
+  markets apply. Channel markets and markets with combined conditions are therefore
+  reported (`MARKET_CONTEXT_UNSUPPORTED`) and not applied, as their prices already are
+  not (see [Channel connection](#channel-connection)).
 - **Destinations and inheritance.** A destination belongs to the most specific active
   region market containing it. A market without its own shipping inherits from the next
   wider market, following the lineage Shopify infers from strict region subsets; the
-  widest one inherits the store default of no shipping. A destination in crossing
-  markets without one most specific market stays unresolved
-  (`MARKET_OVERLAP_UNRESOLVED`), and disabled shipping offers nothing. Shopify
-  subdivision codes (such as `CA` in `US`) are not ISO 3166-2 codes, so a country split
-  between markets is only an unresolved area. A market for all regions becomes an
-  unresolved rest-of-world area plus the countries that inherit from it.
+  widest one inherits the store default of no shipping. Crossing markets resolve only
+  when every path reaches the same shipping; otherwise the destination stays unresolved
+  (`MARKET_OVERLAP_UNRESOLVED`). Disabled shipping offers nothing. Shopify subdivision
+  codes (such as `CA` in `US`) are not ISO 3166-2 codes, so a country whose parts
+  resolve to different shipping, or that is only partly covered, is only an unresolved
+  area. A market for all regions becomes an unresolved rest-of-world area plus the
+  countries that inherit from it.
 - **Options.** Each active option becomes a service whose code derives from its Shopify
   ID. Its rates are representable only from one rate group without collection or
   origin-location conditions, the only group that rates every shippable item alike.
-  Conditioned or multi-group options and more than 25 cart-value tiers stay conditional
-  without a rate (`MARKET_RATE_CONDITIONS_UNSUPPORTED`, `MARKET_RATE_TIER_LIMIT`).
-  Otherwise the profile importer's semantics apply: flat rates are fixed or free
-  amounts; a free-delivery minimum adds a free service with a seller-order threshold;
-  a cart-value tier with only a lower bound is a threshold, while upper bounds and
-  weight-based rates stay conditional; carrier-calculated options are calculated at
-  checkout. Currencies and minor units are exact. Transit time in whole days or hours
-  becomes the transit lead time without a business or calendar basis; other durations
-  stay unasserted. Rate consolidation and split shipping decide the combined checkout
+  Shopify's create input sets conditions only when given, so an origin location count
+  of zero is read as no location condition; confirm this on a feature-preview store
+  before release. Conditioned, multi-group or rate-less options and more than 25
+  cart-value tiers stay conditional without a rate (`MARKET_RATE_CONDITIONS_UNSUPPORTED`,
+  `MARKET_RATE_TIER_LIMIT`). Otherwise the profile importer's semantics apply: flat rates
+  are fixed or free amounts; a cart-value tier with only a lower bound is a threshold,
+  while upper bounds and weight-based rates stay conditional; carrier-calculated
+  options are calculated at checkout. A free-delivery minimum makes the whole option
+  free from that cart subtotal: it adds a free service with a seller-order threshold
+  where the option is certainly available (a flat rate, or a cart-value tier open from
+  the minimum), and leaves paid prices conditional because they apply only below it.
+  Currencies and minor units are exact; an option whose currency or precision Aura
+  cannot represent stays conditional (`MARKET_CURRENCY_UNSUPPORTED`) without affecting
+  other options. Transit time in whole days or hours becomes the transit lead time
+  without a business or calendar basis; other durations stay unasserted. Rate consolidation and split shipping decide the combined checkout
   charge, so amounts keep a null basis with `SHOPIFY_CHARGE_GROUP_BASIS_UNAVAILABLE`.
 - **Applicability.** The market configuration is one profile, `shopify:market-shipping`,
   assigned as the source default. Market rates apply to items that require shipping, so
@@ -360,7 +373,10 @@ market settings; returning to legacy profiles is never required.
   (`APP_PROVIDED_RATES_UNASSERTED`).
 - **Model switches.** Only a complete acquisition of the current model is published.
   Moving to market-driven shipping retires the imported profile identities; a rollback
-  retires the market profile and restores them.
+  retires the market profile and restores them. Once the preflight finds market-driven
+  shipping, terms imported from profiles are known to be stale: if the market import is
+  blocked before its profile is published, they are withdrawn like on permission loss
+  instead of staying current.
 - **Notifications.** `markets/create`, `markets/update` and `markets/delete` are refresh
   hints like profile notifications; their payload carries only the numeric market ID.
   Shopify does not document which shipping option edits update a market, and collection
@@ -370,9 +386,9 @@ market settings; returning to legacy profiles is never required.
   per-variant delivery option estimates are contextualized checkout estimates, not the
   merchant's options and conditions, and this app reads no product feed.
 - **Verification.** Tests cover initial import, rate and threshold edits, option and
-  market removal, multiple and nested markets, subdivisions, missing access, unsupported
-  fields, retries, model switches and read-only Shopify access against the recorded
-  2026-10 shapes. Before release, repeat this on a development store with the
+  market removal, multiple and nested markets, subdivisions, free-delivery minimums,
+  currencies, missing access, unsupported fields, retries, model switches (including a
+  blocked switch) and read-only Shopify access against the 2026-10 shapes. Before release, repeat this on a development store with the
   **Market-driven shipping** feature preview and submit Shopify's compatibility
   self-attestation.
 

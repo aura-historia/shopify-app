@@ -46,6 +46,7 @@ type PagedTask<K extends string> = {
 }[K];
 export type ReadTask =
   | { kind: "preflight" }
+  | { kind: "verifyModel" }
   | PagedTask<"profiles" | "verifyProfiles" | "products">
   | { kind: "zones"; profile: string; group: string; after?: string }
   | {
@@ -98,7 +99,7 @@ export function beginAcquisition(now: string): ShippingAcquisitionState {
 
 function nextPage<T>(
   connection: Connection<T>,
-  task: Exclude<ReadTask, { kind: "preflight" }>,
+  task: Exclude<ReadTask, { kind: "preflight" | "verifyModel" }>,
   state: ShippingAcquisitionState,
 ) {
   if (
@@ -248,6 +249,24 @@ function marketRegion(region: RawRegion): MarketRegion {
   throw new ShippingReadError("UNSUPPORTED_SHOPIFY_SCHEMA");
 }
 
+// Connections without a sort key may page in another order on a second read.
+function canonical(markets: Record<string, Market> = {}) {
+  const byId = (a: { id: string }, b: { id: string }) =>
+    a.id.localeCompare(b.id);
+  return JSON.stringify(
+    Object.values(markets)
+      .map((market) => ({
+        ...market,
+        regions: [...market.regions].sort(byId),
+        shipping: market.shipping && {
+          ...market.shipping,
+          options: [...market.shipping.options].sort(byId),
+        },
+      }))
+      .sort(byId),
+  );
+}
+
 function marketsFor(state: ShippingAcquisitionState, verify?: boolean) {
   if (verify) {
     state.verifiedMarkets ??= {};
@@ -322,6 +341,20 @@ export async function acquireShippingStep(
     state.tasks.unshift(
       marketDriven ? { kind: "markets" } : { kind: "profiles" },
     );
+  } else if (task.kind === "verifyModel") {
+    const data = await read<{
+      shop: { features: { marketDrivenShipping: boolean } };
+    }>(
+      graphql,
+      `query ShippingModel { shop { features { marketDrivenShipping } } }`,
+    );
+    // A shop can move to Markets during a profile read, whose deprecated
+    // reads then keep returning an unchanged snapshot.
+    if (
+      data.shop.features.marketDrivenShipping !==
+      Boolean(state.snapshot.markets)
+    )
+      throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
   } else if (task.kind === "markets") {
     const data = await read<{
       markets: Connection<{
@@ -378,7 +411,11 @@ export async function acquireShippingStep(
           ...verify,
         });
     }
-    if (Object.keys(markets).length > SHIPPING_LIMITS.markets)
+    // Only region markets are traversed; others are kept as headers.
+    if (
+      Object.values(markets).filter(isRegionMarket).length >
+      SHIPPING_LIMITS.markets
+    )
       throw new ShippingReadError("ACQUISITION_LIMIT_EXCEEDED");
   } else if (task.kind === "marketRegions") {
     const market = marketsFor(state, task.verify)[task.market];
@@ -668,6 +705,7 @@ export async function acquireShippingStep(
       ...Object.keys(state.snapshot.products).map(
         (product): ReadTask => ({ kind: "verifyProduct", product }),
       ),
+      { kind: "verifyModel" },
     );
   }
   if (
@@ -675,8 +713,7 @@ export async function acquireShippingStep(
     (state.verifiedProfiles.length !==
       Object.keys(state.snapshot.profiles).length ||
       (state.snapshot.markets &&
-        JSON.stringify(state.verifiedMarkets) !==
-          JSON.stringify(state.snapshot.markets)))
+        canonical(state.verifiedMarkets) !== canonical(state.snapshot.markets)))
   ) {
     throw new ShippingReadError("SHOPIFY_CHANGED_DURING_READ");
   }

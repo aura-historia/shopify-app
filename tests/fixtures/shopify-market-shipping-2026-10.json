@@ -19,6 +19,7 @@
     ],
     "validatedOperations": [
       "ShippingPreflight",
+      "ShippingModel",
       "ShippingMarkets",
       "ShippingMarketRegions",
       "ShippingMarketOptions"
