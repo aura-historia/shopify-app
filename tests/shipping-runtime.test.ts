@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { describe, it } from "node:test";
 import type { AppLoadContext } from "react-router";
+import { buildAuraHistoriaOAuthAuthorizeUrl } from "../app/oauth.server";
 import { mapShipping } from "../app/shipping/mapper";
 import { SHIPPING_LIMITS } from "../app/shipping/model";
 import {
@@ -12,7 +13,11 @@ import {
   publishShippingStep,
 } from "../app/shipping/publisher.server";
 import { receiveShippingWebhook } from "../app/shipping/webhooks.server";
-import { markShopCredentialsDisconnected } from "../app/shop-credentials.server";
+import {
+  getShopCredentialsStorageKey,
+  loadShopCredentials,
+  markShopCredentialsDisconnected,
+} from "../app/shop-credentials.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
 import {
   fixture,
@@ -29,12 +34,20 @@ registerHooks({
         url: `data:text/javascript,${encodeURIComponent("export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }")}`,
         shortCircuit: true,
       };
+    // The OAuth callback's CSS module is not used by its loader.
+    if (specifier.endsWith(".module.css"))
+      return {
+        url: "data:text/javascript,export default {}",
+        shortCircuit: true,
+      };
     return next(specifier, context);
   },
 });
 const { ShopCoordinator, RECONCILIATION_INTERVAL } = await import(
   "../workers/shop-coordinator"
 );
+const { loader: oauthCallback } = await import("../app/routes/oauth.callback");
+const home = await import("../app/routes/app._index");
 const { getShopifyForEnv } = await import("../app/shopify.server");
 const { Session } = await import("@shopify/shopify-api");
 const { setAbstractFetchFunc } = await import("@shopify/shopify-api/runtime");
@@ -44,6 +57,8 @@ const credentials = {
   accessToken: "aura-private-token",
   updatedAt: "2026-10-18T08:00:00Z",
 };
+const nextSource = "ls_01h455vb4pex5vy7enb1p677v2";
+type HomeData = Exclude<Awaited<ReturnType<typeof home.loader>>, Response>;
 const contract = JSON.parse(
   readFileSync(
     new URL("./fixtures/shipping-contract.json", import.meta.url),
@@ -155,6 +170,17 @@ function refreshRuntime() {
       query: string,
       variables: Record<string, unknown> = {},
     ) {
+      // Connection setup reads shop metadata and channel access through the
+      // same coordinator. Without channel access no bulk export starts.
+      if (query.includes("shopLocales"))
+        return {
+          data: {
+            shopLocales: [{ locale: "en", primary: true }],
+            shop: { currencyCode: "EUR" },
+          },
+        };
+      if (query.includes("query AuraChannelAccess"))
+        return { data: { currentAppInstallation: { accessScopes: [] } } };
       await controls.beforeRead();
       if (controls.denied)
         return { errors: [{ extensions: { code: "ACCESS_DENIED" } }] };
@@ -940,7 +966,6 @@ describe("S02 authenticated shipping refresh and recovery", () => {
     );
     runtime.storage.put = put;
     assert.equal(runtime.storage.values.get("hintVersion"), 1);
-    await runtime.coordinator.prepareConnection(shop);
     await runtime.coordinator.saveConnection(shop, credentials);
     assert.equal(
       (
@@ -1331,20 +1356,21 @@ describe("S02 connection lifecycle", () => {
     const backend = backendFixture();
     const original = globalThis.fetch;
     globalThis.fetch = backend.fetcher;
-    const nextSource = "ls_01h455vb4pex5vy7enb1p677v2";
     try {
       await runtime.coordinator.requestShipping(shop);
       await runtime.run();
       // An older scan is in progress when OAuth selects another source.
       await runtime.coordinator.requestShipping(shop);
       await runtime.coordinator.alarm();
-      await runtime.coordinator.prepareConnection(shop);
-      assert.equal((await storedState(runtime.storage)).job, undefined);
       await runtime.coordinator.saveConnection(shop, {
         ...credentials,
         listingSourceId: nextSource,
         accessToken: "new-aura-token",
       });
+      assert.equal(
+        (await storedState(runtime.storage)).job.listingSourceId,
+        nextSource,
+      );
       runtime.provider.snapshot.profiles[
         "gid://shopify/DeliveryProfile/1"
       ].groups[0].zones[0].methods[0].rateProvider.price = {
@@ -1473,6 +1499,396 @@ describe("S02 scope fencing", () => {
       assert.equal((await storedState(runtime.storage)).job, undefined);
     } finally {
       globalThis.fetch = original;
+    }
+  });
+});
+
+// Drives the actual OAuth callback and embedded home against the coordinator.
+function connectionRuntime() {
+  const runtime = refreshRuntime();
+  runtime.env.AURA_HISTORIA_OAUTH_CLIENT_ID = "oc_01h455vb4pex5vy7enb1p677v1";
+  runtime.env.AURA_HISTORIA_OAUTH_CLIENT_SECRET = "private-oauth-secret";
+  getShopifyForEnv(runtime.env).authenticate.admin = (async () => ({
+    session: { shop, scope: "read_products" },
+    redirect: (url: string) =>
+      new Response(null, { status: 302, headers: { Location: url } }),
+  })) as never;
+  const backend = backendFixture();
+  const controls = { conflict: "" };
+  const revoked: string[] = [];
+  const configured: string[] = [];
+  const exchanged = new Set<string>();
+  const fetcher: typeof fetch = async (input, init) => {
+    const request = new Request(input as RequestInfo, init);
+    const path = new URL(request.url).pathname;
+    if (path === "/v1/oauth/token") {
+      const code = new URLSearchParams(await request.text()).get("code") ?? "";
+      // Authorization codes are single use.
+      if (exchanged.has(code))
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      exchanged.add(code);
+      return Response.json({ access_token: `aura-token-${code}` });
+    }
+    if (path === "/v1/oauth/revoke") {
+      revoked.push(
+        new URLSearchParams(await request.text()).get("token") ?? "",
+      );
+      return new Response(null, { status: 200 });
+    }
+    if (path.endsWith("/ingestion-configurations/shopify")) {
+      configured.push(path);
+      // The live backend rejects a shop domain bound to another source.
+      return new Response(null, {
+        status:
+          controls.conflict && path.includes(controls.conflict) ? 409 : 204,
+      });
+    }
+    return backend.fetcher(request);
+  };
+  const call = (request: Request) =>
+    ({ request, context: runtime.context, params: {} }) as never;
+  return {
+    ...runtime,
+    backend,
+    controls,
+    revoked,
+    configured,
+    fetcher,
+    // Starts an authorization now; the returned callback can run later.
+    async authorize(code: string, source = credentials.listingSourceId) {
+      const started = await buildAuraHistoriaOAuthAuthorizeUrl(
+        runtime.env.KV,
+        runtime.env,
+        shop,
+      );
+      assert.ok(started.isReady);
+      const url = new URL("https://app.invalid/oauth/callback");
+      url.searchParams.set("code", code);
+      url.searchParams.set("state", started.state);
+      url.searchParams.set("listing_source_id", source);
+      return async () => {
+        const response = await oauthCallback(call(new Request(url)));
+        assert.ok(response instanceof Response);
+        return new URL(response.headers.get("Location") ?? "").searchParams;
+      };
+    },
+    async home(query = "") {
+      return home.loader(call(new Request(`https://app.invalid/app?${query}`)));
+    },
+    async act(intent: string) {
+      const body = new FormData();
+      body.set("intent", intent);
+      const response = await home.action(
+        call(new Request("https://app.invalid/app", { method: "POST", body })),
+      );
+      return new URL(
+        response.headers.get("Location") ?? "",
+        "https://app.invalid",
+      ).searchParams;
+    },
+    cleanups(state: { cleanup?: unknown; cleanupQueue?: unknown[] }) {
+      return [state.cleanup, ...(state.cleanupQueue ?? [])].filter(Boolean) as {
+        credentialVersion: string;
+        credentialKey: string;
+        revoke: boolean;
+      }[];
+    },
+  };
+}
+
+describe("OAuth connection replacement", () => {
+  it("keeps the current connection running when the new grant's configuration fails", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+      await runtime.coordinator.alarm();
+      const before = await storedState(runtime.storage);
+      runtime.controls.conflict = credentials.listingSourceId;
+      const callback = await runtime.authorize("second");
+      assert.equal((await callback()).get("oauth"), "failed");
+      // Only the unused new grant is revoked; the current record and its
+      // binding, work and absent cleanup obligation are unchanged.
+      assert.deepEqual(runtime.revoked, ["aura-token-second"]);
+      assert.deepEqual(
+        await loadShopCredentials(runtime.env.KV, shop),
+        credentials,
+      );
+      const after = await storedState(runtime.storage);
+      assert.equal(after.stopped, false);
+      assert.deepEqual(after.binding, before.binding);
+      assert.deepEqual(after.job, before.job);
+      assert.deepEqual(runtime.cleanups(after), []);
+      assert.ok(
+        [...runtime.kv.keys()].every(
+          (key) => !key.includes("shipping-cleanup"),
+        ),
+      );
+      const data = (await runtime.home("oauth=failed")) as HomeData;
+      assert.equal(data.integration.status, "connected");
+      assert.equal(data.integration.replacementFailed, true);
+      assert.equal(
+        data.credentials?.listingSourceId,
+        credentials.listingSourceId,
+      );
+      assert.equal(
+        (await runtime.act("import_shipping")).get("shipping"),
+        null,
+      );
+      runtime.controls.conflict = "";
+      await runtime.run();
+      const status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.ok(status.committed > 0);
+      assert.deepEqual(runtime.revoked, ["aura-token-second"]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("leaves the current binding untouched when the new record cannot be stored", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    const set = runtime.kv.set.bind(runtime.kv);
+    runtime.kv.set = (key, value) => {
+      if (key === getShopCredentialsStorageKey(shop))
+        throw new Error("KV write failed");
+      return set(key, value);
+    };
+    try {
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+      const before = await storedState(runtime.storage);
+      assert.equal(
+        (await (await runtime.authorize("second"))()).get("oauth"),
+        "failed",
+      );
+      assert.deepEqual(runtime.revoked, ["aura-token-second"]);
+      assert.deepEqual(await storedState(runtime.storage), before);
+      // The previous token's cleanup copy is dropped with the attempt.
+      assert.ok(
+        [...runtime.kv.keys()].every(
+          (key) => !key.includes("shipping-cleanup"),
+        ),
+      );
+      assert.equal(
+        await runtime.coordinator.connectionRetired(credentials.updatedAt),
+        false,
+      );
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("binds a same-source replacement and revokes the previous grant after its cleanup", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      const params = await (await runtime.authorize("second"))();
+      assert.equal(params.get("oauth"), "connected");
+      // A backfill failure after persistence keeps the new connection.
+      assert.equal(params.get("backfill"), "not_queued");
+      const stored = await loadShopCredentials(runtime.env.KV, shop);
+      assert.equal(stored?.accessToken, "aura-token-second");
+      const state = await storedState(runtime.storage);
+      assert.equal(state.stopped, false);
+      assert.equal(state.binding.credentialVersion, stored?.connectionId);
+      assert.ok(state.job.acquisition);
+      const [cleanup, ...rest] = runtime.cleanups(state);
+      assert.deepEqual(rest, []);
+      assert.equal(cleanup.credentialVersion, credentials.updatedAt);
+      assert.equal(cleanup.revoke, true);
+      assert.equal(
+        JSON.parse(runtime.kv.get(cleanup.credentialKey) ?? "{}").accessToken,
+        credentials.accessToken,
+      );
+      assert.deepEqual(runtime.revoked, []);
+      const data = (await runtime.home("oauth=connected")) as HomeData;
+      assert.equal(data.integration.status, "connected");
+      assert.equal(data.integration.replacementFailed, false);
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+      await runtime.run();
+      const status = await runtime.coordinator.status();
+      assert.equal(status.error, undefined);
+      assert.ok(status.committed > 0);
+      assert.equal(status.cleanup, "committed");
+      assert.equal(status.tokenRevoked, true);
+      assert.deepEqual(runtime.revoked, [credentials.accessToken]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("orders overlapping callbacks so every replaced grant is cleaned up", async () => {
+    for (const conflict of ["", nextSource]) {
+      const runtime = connectionRuntime();
+      const original = globalThis.fetch;
+      globalThis.fetch = runtime.fetcher;
+      runtime.controls.conflict = conflict;
+      try {
+        await runtime.coordinator.requestShipping(shop);
+        await runtime.coordinator.alarm();
+        const first = await runtime.authorize("first");
+        const second = await runtime.authorize("second", nextSource);
+        const results = await Promise.all([first(), second()]);
+        assert.deepEqual(
+          results.map((params) => params.get("oauth")),
+          ["connected", conflict ? "failed" : "connected"],
+        );
+        const stored = await loadShopCredentials(runtime.env.KV, shop);
+        const state = await storedState(runtime.storage);
+        assert.equal(state.stopped, false);
+        assert.equal(state.binding.credentialVersion, stored?.connectionId);
+        assert.equal(state.binding.listingSourceId, stored?.listingSourceId);
+        const superseded = runtime.cleanups(state).map((cleanup) => {
+          assert.equal(cleanup.revoke, true);
+          return JSON.parse(runtime.kv.get(cleanup.credentialKey) ?? "{}")
+            .accessToken;
+        });
+        // Each grant is current, queued for cleanup, or revoked as unused.
+        assert.deepEqual(
+          [stored?.accessToken, ...superseded, ...runtime.revoked].sort(),
+          [credentials.accessToken, "aura-token-first", "aura-token-second"],
+        );
+        assert.deepEqual(
+          runtime.revoked,
+          conflict ? ["aura-token-second"] : [],
+        );
+        assert.equal(await runtime.coordinator.requestShipping(shop), true);
+        await runtime.run();
+        assert.deepEqual(
+          [...runtime.revoked].sort(),
+          [credentials.accessToken, "aura-token-first", "aura-token-second"]
+            .filter((token) => token !== stored?.accessToken)
+            .sort(),
+        );
+        assert.equal(
+          ((await runtime.home()) as HomeData).integration.status,
+          "connected",
+        );
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
+  it("connects a double-submitted callback once and leaves that connection on replay", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      const callback = await runtime.authorize("second");
+      const results = await Promise.all([callback(), callback()]);
+      assert.deepEqual(results.map((params) => params.get("oauth")).sort(), [
+        "connected",
+        "failed",
+      ]);
+      const state = await storedState(runtime.storage);
+      assert.equal(
+        (await loadShopCredentials(runtime.env.KV, shop))?.accessToken,
+        "aura-token-second",
+      );
+      assert.equal(runtime.cleanups(state).length, 1);
+      assert.equal((await callback()).get("oauth"), "failed");
+      assert.deepEqual(await storedState(runtime.storage), state);
+      // A rejected code issued no grant, so nothing new is revoked.
+      assert.deepEqual(runtime.revoked, []);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("withdraws and revokes a replaced record that was never bound", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      assert.equal(
+        (await (await runtime.authorize("second"))()).get("oauth"),
+        "connected",
+      );
+      const [cleanup, ...rest] = runtime.cleanups(
+        await storedState(runtime.storage),
+      );
+      assert.deepEqual(rest, []);
+      assert.equal(cleanup.credentialVersion, credentials.updatedAt);
+      assert.equal(cleanup.revoke, true);
+      await runtime.run();
+      assert.deepEqual(runtime.revoked, [credentials.accessToken]);
+      assert.equal((await runtime.coordinator.status()).tokenRevoked, true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("reports a stopped stored record as stopped and recovers only through a new authorization", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    const realNow = Date.now;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      await runtime.run();
+      // The binding was stopped and its revocation queued, but the record
+      // stayed stored, e.g. a disconnect whose deletion failed.
+      await runtime.coordinator.disconnectShipping(shop);
+      assert.ok(await loadShopCredentials(runtime.env.KV, shop));
+      let data = (await runtime.home()) as HomeData;
+      assert.equal(data.integration.status, "stopped");
+      assert.equal(data.credentials, null);
+      assert.equal(
+        (await runtime.act("import_shipping")).get("shipping"),
+        "not_queued",
+      );
+      assert.equal(
+        (await runtime.act("retry_backfill")).get("backfill"),
+        "not_queued",
+      );
+      assert.deepEqual(runtime.configured, []);
+      await runtime.run();
+      assert.deepEqual(runtime.revoked, [credentials.accessToken]);
+      assert.notDeepEqual((await storedState(runtime.storage)).mappings, {});
+      // The fence outlives local retention while the record is stored, but
+      // only as a minimal tombstone.
+      Date.now = () => realNow() + 8 * 86_400_000;
+      await runtime.coordinator.alarm();
+      Date.now = realNow;
+      const tombstone = await storedState(runtime.storage);
+      assert.deepEqual(tombstone.mappings, {});
+      assert.equal(tombstone.memberships, undefined);
+      assert.equal(tombstone.stopped, true);
+      assert.equal(runtime.storage.alarm, null);
+      assert.equal(
+        await runtime.coordinator.connectionRetired(credentials.updatedAt),
+        true,
+      );
+      assert.equal(await runtime.coordinator.requestShipping(shop), false);
+      const reconnect = await runtime.home("manual_connect=1");
+      assert.ok(reconnect instanceof Response);
+      assert.match(
+        reconnect.headers.get("Location") ?? "",
+        /^https:\/\/stage\.aura-historia\.com\/en\/oauth\/authorize\?/,
+      );
+      assert.equal(
+        (await (await runtime.authorize("fresh"))()).get("oauth"),
+        "connected",
+      );
+      data = (await runtime.home()) as HomeData;
+      assert.equal(data.integration.status, "connected");
+      assert.equal(await runtime.coordinator.requestShipping(shop), true);
+      await runtime.run();
+      assert.equal((await runtime.coordinator.status()).error, undefined);
+      // The already revoked record is not cleaned up or revoked twice.
+      assert.deepEqual(runtime.revoked, [credentials.accessToken]);
+    } finally {
+      globalThis.fetch = original;
+      Date.now = realNow;
     }
   });
 });

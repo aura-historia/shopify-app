@@ -45,14 +45,14 @@ function makeKv() {
   };
 }
 
-function makeEnv(prepareConnection = async () => {}) {
+function makeEnv(graphql = async () => ({})) {
   return {
     KV: makeKv(),
     AURA_HISTORIA_OAUTH_CLIENT_ID: "oc_01h455vb4pex5vy7enb1p677vn",
     AURA_HISTORIA_OAUTH_CLIENT_SECRET: clientSecret,
     AURA_HISTORIA_OAUTH_TOKEN_URL: "https://api.test.com/v1/oauth/token",
     SHOPIFY_APP_URL: "https://partner-connect.test",
-    SHOP_COORDINATOR: { getByName: () => ({ prepareConnection }) },
+    SHOP_COORDINATOR: { getByName: () => ({ graphql }) },
   };
 }
 
