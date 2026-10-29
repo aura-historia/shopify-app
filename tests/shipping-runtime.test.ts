@@ -582,6 +582,10 @@ describe("server-side shipping coordinator", () => {
       assert.equal(status.pending, 1);
       const { job } = await storedState(runtime.storage);
       assert.equal(job.paused, true);
+      assert.equal(
+        job.publication.lastError,
+        "SHIPPING_IMPORT_DEPENDENCY_MISSING",
+      );
       assert.equal(job.publication.work[0].exhausted, true);
       assert.equal(job.publication.work[0].done, undefined);
       assert.equal(runtime.storage.alarm, null);

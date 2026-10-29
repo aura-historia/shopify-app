@@ -343,11 +343,11 @@ on their next initial/manual import; there is no unbounded installation enumerat
 
 Worker alarms checkpoint one provider request or typed prepare/send step at a time.
 Eight attempts per record/page and exponential delays bound automatic retries.
-Missing catalog listings remain deferred with SHIPPING_IMPORT_DEPENDENCY_MISSING:
-only an assignment lookup's documented 404 PRODUCT_LISTING_NOT_FOUND qualifies,
-other 404s keep their HTTP category. Manual repair resumes exact pending requests,
-and the seven-day retention cap
-bounds old request bodies. A new complete acquisition may supersede exhausted
+Missing catalog listings remain deferred with SHIPPING_IMPORT_DEPENDENCY_MISSING,
+whether the backend reports that code or an assignment lookup returns the documented
+404 PRODUCT_LISTING_NOT_FOUND; other 404s keep their HTTP category. Manual repair
+resumes exact pending requests, and the seven-day retention cap bounds old request
+bodies. A new complete acquisition may supersede exhausted
 work, using stable object identities and a new acquisition order. The callback
 inbox does not wait for provider reads and cannot overwrite a connection stop.
 
