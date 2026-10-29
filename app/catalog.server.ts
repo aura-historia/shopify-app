@@ -6,7 +6,7 @@ import {
   isBoundChannel,
   PUBLICATION_GID,
   readAuraChannel,
-  readListingAccess,
+  readCatalogAccess,
 } from "./channel.server";
 import { getShopifyStoreName } from "./shopify-admin-url";
 
@@ -164,7 +164,9 @@ async function readChannelPublication(
   resolution: ChannelPublicationResolution;
   channel?: AuraChannel;
 }> {
-  const access = await readListingAccess(graphql);
+  // Listing and publication access are both required: without either, the
+  // publication and the products' membership in it cannot be read.
+  const access = await readCatalogAccess(graphql);
   if (access !== "granted")
     return {
       resolution: {

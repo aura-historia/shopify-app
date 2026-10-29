@@ -76,7 +76,12 @@ const product = {
   publishedOnPublication: true,
 };
 
-async function runtime(graphql: (query: string) => Promise<unknown>) {
+async function runtime(
+  graphql: (
+    query: string,
+    variables: Record<string, unknown>,
+  ) => Promise<unknown>,
+) {
   const storage = new MemoryStorage();
   const kv = new Map<string, string>();
   const env = {
@@ -93,7 +98,11 @@ async function runtime(graphql: (query: string) => Promise<unknown>) {
       getByName: (name: string) => {
         assert.equal(name, shop);
         return {
-          graphql: (_shop: string, query: string) => graphql(query),
+          graphql: (
+            _shop: string,
+            query: string,
+            variables: Record<string, unknown>,
+          ) => graphql(query, variables),
         };
       },
     },
@@ -108,18 +117,22 @@ async function runtime(graphql: (query: string) => Promise<unknown>) {
 
 function shopify({ fail = false, publicationFailures = 0 } = {}) {
   let publicationReads = 0;
-  return mock.fn(async (query: string) => {
+  return mock.fn(async (query: string, variables: Record<string, unknown>) => {
     if (fail) throw new Error("Shopify unavailable");
     if (
-      query.includes("AuraChannelPublication") &&
+      query.includes("AuraChannelCatalogPublication") &&
       publicationReads++ < publicationFailures
     )
       throw new Error("Network connection lost");
     if (isChannelQuery(query))
-      return channelResponse(query, {
-        scopes: ["read_product_listings"],
-        publication: { id: publicationId },
-      });
+      return channelResponse(
+        query,
+        {
+          scopes: ["read_product_listings", "read_publications"],
+          publication: { id: publicationId },
+        },
+        variables,
+      );
     return {
       data: {
         node: {

@@ -20,3 +20,19 @@ export function createShopifyAdminAppUrl(
 
   return url;
 }
+
+// Shopify's installation page for this app, the page Shopify documents for
+// requesting scopes an installation has not granted. Shopify also asks for
+// added required scopes when the merchant next opens the app.
+export function createShopifyPermissionsUrl(
+  shopifyStoreName: string,
+  clientId: string,
+) {
+  const url = new URL(
+    `https://admin.shopify.com/store/${encodeURIComponent(
+      shopifyStoreName,
+    )}/oauth/install`,
+  );
+  url.searchParams.set("client_id", clientId);
+  return url;
+}

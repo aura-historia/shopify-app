@@ -2,10 +2,15 @@ import {
   type CatalogImportStatus,
   CHANNEL_PROVISIONING_ERRORS,
   CHANNEL_PUBLICATION_ERRORS,
+  loadCatalogImportStatus,
   resolveChannelPublication,
   saveCatalogImportStatus,
 } from "./catalog.server";
-import { ensureAuraChannel, PUBLICATION_GID } from "./channel.server";
+import {
+  ensureAuraChannel,
+  PUBLICATION_GID,
+  readCatalogAccess,
+} from "./channel.server";
 import { CURRENCY_MINOR_UNITS } from "./currency";
 import { createClient } from "./generated/api/client";
 import {
@@ -1105,6 +1110,50 @@ export async function triggerBackfill(
     console.error(
       `Failed to submit backfill for ${shopDomain}:`,
       message
+        .replaceAll(accessToken, "[redacted]")
+        .replace(/\s+/g, " ")
+        .slice(0, 180),
+    );
+    return false;
+  }
+}
+
+// An import that stopped for missing Shopify access resumes once the merchant
+// approved the updated scopes, exactly as "Import catalog again" would. Any
+// other import state is the merchant's to retry.
+export async function resumeCatalogImport(
+  graphqlRequest: GraphqlRequestFn,
+  kv: Pick<CloudflareBindings["KV"], "get" | "put">,
+  shopDomain: string,
+  listingSourceId: string,
+  accessToken: string,
+  apiBaseUrl: string,
+): Promise<boolean> {
+  try {
+    const status = await loadCatalogImportStatus(kv, shopDomain);
+    if (status?.phase !== "failed" || status.error !== "MISSING_SCOPE")
+      return false;
+    if ((await readCatalogAccess(graphqlRequest)) !== "granted") return false;
+    const metadata = await configureShopifyListingSource(
+      graphqlRequest,
+      apiBaseUrl,
+      listingSourceId,
+      accessToken,
+      shopDomain,
+    );
+    return await triggerBackfill(
+      graphqlRequest,
+      kv,
+      shopDomain,
+      listingSourceId,
+      accessToken,
+      apiBaseUrl,
+      metadata,
+    );
+  } catch (error) {
+    console.error(
+      `Catalog import did not resume for ${shopDomain}:`,
+      (error instanceof Error ? error.message : String(error))
         .replaceAll(accessToken, "[redacted]")
         .replace(/\s+/g, " ")
         .slice(0, 180),

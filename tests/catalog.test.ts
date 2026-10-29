@@ -18,7 +18,7 @@ import {
   channelListingSourceId,
 } from "./helpers/channel-fixtures";
 
-const granted = ["read_products", "read_product_listings"];
+const granted = ["read_products", "read_product_listings", "read_publications"];
 const listingSourceId = channelListingSourceId;
 
 describe("release catalog behavior", () => {
@@ -103,15 +103,22 @@ describe("release catalog behavior", () => {
   });
   it("distinguishes missing access, connection, publication and failed reads", async () => {
     // A missing grant is reported even when the channel reads would fail.
-    for (const channel of [boundChannel(), new Error("Access denied")]) {
-      assert.deepEqual(
-        await resolveChannelPublication(
-          channelGraphql({ scopes: ["read_products"], channel }),
-          listingSourceId,
-        ),
-        { state: "missing_scope" },
-      );
-    }
+    // Installations approved before `read_publications` was required keep
+    // listing access but cannot read the publication.
+    for (const scopes of [
+      ["read_products"],
+      ["read_products", "read_publications"],
+      ["read_products", "read_product_listings", "read_shipping"],
+    ])
+      for (const channel of [boundChannel(), new Error("Access denied")]) {
+        assert.deepEqual(
+          await resolveChannelPublication(
+            channelGraphql({ scopes, channel }),
+            listingSourceId,
+          ),
+          { state: "missing_scope" },
+        );
+      }
     // No connection, or one bound to another listing source or specification,
     // selects nothing for this source.
     for (const channel of [
@@ -141,7 +148,10 @@ describe("release catalog behavior", () => {
       ),
       { state: "unavailable" },
     );
-    for (const scopes of [granted, ["write_product_listings"]]) {
+    for (const scopes of [
+      granted,
+      ["write_product_listings", "write_publications"],
+    ]) {
       assert.deepEqual(
         await resolveChannelPublication(
           channelGraphql({
@@ -160,7 +170,8 @@ describe("release catalog behavior", () => {
       queries.push(query);
       return channelGraphql()(query, variables);
     }, listingSourceId);
-    assert.equal(queries.length, 3);
+    // Access, connection, catalog scan and the own catalog's publication.
+    assert.equal(queries.length, 4);
     for (const query of queries)
       assert.doesNotMatch(query, /currentAppInstallation\s*\{\s*publication/);
   });

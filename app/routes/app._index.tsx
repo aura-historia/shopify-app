@@ -37,9 +37,10 @@ import {
   markShopCredentialsDisconnected,
   toPublicShopCredentialsRecord,
 } from "../shop-credentials.server";
-import { getShopify } from "../shopify.server";
+import { getShopify, getShopifyApiKey } from "../shopify.server";
 import {
   createShopifyAdminAppUrl,
+  createShopifyPermissionsUrl,
   getShopifyStoreName,
 } from "../shopify-admin-url";
 
@@ -53,7 +54,7 @@ type IntegrationStatus =
 
 const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   MISSING_SCOPE:
-    "Aura Historia lacks Shopify access to this channel's product listings. Approve the app's permissions in Shopify, then import the catalog again.",
+    "Aura Historia lacks Shopify access to this channel's product listings or publications. Approve the app's updated permissions in Shopify, then import the catalog again.",
   MISSING_CHANNEL:
     "The Aura Historia sales channel is not set up for this listing source in Shopify. Import the catalog again to set it up.",
   CHANNEL_REJECTED:
@@ -134,19 +135,30 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
             ? "stopped"
             : "not_connected";
   const backfill = url.searchParams.get("backfill");
+  const publication = credentials
+    ? await getChannelPublication(
+        offlineGraphql(context, session.shop),
+        session.shop,
+        credentials.listingSourceId,
+      )
+    : null;
+  const apiKey = getShopifyApiKey(context);
 
   return {
     shipping,
     catalogImport: credentials
       ? await loadCatalogImportStatus(context.cloudflare.env.KV, session.shop)
       : null,
-    publication: credentials
-      ? await getChannelPublication(
-          offlineGraphql(context, session.shop),
-          session.shop,
-          credentials.listingSourceId,
-        )
-      : null,
+    publication,
+    // Shopify asks for pending required access on its installation page; a
+    // retry alone cannot grant it.
+    permissionsUrl:
+      publication?.state === "missing_scope" && apiKey
+        ? createShopifyPermissionsUrl(
+            getShopifyStoreName(session.shop),
+            apiKey,
+          ).toString()
+        : null,
     credentials: credentials
       ? toPublicShopCredentialsRecord(credentials)
       : null,
@@ -286,6 +298,7 @@ export default function AppIndex() {
     shop,
     shipping,
     publication,
+    permissionsUrl,
     catalogImport,
   } = useLoaderData<typeof loader>();
   const isConnected = integration.status === "connected";
@@ -415,10 +428,21 @@ export default function AppIndex() {
                 <s-banner tone="critical" heading="Shopify permission required">
                   <s-paragraph>
                     Aura Historia imports only products published to this sales
-                    channel and needs access to its product listings. Approve
-                    the app's permissions in Shopify, then import the catalog
+                    channel. Reading that selection needs Shopify access to the
+                    channel's product listings and publications, which this
+                    installation has not granted. Review and approve the app's
+                    updated permissions in Shopify, then import the catalog
                     again. No catalog import runs until then.
                   </s-paragraph>
+                  {permissionsUrl && (
+                    <s-button
+                      slot="secondary-actions"
+                      href={permissionsUrl}
+                      target="_top"
+                    >
+                      Review app permissions in Shopify
+                    </s-button>
+                  )}
                 </s-banner>
               ) : publication?.state === "missing_channel" ? (
                 <s-banner tone="critical" heading="Sales channel not set up">
@@ -461,7 +485,10 @@ export default function AppIndex() {
                 >
                   {catalogImport?.phase === "failed" && catalogImport.error && (
                     <s-paragraph>
-                      {CATALOG_ISSUE_MESSAGES[catalogImport.error]}
+                      {catalogImport.error === "MISSING_SCOPE" &&
+                      publication?.state === "ready"
+                        ? "Shopify access to this channel's product selection is now granted. Import the catalog again."
+                        : CATALOG_ISSUE_MESSAGES[catalogImport.error]}
                     </s-paragraph>
                   )}
                   <s-paragraph>
