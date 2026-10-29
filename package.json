@@ -51,7 +51,7 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vite": "^8.3.4",
-    "wrangler": "^4.153.0"
+    "wrangler": "^4.154.0"
   },
   "optionalDependencies": {
     "@rolldown/binding-linux-x64-gnu": "1.2.15"
