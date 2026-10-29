@@ -12,8 +12,17 @@ unlistedProducts = true
 scheduledPublishing = false
 
 [requirements]
-expectsOnlineStoreParity = true
+# One connection must work for any store, whether it sells worldwide, to a few
+# countries or in a single market. When parity is required, `channelCreate`
+# refuses a store unless every declared country has a matching region market.
+# Shoppers still check out in the merchant's store, and the app imports the
+# products' own variant prices in the store currency, not feed prices.
+expectsOnlineStoreParity = false
 merchantOfRecord = "merchant"
+
+# Every Shopify country. Shopify creates product feeds for the store's region
+# markets that cover one of them, or binds the connection to the store's
+# defaults when none does.
 
 [[countries]]
 code = "AC"

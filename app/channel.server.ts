@@ -117,8 +117,8 @@ export async function readAuraChannel(
 export type ChannelProvisioning =
   | { state: "ready"; channelId: string }
   | { state: "missing_scope" }
-  // Shopify refused the connection, for example because the specification's
-  // market requirements do not match the store.
+  // Shopify refused the connection with `userErrors`, for example because the
+  // specification is not deployed.
   | { state: "rejected" }
   | { state: "unavailable" };
 

@@ -226,7 +226,7 @@ function connectedEnv({ refuseChannel = false } = {}) {
               channel: null,
               userErrors: [
                 {
-                  message: "Channel specification requires online store parity",
+                  message: "Channel specification aura-historia was not found",
                 },
               ],
             },

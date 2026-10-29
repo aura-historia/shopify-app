@@ -1745,7 +1745,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
           data: {
             channelCreate: {
               channel: null,
-              userErrors: [{ message: "Requires online store parity" }],
+              userErrors: [{ message: "Specification not found" }],
             },
           },
         }

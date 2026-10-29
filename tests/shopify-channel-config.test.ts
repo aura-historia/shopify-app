@@ -315,9 +315,11 @@ describe("Shopify sales channel config extension", () => {
     assert.match(channelSpec, /productFeedManagement = "automatic"/);
   });
 
-  it("keeps traffic-driving sales channel requirements explicit", () => {
-    assert.match(channelSpec, /expectsOnlineStoreParity = true/);
-    assert.match(channelSpec, /merchantOfRecord = "merchant"/);
+  it("lets any store connect regardless of its market coverage", () => {
+    // Required parity makes `channelCreate` refuse a store unless every
+    // declared country has a matching region market (#378).
+    assert.match(channelSpec, /^expectsOnlineStoreParity = false$/m);
+    assert.match(channelSpec, /^merchantOfRecord = "merchant"$/m);
   });
 
   it("makes conservative capability claims", () => {
