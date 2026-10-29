@@ -350,8 +350,8 @@ market settings; returning to legacy profiles is never required.
   ID. Its rates are representable only from one rate group without collection or
   origin-location conditions, the only group that rates every shippable item alike.
   Shopify's create input sets conditions only when given, so an origin location count
-  of zero is read as no location condition; confirm this on a feature-preview store
-  before release. Conditioned, multi-group or rate-less options and more than 25
+  of zero is read as no location condition; the [release checklist](#release-checklist)
+  confirms this on a market-driven store. Conditioned, multi-group or rate-less options and more than 25
   cart-value tiers stay conditional without a rate (`MARKET_RATE_CONDITIONS_UNSUPPORTED`,
   `MARKET_RATE_TIER_LIMIT`). Otherwise the profile importer's semantics apply: flat rates
   are fixed or free amounts; a cart-value tier with only a lower bound is a threshold,
@@ -388,9 +388,9 @@ market settings; returning to legacy profiles is never required.
 - **Verification.** Tests cover initial import, rate and threshold edits, option and
   market removal, multiple and nested markets, subdivisions, free-delivery minimums,
   currencies, missing access, unsupported fields, retries, model switches (including a
-  blocked switch) and read-only Shopify access against the 2026-10 shapes. Before release, repeat this on a development store with the
-  **Market-driven shipping** feature preview and submit Shopify's compatibility
-  self-attestation.
+  blocked switch) and read-only Shopify access against the 2026-10 shapes. Live
+  verification and Shopify's compatibility status are tracked in
+  [Market-driven shipping compatibility](#market-driven-shipping-compatibility).
 
 Status distinguishes queued work, acquisition, publication, partial progress,
 protected partner edits and applied operations. Applied means Aura committed the
@@ -406,6 +406,86 @@ explicitly. Backend URLs use `/v1`, including `/v1/oauth/token` and `/v1/oauth/r
 fixture from that contract (its command examples remain unchanged). Ordinary typed shipping writes carry `import` metadata
 with `observation: {}` for successful acquisitions, and no expiry/freshness fields.
 Protected shipping evidence is excluded from management responses. The strict import/write contract remains separate from the public shipping read projection.
+
+### Market-driven shipping compatibility
+
+Shopify shows merchants whether an app supports market-driven shipping. Until an app
+is confirmed compatible, installing it warns that the app uses the legacy shipping
+configuration, and **Settings → Apps** and **Sales channels** say that the app is not
+compatible with market-driven shipping. Shopify also does not move the app's merchants
+to market-driven shipping automatically
+([#393](https://github.com/aura-historia/shopify-app/issues/393)). Shopify tries to
+detect compatibility itself, but for this app the warning remained after the market
+reader shipped. The way to confirm it is Shopify's
+[compatibility self-attestation](https://shopify.dev/docs/apps/build/orders-fulfillment/market-driven-shipping/upgrade-your-app#confirm-compatibility):
+a form that the app owner submits once the integration is upgraded and verified. It is
+not a setting in `shopify.app.toml` and no deployment submits it.
+
+**Integration.** The app reads merchant shipping and follows reader option B of the
+upgrade guide: shops with `marketDrivenShipping` are read from `Market.delivery` with
+`read_markets`, and only shops without it are read from `deliveryProfiles`. The app
+owns no delivery profiles, writes no shipping or market settings and requests no
+`write_shipping` or `write_markets` scope. `tests/market-shipping-compatibility.test.ts`
+is the audit the guide asks for. A market-driven acquisition sends no merchant delivery
+profile operation, and legacy shops are still read from their profiles. Profile reads
+are confined to the legacy acquisition, and no source writes delivery profiles or
+markets.
+
+**Supported subset.** Each market setting is imported, left conditional without a
+fixed rate, left unresolved, or not used. Nothing is guessed, and shipping status
+names the notice. Merchants never need to change their markets or return to legacy
+profiles.
+
+| Market setting | Behavior | Notice |
+| --- | --- | --- |
+| Countries of active region markets | Imported, inheriting from wider markets | — |
+| Subdivisions, or a country split across markets | Unresolved area | `SUBDIVISION_MAPPING_UNAVAILABLE` |
+| Market for all regions | Unresolved rest of world, plus the countries that inherit from it | `REST_OF_WORLD_UNRESOLVED` |
+| Crossing markets with different shipping | Unresolved | `MARKET_OVERLAP_UNRESOLVED` |
+| Flat rates and cart-value tiers with only a lower bound | Imported as fixed or free amounts and seller-order thresholds | — |
+| Free-delivery minimum | Free from the minimum where the option certainly applies; paid prices below it conditional | `UNSUPPORTED_RATE_CONDITION` |
+| Upper cart-value bounds, weight-based rates | Conditional | `UNSUPPORTED_RATE_CONDITION` |
+| More than 25 cart-value tiers | Conditional | `MARKET_RATE_TIER_LIMIT` |
+| Carrier-calculated options | Calculated at checkout | `EXTERNAL_RATES_REQUIRE_CHECKOUT` |
+| Option currency or precision Aura cannot represent | That option conditional | `MARKET_CURRENCY_UNSUPPORTED` |
+| Combined checkout charge | Amounts keep a null basis | `SHOPIFY_CHARGE_GROUP_BASIS_UNAVAILABLE` |
+| **Product:** rate groups limited to collections | Conditional | `MARKET_RATE_CONDITIONS_UNSUPPORTED` |
+| **Product:** variants that all require shipping | Product selects the market profile | — |
+| **Product:** mixed or unknown variants | No profile and no inherited default | `MIXED_OR_UNKNOWN_MEMBERSHIP` |
+| **Location:** rate groups limited to origin locations | Conditional | `MARKET_RATE_CONDITIONS_UNSUPPORTED` |
+| **Location:** retail-location (POS) markets | Not used | — |
+| **Customer:** company-location (B2B) markets | Not used | — |
+| **Channel:** channel markets and combined conditions | Reported, not applied | `MARKET_CONTEXT_UNSUPPORTED` |
+| Draft markets and inactive options | Not used | — |
+| Rates from other apps' delivery profiles | Not read | `APP_PROVIDED_RATES_UNASSERTED` |
+
+**Verification.** On 2026-10-29, release 0.3.3 (source `fd28f93`, Admin API 2026-10)
+ran on a development store with `marketDrivenShipping` and one United States region
+market. The app acquired the market and imported the market profile, the source
+default and product memberships. It refreshed them after a shipping option was
+created and edited. Options with origin-location conditions stayed conditional with
+`MARKET_RATE_CONDITIONS_UNSUPPORTED`. The store was never switched back to legacy
+shipping. Without an attestation, Shopify still showed its warning at install and on
+the installed settings page.
+
+**Assessment.** Ready to attest. Shopify asks for an upgraded and verified
+integration. For market-driven shops the app reads only Markets, never the stale
+profile snapshot, and writes nothing. The supported subset is a product limit, not a
+compatibility gap: unsupported settings stay unasserted instead of being advertised
+wrongly.
+
+**Status.** As of 2026-10-29: **not attested**. Shopify still shows the warning. Update
+this line with the date and release whenever the attestation is submitted or
+Shopify's status changes.
+
+**Attesting.**
+
+1. Complete the [release checklist](#release-checklist) for the release to attest.
+2. The app owner submits the form linked from Shopify's guide.
+3. Once Shopify confirms, check a fresh install and the installed settings page on a
+   market-driven store. The warning must be gone. Record the result in **Status**.
+4. Never switch a store back to legacy shipping, or ask a merchant to, to hide the
+   warning.
 
 ### Continuous refresh and recovery
 
@@ -542,6 +622,35 @@ The GitHub Actions workflow requires these repository secrets:
 - `SHOPIFY_APP_AUTOMATION_TOKEN`
 
 See [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) for the release definition. A manual workflow dispatch runs the same checks and deploys only the Worker. A semver tag also releases the production Shopify app configuration. Production URL rewriting by Shopify development commands is disabled.
+
+### Release checklist
+
+Complete this list before pushing a semver tag and record the outcome in the release
+pull request. It keeps the implementation and what Shopify shows merchants aligned.
+
+1. **Checks.** Lint, typecheck, test and build pass in CI on the commit to tag.
+2. **Market-driven shipping.** Use a development store with market-driven shipping and
+   at least one active region market:
+   - Install the release, connect Aura Historia and run **Import shipping settings**.
+     Shipping status reaches *Applied* or *Partially applied*, with only notices from
+     the [supported subset](#market-driven-shipping-compatibility).
+   - Create a shipping option without collection or location restrictions, import, then
+     edit its rate and import again. Each import advertises the option's current fixed rate.
+     This confirms that an origin location count of zero means no location condition.
+     If the option stays conditional with `MARKET_RATE_CONDITIONS_UNSUPPORTED`, update
+     the supported subset before tagging.
+   - Remove the test option and restore the store's settings. Never switch the store
+     back to legacy shipping.
+3. **Legacy shipping.** On a store without market-driven shipping, the profile import
+   still applies as before.
+4. **Shopify compatibility status.** Check the install consent of a fresh install and
+   **Settings → Apps** and **Sales channels** on a market-driven store. Compare them with
+   the [recorded status](#market-driven-shipping-compatibility) and update it. A
+   release that changes the shipping read model or the supported subset repeats the
+   verification first. If Shopify still warns after the attestation, contact Shopify
+   Partner Support instead of changing store settings.
+5. **Disclosures.** The privacy policy and App Store access disclosure match
+   [External services and privacy](#external-services-and-privacy).
 
 The Worker keeps OAuth/authenticated responses private and uncached, uses `Referrer-Policy: no-referrer`, and redacts query strings from Cloudflare invocation logs. Catalog progress stores only phase/counts for seven days and is cleared on disconnect/uninstall; access tokens remain only in the separate existing credential stores. Channel counts come from the current Shopify channel connection and retain the API's lower-bound indicator. The bulk editor link targets that connection's publication. Import acceptance is distinct from search visibility.
 

@@ -39,6 +39,7 @@
 - Do not widen Shopify access scopes unless there is a documented product requirement.
 - Static webhook subscriptions need their topic's scope in `access_scopes.scopes`; Shopify rejects topics whose scope is only in `optional_scopes`. Keep `read_shipping` required for the profile subscriptions and `read_markets` for the market subscriptions, and mirror the scope list in the `SCOPES` variable of `wrangler.jsonc`.
 - Shops with `marketDrivenShipping` keep merchant shipping in Markets. Read it only through `Market.delivery.shipping`; never read or fall back to legacy delivery profiles for such shops, and never call `marketCreate`/`marketUpdate`.
+- Shopify's market-driven shipping compatibility is a self-attestation by the app owner, not configuration. Keep the status in the README's “Market-driven shipping compatibility” section current, update its supported subset with the mapper, and follow the release checklist. Never switch a store back to legacy shipping to hide Shopify's compatibility warning.
 - If you change authentication behavior, keep `authPathPrefix = "/auth"` and ensure the redirect URLs still include the callback route.
 - Prefer Shopify-provided install context such as `shop` and `host` query parameters. Treat manual `myshopify.com` entry as a fallback only.
 - Preserve the post-install redirect from the auth callback flow to `/success` unless the onboarding flow changes deliberately.
