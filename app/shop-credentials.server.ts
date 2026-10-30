@@ -10,7 +10,7 @@ export interface ShopCredentialsValues {
 
 export interface ShopCredentialsRecord extends ShopCredentialsValues {
   updatedAt: string;
-  connectionId?: string;
+  connectionId: string;
 }
 
 export interface PublicShopCredentialsRecord {
@@ -40,8 +40,8 @@ function isShopCredentialsRecord(
       isValidListingSourceId(value.listingSourceId) &&
       typeof value.accessToken === "string" &&
       typeof value.updatedAt === "string" &&
-      (value.connectionId === undefined ||
-        typeof value.connectionId === "string") &&
+      typeof value.connectionId === "string" &&
+      value.connectionId.length > 0 &&
       (value.shopifyStoreName === undefined ||
         typeof value.shopifyStoreName === "string") &&
       (value.tokenType === undefined || typeof value.tokenType === "string") &&
@@ -59,12 +59,6 @@ export function getShopCredentialsDisconnectedStorageKey(shop: string) {
 
 export function isValidListingSourceId(value: string) {
   return LISTING_SOURCE_ID_PATTERN.test(value);
-}
-
-// Identifies one stored connection. Records older than connection IDs use
-// their save time.
-export function credentialVersion(record: ShopCredentialsRecord) {
-  return record.connectionId ?? record.updatedAt;
 }
 
 export function toPublicShopCredentialsRecord(

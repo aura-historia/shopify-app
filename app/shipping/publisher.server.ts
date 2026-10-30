@@ -381,14 +381,6 @@ export async function publishShippingStep(
   if (!work) return;
   if (work.pending) {
     const pending = work.pending;
-    if (pending.kind === "replace" && pending.body.import?.objectKey != null) {
-      // Earlier releases persisted replacements with the creation-only key,
-      // which the backend rejects before recording the request. Drop only that
-      // key; acquisition, sequence, observation and request key stay as-is.
-      // Removable once one publication retention window follows deployment.
-      const { objectKey: _creationOnly, ...replacement } = pending.body.import;
-      pending.body.import = replacement;
-    }
     const result =
       pending.kind === "create"
         ? await createShippingProfile({

@@ -31,7 +31,6 @@ import {
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
-  credentialVersion,
   isShopCredentialsDisconnected,
   loadShopCredentials,
   markShopCredentialsDisconnected,
@@ -84,7 +83,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const [shipping, connectionStopped] = await Promise.all([
     coordinator.status(),
     storedCredentials && !disconnectedByAction
-      ? coordinator.connectionRetired(credentialVersion(storedCredentials))
+      ? coordinator.connectionRetired(storedCredentials.connectionId)
       : false,
   ]);
   const credentials =
@@ -206,7 +205,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     if (
       !credentials ||
       (await shopCoordinator(context, session.shop).connectionRetired(
-        credentialVersion(credentials),
+        credentials.connectionId,
       ))
     ) {
       redirectParams.set("backfill", "not_queued");

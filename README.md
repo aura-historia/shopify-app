@@ -108,8 +108,7 @@ The app is a channel-config-extension sales channel, so it manages explicit chan
 - **Disconnect and uninstall.** Disconnecting keeps the connection and its product selection for a later reconnect. After uninstall the app can no longer call Shopify. On reinstall, the next connection reuses a surviving connection or creates one.
 - **Publication.** `currentAppInstallation.publication` is deprecated in 2026-10 and does not identify an explicit connection; it was empty on the QA installation. `AppCatalog.publication` is a publication field: without `read_publications` Shopify answers `ACCESS_DENIED` (“Access denied for publication field.”), even for the app's own catalog ([#392](https://github.com/aura-historia/shopify-app/issues/392)). The app first scans the app catalogs for identity and channels only (`catalogs(type: APP)`, at most 20 pages of 25), which every app catalog exposes, to find the one catalog that lists its connection. It then reads `publication` on that catalog alone with `catalog(id:)`, which also confirms the catalog still lists the connection. Other apps' catalogs never fail the lookup. The bulk editor link and membership reads use that publication; the channel count is the connection's `productsCount` for active products.
 - **Product feeds.** The specification keeps `productFeedManagement = "automatic"`, so Shopify creates the connection's product feeds. The app subscribes to no `product_feeds/*` topic: catalog sync stays on the publication and the `product_listings/*` topics above.
-- **Migration.** Legacy install-time creation was never enabled, so there are no legacy channel records to convert with `channelUpdate`. Installations connected before this release have no channel. Their catalog reports the missing channel, and “Import catalog again” or reconnecting creates it. The Aura OAuth client is unchanged.
-- **Renewed consent for `read_publications`.** Installations approved before `read_publications` became required keep their connection, listing events and shipping import. Shopify asks merchants to approve added required scopes when they next open the app. While the scope is not granted, every import stops with `MISSING_SCOPE` before any export, and the embedded app shows “Shopify permission required” with **Review app permissions in Shopify**: a link to Shopify's installation page for the app (`https://admin.shopify.com/store/{store}/oauth/install?client_id=…`), the page Shopify documents for requesting scopes. Once the merchant approves, the `app/scopes_update` notification resumes an import that stopped with `MISSING_SCOPE`; “Import catalog again” works as well. The deploy workflow updates the Worker before it releases the Shopify app version, and a manual `workflow_dispatch` deploys only the Worker: until the version requesting `read_publications` is released, imports report `MISSING_SCOPE`.
+- **Permission recovery.** Fresh installations request all required scopes, including `read_publications`. If required access is missing, imports stop with `MISSING_SCOPE` before any export, and the embedded app shows **Review app permissions in Shopify**. Once the merchant approves, `app/scopes_update` resumes an import that stopped for missing access; “Import catalog again” also works. Release the Shopify configuration with the Worker so new installations request the scopes it needs.
 
 ### Withdrawals
 
@@ -159,7 +158,7 @@ Bulk writes use the existing canonical asynchronous upsert and withdrawal endpoi
 
 ### Rollout
 
-There are no active installations yet, so nothing is migrated.
+This is a fresh release with no existing installations. Credential records require a connection ID, and shipping jobs use the current request format; no older app data or pending request formats are migrated. Cloudflare’s Durable Object migration declarations provision the SQLite namespaces and remain required for the configured deployment flow.
 
 1. Deploy backend listing-event support ([aura-historia/backend#2573](https://github.com/aura-historia/backend/pull/2573)). Do not release this Shopify configuration earlier: without backend routing, live product sync does not work.
 2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration.
@@ -417,7 +416,7 @@ committed operations from pending work; search indexing remains eventual.
 The official generated Aura client is pinned in `openapi-ts.config.ts` to backend
 commit `597425dcca064e7128072b988042ab3f9b1aedd1` (the production `/v1` contract).
 Run `npm run openapi:generate` to reproduce it; review later contract changes
-explicitly. Backend URLs use `/v1`, including `/v1/oauth/token` and `/v1/oauth/revoke`; the former `/api/v1` routes have no compatibility aliases. Browser consent starts at `/en/oauth/authorize`. Catalog and shipping imports share the current currency registry, including ARS and zero-decimal JPY/KRW. `tests/fixtures/shipping-contract.json` is the executable contract
+explicitly. Backend URLs use `/v1`, including `/v1/oauth/token` and `/v1/oauth/revoke`. Browser consent starts at `/en/oauth/authorize`. Catalog and shipping imports share the current currency registry, including ARS and zero-decimal JPY/KRW. `tests/fixtures/shipping-contract.json` is the executable contract
 fixture from that contract (its command examples remain unchanged). Ordinary typed shipping writes carry `import` metadata
 with `observation: {}` for successful acquisitions, and no expiry/freshness fields.
 Protected shipping evidence is excluded from management responses. The strict import/write contract remains separate from the public shipping read projection.
@@ -568,7 +567,7 @@ The Worker keeps OAuth/authenticated responses private and uncached, uses `Refer
 
 The production Aura Historia client ID is `oc_01m5vyyghjecx8c43drb05hh4n`. Its registered callback is exactly `https://partner-connect.aura-historia.com/oauth/callback`, and its four scopes are configured in `wrangler.jsonc`. The client secret is installed in the production Worker's `AURA_HISTORIA_OAUTH_CLIENT_SECRET` secret binding.
 
-The webapp consent flow supports `/v1`, S256 PKCE, registered callback validation, and `listing_source_id`. Use a current webapp version; older checkouts using `/api/v1` and partner-shop IDs are incompatible with the production backend.
+The webapp consent flow supports `/v1`, S256 PKCE, registered callback validation, and `listing_source_id`.
 
 ## Public app information
 

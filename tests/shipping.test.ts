@@ -588,7 +588,7 @@ describe("typed shipping publication", () => {
     assert.equal(state.failures, 0);
   });
 
-  it("omits the creation-only key from new and previously persisted profile replacements", async () => {
+  it("keeps the creation-only key out of profile replacements across a restart", async () => {
     const mock = auraMock();
     const initial = publication();
     await finish(initial, mock);
@@ -610,11 +610,6 @@ describe("typed shipping publication", () => {
       requestKey: `run-2:${refresh.work[0].key}`,
       observation: {},
     });
-    // Earlier releases persisted the same request with the creation key.
-    pending.body.import = {
-      ...expected.import,
-      objectKey: refresh.work[0].key,
-    };
     const restarted = JSON.parse(JSON.stringify(refresh));
     await publishShippingStep(restarted, context, 0, mock.fetcher);
     const sent = mock.calls.at(-1);
