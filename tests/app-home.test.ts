@@ -216,8 +216,25 @@ describe("Aura channel selection in the embedded home", () => {
       },
     });
     assert.match(html, /Catalog import needs attention/);
-    assert.match(html, /could not be verified as complete/);
+    assert.match(html, /could not be read or verified as complete/);
     assert.match(html, /1 products could not be classified or submitted/);
+  });
+  it("explains capacity and time limits as actionable failures", () => {
+    for (const [error, message] of [
+      ["EXPORT_TOO_LARGE", /up to 100,000 products and 1 GiB.*Contact support/],
+      ["EXPORT_EXPIRED", /did not finish the catalog export within 24 hours/],
+      [
+        "IMPORT_EXPIRED",
+        /did not finish within 24 hours of Shopify&#x27;s export/,
+      ],
+    ] as const) {
+      const html = renderHome(null, "", {
+        catalogImport: { phase: "failed", total: 0, failed: 0, error },
+      });
+      assert.match(html, /Catalog import needs attention/);
+      assert.match(html, message);
+      assert.match(html, /Import catalog again/);
+    }
   });
   it("separates eligible submissions from withdrawals in the last import", () => {
     const html = renderHome(null, "", {

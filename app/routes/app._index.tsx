@@ -64,7 +64,13 @@ const CATALOG_ISSUE_MESSAGES: Record<CatalogImportError, string> = {
   PUBLICATION_CHANGED:
     "The sales channel changed while the import ran. Import the catalog again.",
   INCOMPLETE_EXPORT:
-    "Shopify's catalog export could not be verified as complete, or some products' channel membership could not be read. Retry the import.",
+    "Shopify's catalog export could not be read or verified as complete, or some products' channel membership could not be read. Retry the import.",
+  EXPORT_TOO_LARGE:
+    "This store's Shopify catalog export is larger than an import supports: up to 100,000 products and 1 GiB of product, image and variant data, with at most 1 MiB for one product and its images. Products submitted before the limit was reached stay submitted. Contact support to import this catalog.",
+  EXPORT_EXPIRED:
+    "Shopify did not finish the catalog export within 24 hours. Import the catalog again.",
+  IMPORT_EXPIRED:
+    "The catalog import did not finish within 24 hours of Shopify's export. Import the catalog again.",
 };
 
 export const loader = async ({ request, context }: LoaderFunctionArgs) => {

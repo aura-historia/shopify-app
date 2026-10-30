@@ -156,7 +156,8 @@ describe("catalog completion webhook", () => {
       });
       assert.equal(response.status, 200);
       assert.equal((await catalog.job())?.admitted, false);
-      assert.equal(catalog.storage.alarm, null);
+      // Only the queued export's next check is armed.
+      assert.ok((catalog.storage.alarm ?? 0) > Date.now() + 60_000);
       assert.equal((await catalog.imports.status())?.phase, "queued");
     }
   });

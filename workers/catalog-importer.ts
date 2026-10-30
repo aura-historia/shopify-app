@@ -1,10 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   type BackfillContext,
+  type BulkOperationState,
+  CATALOG_EXPORT_WINDOW_MS,
+  CATALOG_IMPORT_WINDOW_MS,
   type CatalogImportJob,
+  cancelBulkOperation,
+  catalogProgress,
   clearBackfillContext,
+  EXPORT_PLAN_VERSION,
   type GraphqlRequestFn,
   loadBackfillContext,
+  readBulkOperationState,
   runCatalogImportStep,
   SupersededImportError,
   storeBackfillContext,
@@ -20,12 +27,24 @@ import type { CloudflareShopifyEnv } from "../app/shopify.server";
 // well within the five-minute window that reports a stalled import as failed.
 export const CATALOG_STEP_BUDGET_MS = 20_000;
 export const CATALOG_MAX_ATTEMPTS = 6;
+// While Shopify exports, the importer checks the export this often. It admits
+// an export whose completion webhook was lost and keeps the queued status
+// current, well within the hour after which a silent status reads as failed.
+// A completion is admitted until one check after the export window, so a
+// webhook delayed past the last check is not lost; the context's TTL leaves
+// an hour for this.
+export const CATALOG_EXPORT_POLL_MS = 5 * 60_000;
 
 type Progress = Omit<CatalogImportStatus, "updatedAt">;
 const stamp = (status: Progress): CatalogImportStatus => ({
   ...status,
   updatedAt: new Date().toISOString(),
 });
+// Jobs from before import generations, or planned under other segment rules,
+// are never resumed: a batch could be resent with other content under the
+// same idempotency key.
+const resumable = (job: CatalogImportJob) =>
+  typeof job.generation === "number" && job.plan === EXPORT_PLAN_VERSION;
 
 // Per-shop catalog import driven by alarms instead of a request's waitUntil,
 // so large catalogs are bounded per step and resume after interruptions.
@@ -114,7 +133,8 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
   }
 
   // Records the export a generation started. Its credentials are stored
-  // first, so an admitted job always finds them.
+  // first, so an admitted job always finds them, and they expire only after
+  // both the export and the import window closed.
   async queue(generation: number, context: BackfillContext) {
     const shop = context.shopDomain;
     await storeBackfillContext(this.env.KV, shop, generation, context);
@@ -125,8 +145,16 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         shop,
         generation,
         bulkOperationId: context.bulkOperationId,
+        plan: EXPORT_PLAN_VERSION,
+        queuedAt: Date.now(),
         admitted: false,
+        offset: 0,
         cursor: 0,
+        part: 0,
+        total: 0,
+        eligible: 0,
+        rejected: 0,
+        unknown: 0,
         failed: 0,
         withdrawn: 0,
         attempts: 0,
@@ -135,6 +163,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         "status",
         stamp({ phase: "queued", total: 0, failed: 0 }),
       );
+      await transaction.setAlarm(Date.now() + CATALOG_EXPORT_POLL_MS);
       return true;
     });
     if (!queued) await this.release(shop, generation);
@@ -155,24 +184,35 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
 
   // Shopify finished the current generation's export. A delayed or duplicate
   // delivery for a retired, failed or finished import matches no job and
-  // changes nothing; a duplicate never restarts an admitted one.
+  // changes nothing; a duplicate never restarts an admitted one. An export
+  // that finished after its window ends the import instead.
   async start(bulkOperationId: string) {
-    await this.ctx.storage.transaction(async (transaction) => {
+    const expired = await this.ctx.storage.transaction(async (transaction) => {
       const job = await transaction.get<CatalogImportJob>("job");
-      // Jobs from before import generations are never admitted.
+      if (job?.bulkOperationId !== bulkOperationId || !resumable(job))
+        return null;
+      if (job.admitted) {
+        // A lost alarm is rearmed, a pending backoff is kept.
+        if ((await transaction.getAlarm()) === null)
+          await transaction.setAlarm(Date.now());
+        return null;
+      }
       if (
-        job?.bulkOperationId !== bulkOperationId ||
-        typeof job.generation !== "number"
-      )
-        return;
-      // A lost alarm is rearmed, a pending backoff is kept.
-      if (job.admitted && (await transaction.getAlarm()) !== null) return;
+        Date.now() >=
+        job.queuedAt + CATALOG_EXPORT_WINDOW_MS + CATALOG_EXPORT_POLL_MS
+      ) {
+        await this.end(transaction, "EXPORT_EXPIRED");
+        return job;
+      }
       await transaction.put<CatalogImportJob>("job", {
         ...job,
         admitted: true,
+        admittedAt: Date.now(),
       });
       await transaction.setAlarm(Date.now());
+      return null;
     });
+    if (expired) await this.release(expired.shop, expired.generation);
   }
 
   async exportFailed(bulkOperationId: string) {
@@ -204,16 +244,104 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     });
   }
 
-  async alarm() {
-    const job = await this.ctx.storage.get<CatalogImportJob>("job");
-    if (!job?.admitted) return;
-    // Shopify reads share the coordinator's serialized offline token refresh.
-    const graphql: GraphqlRequestFn = (query, variables) =>
-      this.env.SHOP_COORDINATOR.getByName(job.shop.toLowerCase()).graphql(
-        job.shop,
+  // Shopify reads share the coordinator's serialized offline token refresh.
+  private shopify(shop: string): GraphqlRequestFn {
+    return (query, variables) =>
+      this.env.SHOP_COORDINATOR.getByName(shop.toLowerCase()).graphql(
+        shop,
         query,
         variables,
       );
+  }
+
+  // The outcome and the end of the job commit together, and only while this
+  // generation is current.
+  private async finish(job: CatalogImportJob, progress: Progress) {
+    const status = stamp(progress);
+    if (
+      !(await this.whileCurrent(job, async (transaction) => {
+        await transaction.delete("job");
+        await transaction.deleteAlarm();
+        await transaction.put("status", status);
+      }))
+    )
+      return;
+    await this.release(job.shop, job.generation);
+    console.log(
+      `Catalog import ${status.phase} for ${job.shop}: ${status.total} products, ${status.eligible ?? 0} published to Aura, ${status.withdrawn ?? 0} withdrawn, ${status.failed} failures${status.error ? ` (${status.error})` : ""}`,
+    );
+  }
+
+  // Shopify is still exporting. A finished or failed export is handled as
+  // its webhook would handle it, so a lost delivery delays the import by one
+  // check at most. Only a check that reads the export as running keeps the
+  // queued status current; failing checks let it read as failed after an
+  // hour while checking continues. An export that has not completed by the
+  // last check, at the end of its window, ends the import and is cancelled.
+  private async awaitExport(job: CatalogImportJob) {
+    const deadline = job.queuedAt + CATALOG_EXPORT_WINDOW_MS;
+    const shopify = this.shopify(job.shop);
+    let state: BulkOperationState | null = null;
+    try {
+      state = await readBulkOperationState(shopify, job.bulkOperationId);
+    } catch (error) {
+      console.warn(
+        `Catalog export of ${job.shop} could not be checked:`,
+        (error instanceof Error ? error.message : String(error)).slice(0, 180),
+      );
+    }
+    if (state === "completed") return this.start(job.bulkOperationId);
+    if (state === "failed") return this.exportFailed(job.bulkOperationId);
+    const expired = await this.ctx.storage.transaction(async (transaction) => {
+      const current = await transaction.get<CatalogImportJob>("job");
+      if (current?.generation !== job.generation || current.admitted)
+        return false;
+      if (Date.now() >= deadline) {
+        await this.end(transaction, "EXPORT_EXPIRED");
+        return true;
+      }
+      if (state === "running")
+        await transaction.put(
+          "status",
+          stamp({ phase: "queued", total: 0, failed: 0 }),
+        );
+      await transaction.setAlarm(
+        Math.min(Date.now() + CATALOG_EXPORT_POLL_MS, deadline),
+      );
+      return false;
+    });
+    if (!expired) return;
+    await this.release(job.shop, job.generation);
+    await cancelBulkOperation(shopify, job.bulkOperationId).catch(() =>
+      console.warn(`Expired catalog export of ${job.shop} was not cancelled`),
+    );
+  }
+
+  async alarm() {
+    const job = await this.ctx.storage.get<CatalogImportJob>("job");
+    if (!job) return;
+    if (!resumable(job)) {
+      if (job.admitted)
+        await this.finish(job, {
+          phase: "failed",
+          total: 0,
+          failed: 0,
+          error: "INCOMPLETE_EXPORT",
+        });
+      return;
+    }
+    if (!job.admitted) return this.awaitExport(job);
+    if (
+      Date.now() >=
+      (job.admittedAt ?? job.queuedAt) + CATALOG_IMPORT_WINDOW_MS
+    )
+      return this.finish(job, {
+        phase: "failed",
+        ...catalogProgress(job),
+        error: "IMPORT_EXPIRED",
+      });
+    const graphql = this.shopify(job.shop);
+    const { offset, part } = job;
     let context: BackfillContext | null = null;
     let step: Awaited<ReturnType<typeof runCatalogImportStep>>;
     try {
@@ -244,7 +372,9 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     } catch (error) {
       // The newer import or the stop owns the job, alarm, status and context.
       if (error instanceof SupersededImportError) return;
-      job.attempts++;
+      // A step that moved on before it failed starts its retries afresh.
+      job.attempts =
+        job.offset !== offset || job.part !== part ? 1 : job.attempts + 1;
       const message = error instanceof Error ? error.message : String(error);
       console.error(
         `Catalog import step ${job.attempts} failed for ${job.shop}:`,
@@ -260,18 +390,18 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         });
         return;
       }
+      // What was already submitted is reported with the failure.
       step = {
         done: true,
         status: {
           phase: "failed",
-          total: 0,
-          failed: 0,
+          ...catalogProgress(job),
           error: "SHOPIFY_READ_FAILED",
         },
       };
     }
-    const status = stamp(step.status);
     if (!step.done) {
+      const status = stamp(step.status);
       await this.whileCurrent(job, async (transaction) => {
         await transaction.put("job", job);
         await transaction.put("status", status);
@@ -279,18 +409,6 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
       });
       return;
     }
-    // The outcome and the end of the job commit together, and only while this
-    // generation is current.
-    if (
-      !(await this.whileCurrent(job, async (transaction) => {
-        await transaction.delete("job");
-        await transaction.put("status", status);
-      }))
-    )
-      return;
-    await this.release(job.shop, job.generation);
-    console.log(
-      `Catalog import ${status.phase} for ${job.shop}: ${status.total} products, ${status.eligible ?? 0} published to Aura, ${status.withdrawn ?? 0} withdrawn, ${status.failed} failures${status.error ? ` (${status.error})` : ""}`,
-    );
+    await this.finish(job, step.status);
   }
 }

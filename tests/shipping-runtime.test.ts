@@ -2745,7 +2745,8 @@ describe("catalog imports across the connection lifecycle", () => {
         null,
       );
       await runtime.importer.start(older.bulkOperationId);
-      assert.equal(runtime.importerStorage.alarm, null);
+      // Only the newer export's next check is armed.
+      assert.ok((runtime.importerStorage.alarm ?? 0) > Date.now() + 60_000);
       assert.equal(
         (await runtime.importerStorage.get<CatalogImportJob>("job"))
           ?.generation,
