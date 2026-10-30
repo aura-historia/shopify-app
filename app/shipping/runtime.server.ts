@@ -1,5 +1,9 @@
 import type { AppLoadContext } from "react-router";
-import type { CatalogImports, GraphqlRequestFn } from "../backfill.server";
+import {
+  type CatalogImports,
+  catalogImportsOf,
+  type GraphqlRequestFn,
+} from "../backfill.server";
 
 // Internal Workers RPC only. No HTTP bridge, provider token, or backend caller.
 export function shopCoordinator(context: AppLoadContext, shop: string) {
@@ -11,20 +15,15 @@ export function catalogImporter(context: AppLoadContext, shop: string) {
 }
 
 // Imports for a stored connection. The coordinator begins one only while that
-// connection is bound and running, in order with disconnect and replacement.
+// connection is neither stopped nor replaced, in order with both.
 export function catalogImports(
   context: AppLoadContext,
   shop: string,
   connectionId: string,
 ): CatalogImports {
-  const importer = catalogImporter(context, shop);
-  return {
-    begin: () =>
-      shopCoordinator(context, shop).beginCatalogImport(shop, connectionId),
-    queue: (generation, backfill) => importer.queue(generation, backfill),
-    fail: (generation, error) => importer.fail(generation, error),
-    status: () => importer.status(),
-  };
+  return catalogImportsOf(catalogImporter(context, shop), () =>
+    shopCoordinator(context, shop).beginCatalogImport(shop, connectionId),
+  );
 }
 
 export function offlineGraphql(

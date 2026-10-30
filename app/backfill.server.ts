@@ -237,7 +237,20 @@ export interface CatalogImports {
   status(): Promise<CatalogImportStatus | null>;
 }
 
-// Thrown once an import's generation was retired. Nothing more is sent for it.
+// The imports of a shop's CatalogImporter, begun by `begin`.
+export function catalogImportsOf(
+  importer: Omit<CatalogImports, "begin">,
+  begin: CatalogImports["begin"],
+): CatalogImports {
+  return {
+    begin,
+    queue: (generation, context) => importer.queue(generation, context),
+    fail: (generation, error) => importer.fail(generation, error),
+    status: () => importer.status(),
+  };
+}
+
+// Thrown once an import's generation was retired. No batch is sent for it.
 export class SupersededImportError extends Error {
   constructor() {
     super("Catalog import generation was retired");

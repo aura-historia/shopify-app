@@ -1,5 +1,8 @@
 import { registerHooks } from "node:module";
-import type { CatalogImports } from "../../app/backfill.server";
+import {
+  type CatalogImports,
+  catalogImportsOf,
+} from "../../app/backfill.server";
 import type { CloudflareShopifyEnv } from "../../app/shopify.server";
 import type { CatalogImporter as Importer } from "../../workers/catalog-importer";
 
@@ -78,14 +81,6 @@ export function createImporter(
 }
 
 // Imports begun directly, as the coordinator does for its bound connection.
-export function importsOf(
-  importer: () => Importer,
-  shop: string,
-): CatalogImports {
-  return {
-    begin: () => importer().begin(shop),
-    queue: (generation, context) => importer().queue(generation, context),
-    fail: (generation, error) => importer().fail(generation, error),
-    status: () => importer().status(),
-  };
+export function importsOf(importer: Importer, shop: string): CatalogImports {
+  return catalogImportsOf(importer, () => importer.begin(shop));
 }

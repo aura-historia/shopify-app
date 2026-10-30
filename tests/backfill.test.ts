@@ -118,7 +118,7 @@ function catalogImports() {
     kv,
     storage,
     importer,
-    imports: importsOf(() => importer, shopDomain),
+    imports: importsOf(importer, shopDomain),
     job: () => storage.get<CatalogImportJob>("job"),
     // The context of the queued export.
     async context() {

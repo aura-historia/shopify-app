@@ -106,13 +106,14 @@ function importerRuntime(graphql = shopify()) {
     },
   } as unknown as CloudflareShopifyEnv;
   let importer: CatalogImporterInstance = createImporter(storage, env);
-  const imports = importsOf(() => importer, shop);
   return {
     storage,
     kv,
-    imports,
     get importer() {
       return importer;
+    },
+    get imports() {
+      return importsOf(importer, shop);
     },
     // A new instance on the same storage, as after eviction.
     evict() {
@@ -122,6 +123,7 @@ function importerRuntime(graphql = shopify()) {
     // Begins an import and queues its finished export, as triggerBackfill
     // and the completion webhook do.
     async admitted(overrides: Partial<BackfillContext> = {}) {
+      const imports = importsOf(importer, shop);
       const generation = (await imports.begin()) as number;
       assert.equal(await imports.queue(generation, context(overrides)), true);
       await importer.start(overrides.bulkOperationId ?? bulkOperationId);
@@ -305,6 +307,44 @@ describe("catalog importer durable object", () => {
     // A late completion of the failed export admits nothing.
     await importer.start(bulkOperationId);
     assert.equal(storage.alarm, null);
+  });
+
+  it("never admits a job from before import generations", async () => {
+    const { storage, importer } = importerRuntime();
+    await storage.put("job", {
+      shop,
+      bulkOperationId,
+      cursor: 0,
+      failed: 0,
+      withdrawn: 0,
+      attempts: 0,
+    });
+    await importer.start(bulkOperationId);
+    assert.equal(storage.alarm, null);
+    assert.equal(
+      (await storage.get<CatalogImportJob>("job"))?.admitted,
+      undefined,
+    );
+  });
+
+  it("keeps a failed context release from blocking a stop", async () => {
+    const { kv, importer, job, admitted } = importerRuntime();
+    const generation = await admitted();
+    const attempts: string[] = [];
+    kv.delete = async (key: string) => {
+      attempts.push(key);
+      throw new Error("KV put failed: 429 Too Many Requests");
+    };
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      await importer.stop();
+    } finally {
+      warn.mock.restore();
+    }
+    // The fence holds; only the expiring credential copy remains.
+    assert.equal(await job(), undefined);
+    assert.deepEqual(attempts, Array(3).fill(contextKey(generation)));
+    assert.equal(warn.mock.callCount(), 1);
   });
 
   it("records why a generation could not start its export", async () => {

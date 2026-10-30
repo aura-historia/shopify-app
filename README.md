@@ -133,17 +133,20 @@ and checkpointing design before claiming support beyond these limits.
 
 The `CatalogImporter` is the authority over the shop's import generations. Every
 import attempt (the initial import, “Import catalog again”, or a resume after approved
-access) begins a new generation before it reads Shopify or starts an export, which
-retires the previous one. Disconnect, uninstall and connection replacement retire the
-current generation too:
+access) begins a new generation before it sets up the channel or starts an export,
+which retires the previous one. Disconnect, uninstall and connection replacement retire
+the current generation too:
 
-- **Ordering with the connection.** An import begins through the shop coordinator,
-  only for the bound, running connection, and in the same serialized order as
-  disconnect and replacement. A disconnect or uninstall stops the importer before it
-  is acknowledged; a replacement stops it before the new connection record is stored.
-  A request that read the connection before it was disconnected or replaced cannot
-  begin an import afterwards, and overlapping OAuth callbacks leave the import with the
-  connection that ends up stored.
+- **Ordering with the connection.** An import begins through the shop coordinator, in
+  the same serialized order as disconnect and replacement, and never for a stopped or
+  replaced connection. A disconnect or uninstall stops the importer first; if that
+  fails, nothing is stopped and the disconnect or webhook delivery can be retried. A
+  replacement stops it once the new connection record is stored, so a failed
+  replacement leaves the current import running. If that stop fails, it stays pending
+  until the coordinator's next alarm or the new connection's import retires the old
+  generation. A request that read the connection before it was disconnected or replaced
+  cannot begin an import afterwards, and overlapping OAuth callbacks leave the import
+  with the connection that ends up stored.
 - **One owner per write.** Only the current generation can queue its export, be
   admitted by the completion webhook, schedule the alarm, submit a batch or record
   progress. Each of these writes checks the generation in the same Durable Object
@@ -158,13 +161,15 @@ current generation too:
   stored is released at once.
 - **Requests in flight.** Every batch, and every resend of an unconfirmed batch, is
   preceded by a successful check of the generation. Once a stop or replacement is
-  acknowledged, nothing more is sent for the old generation. A request that was already
-  in flight completes or times out, and its result is discarded. A batch Aura admitted
-  stays admitted; it is not withdrawn. Batch idempotency keys are unchanged.
+  acknowledged, no batch is sent for the old generation. A request that was already in
+  flight completes or times out, and its result is discarded. A batch Aura admitted
+  stays admitted; it is not withdrawn. Batch idempotency keys are unchanged. An attempt
+  retired while it was still preparing may finish its channel setup and Shopify export;
+  that export is never admitted.
 - **No revival.** Delayed or duplicate completion webhooks, alarm retries and a new
-  instance after eviction find no job of a retired generation and change nothing. A
-  missing context of the current generation is retried like a failed read and then
-  reported as failed.
+  instance after eviction find no job of a retired generation and change nothing. Jobs
+  from before import generations are never admitted. A missing context of the current
+  generation is retried like a failed read and then reported as failed.
 - **Failed attempts.** An attempt that cannot export (missing access, channel or
   publication, or a failed submission) records its failure as the current status.
   Because it already retired the previous generation, an older import that was still

@@ -64,15 +64,21 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
   }
 
   // A context key belongs to one generation, so releasing it never touches a
-  // newer import's credentials.
+  // newer import's credentials. KV permits one write per key per second, and
+  // a context can be released right after it was stored.
   private async release(shop: string | undefined, generation: number) {
     if (!shop || !generation) return;
-    try {
-      await clearBackfillContext(this.env.KV, shop, generation);
-    } catch {
-      // The retired generation can no longer use it, and it expires.
-      console.warn(`Catalog import context of ${shop} could not be released`);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await clearBackfillContext(this.env.KV, shop, generation);
+        return;
+      } catch {
+        if (attempt < 2)
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
     }
+    // The retired generation can no longer use it, and it expires.
+    console.warn(`Catalog import context of ${shop} could not be released`);
   }
 
   // Called by the shop coordinator once it verified the connection, in the
@@ -139,16 +145,12 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
   async fail(generation: number, error: CatalogImportError) {
     const failed = await this.ctx.storage.transaction(async (transaction) => {
       if ((await transaction.get<number>("generation")) !== generation)
-        return false;
+        return null;
       await this.end(transaction, error);
-      return true;
+      return { shop: await transaction.get<string>("shop") };
     });
-    if (failed)
-      await this.release(
-        await this.ctx.storage.get<string>("shop"),
-        generation,
-      );
-    return failed;
+    if (failed) await this.release(failed.shop, generation);
+    return failed !== null;
   }
 
   // Shopify finished the current generation's export. A delayed or duplicate
@@ -157,7 +159,12 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
   async start(bulkOperationId: string) {
     await this.ctx.storage.transaction(async (transaction) => {
       const job = await transaction.get<CatalogImportJob>("job");
-      if (job?.bulkOperationId !== bulkOperationId) return;
+      // Jobs from before import generations are never admitted.
+      if (
+        job?.bulkOperationId !== bulkOperationId ||
+        typeof job.generation !== "number"
+      )
+        return;
       // A lost alarm is rearmed, a pending backoff is kept.
       if (job.admitted && (await transaction.getAlarm()) !== null) return;
       await transaction.put<CatalogImportJob>("job", {
@@ -182,8 +189,9 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     return readCatalogImportStatus(await this.ctx.storage.get("status"));
   }
 
-  // begin(), stop() and fail() replace or delete the stored job in the same
-  // storage, so an alarm's writes apply only while its job is current.
+  // begin(), stop(), fail() and exportFailed() replace or delete the stored
+  // job in the same storage, so an alarm's writes apply only while its job is
+  // current.
   private whileCurrent(
     job: CatalogImportJob,
     write: (transaction: DurableObjectTransaction) => Promise<unknown>,

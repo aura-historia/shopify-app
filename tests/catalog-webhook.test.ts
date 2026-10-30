@@ -18,7 +18,7 @@ async function queuedImporter() {
   const kv = memoryKv();
   const storage = new ImporterStorage();
   const importer = createImporter(storage, { KV: kv } as never);
-  const imports = importsOf(() => importer, shop);
+  const imports = importsOf(importer, shop);
   const generation = (await imports.begin()) as number;
   await imports.queue(generation, {
     listingSourceId: `ls_${"0".repeat(26)}`,
