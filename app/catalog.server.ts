@@ -10,9 +10,6 @@ import {
 } from "./channel.server";
 import { getShopifyStoreName } from "./shopify-admin-url";
 
-type KV = Pick<CloudflareBindings["KV"], "get" | "put" | "delete">;
-const STATUS_PREFIX = "aura-historia:catalog-status:";
-
 export const CATALOG_IMPORT_ERRORS = [
   "MISSING_SCOPE",
   "MISSING_CHANNEL",
@@ -37,94 +34,48 @@ export interface CatalogImportStatus {
   updatedAt: string;
 }
 
-export async function saveCatalogImportStatus(
-  kv: Pick<KV, "put">,
-  shop: string,
-  status: Omit<CatalogImportStatus, "updatedAt">,
-) {
-  const value = JSON.stringify({
-    ...status,
-    updatedAt: new Date().toISOString(),
-  });
-  await updateCatalogImportStatus(() =>
-    kv.put(STATUS_PREFIX + shop.toLowerCase(), value, {
-      expirationTtl: 7 * 24 * 60 * 60,
-    }),
-  );
-}
-
-async function updateCatalogImportStatus(write: () => Promise<void>) {
-  // KV permits one write per key per second. A small catalog can finish
-  // immediately after its processing status was saved. Retry boundedly, and
-  // never let optional progress reporting change the import's actual outcome.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await write();
-      return;
-    } catch {
-      if (attempt < 2)
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
-  console.warn("Catalog import status could not be updated");
-}
-
-export async function loadCatalogImportStatus(
-  kv: Pick<KV, "get">,
-  shop: string,
-) {
-  try {
-    const raw = await kv.get(STATUS_PREFIX + shop.toLowerCase());
-    if (!raw) return null;
-    const value = JSON.parse(raw) as CatalogImportStatus;
-    const optionalCount = (count: unknown) =>
-      count === undefined ||
-      (Number.isSafeInteger(count) && (count as number) >= 0);
-    if (
-      ["queued", "processing", "submitted", "failed"].includes(value.phase) &&
-      Number.isSafeInteger(value.total) &&
-      value.total >= 0 &&
-      Number.isSafeInteger(value.failed) &&
-      value.failed >= 0 &&
-      value.failed <= value.total &&
-      optionalCount(value.eligible) &&
-      (value.eligible ?? 0) <= value.total &&
-      optionalCount(value.withdrawn) &&
-      (value.error === undefined ||
-        CATALOG_IMPORT_ERRORS.includes(value.error)) &&
-      typeof value.updatedAt === "string" &&
-      Number.isFinite(Date.parse(value.updatedAt))
-    ) {
-      // A terminated background callback cannot write its own failure status.
-      const timedOut =
-        (value.phase === "processing" &&
-          Date.now() - Date.parse(value.updatedAt) > 5 * 60_000) ||
-        (value.phase === "queued" &&
-          Date.now() - Date.parse(value.updatedAt) > 60 * 60_000);
-      return {
-        phase: timedOut ? ("failed" as const) : value.phase,
-        total: value.total,
-        failed: value.failed,
-        eligible: value.eligible,
-        withdrawn: value.withdrawn,
-        error: value.error,
-        updatedAt: value.updatedAt,
-      };
-    }
-  } catch {
-    /* Invalid or unavailable progress never prevents access to the app. */
-  }
-  return null;
-}
-
-export async function clearCatalogImportStatus(
-  kv: Pick<KV, "delete">,
-  shop: string,
-) {
-  // Progress cleanup must not prevent credential/session teardown.
-  await updateCatalogImportStatus(() =>
-    kv.delete(STATUS_PREFIX + shop.toLowerCase()),
-  );
+// The catalog importer keeps the progress of its current import generation.
+// Only public phase/count fields leave it, and stale progress is reported as
+// failed.
+export function readCatalogImportStatus(
+  value: unknown,
+): CatalogImportStatus | null {
+  if (!value || typeof value !== "object") return null;
+  const status = value as CatalogImportStatus;
+  const optionalCount = (count: unknown) =>
+    count === undefined ||
+    (Number.isSafeInteger(count) && (count as number) >= 0);
+  if (
+    !["queued", "processing", "submitted", "failed"].includes(status.phase) ||
+    !Number.isSafeInteger(status.total) ||
+    status.total < 0 ||
+    !Number.isSafeInteger(status.failed) ||
+    status.failed < 0 ||
+    status.failed > status.total ||
+    !optionalCount(status.eligible) ||
+    (status.eligible ?? 0) > status.total ||
+    !optionalCount(status.withdrawn) ||
+    (status.error !== undefined &&
+      !CATALOG_IMPORT_ERRORS.includes(status.error)) ||
+    typeof status.updatedAt !== "string" ||
+    !Number.isFinite(Date.parse(status.updatedAt))
+  )
+    return null;
+  // A terminated import step cannot write its own failure status.
+  const timedOut =
+    (status.phase === "processing" &&
+      Date.now() - Date.parse(status.updatedAt) > 5 * 60_000) ||
+    (status.phase === "queued" &&
+      Date.now() - Date.parse(status.updatedAt) > 60 * 60_000);
+  return {
+    phase: timedOut ? "failed" : status.phase,
+    total: status.total,
+    failed: status.failed,
+    eligible: status.eligible,
+    withdrawn: status.withdrawn,
+    error: status.error,
+    updatedAt: status.updatedAt,
+  };
 }
 
 export type ChannelPublicationState =

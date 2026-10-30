@@ -6,6 +6,7 @@ import {
 } from "@shopify/shopify-api";
 import { SessionNotFoundError } from "@shopify/shopify-app-react-router/server";
 import {
+  catalogImportsOf,
   type GraphqlRequestFn,
   resumeCatalogImport,
 } from "../app/backfill.server";
@@ -119,6 +120,8 @@ interface CoordinatorState {
   cleanup?: CleanupJob;
   cleanupQueue?: CleanupJob[];
   cleanupHadFailure?: boolean;
+  // Shop whose replaced connection's catalog import still has to be stopped.
+  catalogStop?: string;
 }
 
 export const RECONCILIATION_INTERVAL = 6 * 3600_000;
@@ -280,17 +283,64 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     }
   }
 
+  private catalogImporter(shop: string) {
+    return this.env.CATALOG_IMPORTER.getByName(shop.toLowerCase());
+  }
+
+  // Stops the catalog import of a replaced connection. A failed stop stays
+  // pending for the next alarm, unless a newer import retires it first.
+  private async stopCatalog(state: CoordinatorState) {
+    if (!state.catalogStop) return;
+    try {
+      await this.catalogImporter(state.catalogStop).stop();
+    } catch {
+      console.warn(`Catalog import stop is pending for ${state.catalogStop}`);
+      return;
+    }
+    state.catalogStop = undefined;
+    await this.save(state);
+  }
+
+  private async beginCatalog(state: CoordinatorState, shop: string) {
+    const generation = await this.catalogImporter(shop).begin(shop);
+    // Beginning retired the previous generation, as a pending stop would.
+    if (state.catalogStop) {
+      state.catalogStop = undefined;
+      await this.save(state);
+    }
+    return generation;
+  }
+
+  // Disconnect and replacement stop or rebind the connection in their own
+  // serialized steps, so an import begun here precedes them and is retired by
+  // them, or it is refused. A stopped or replaced connection never begins one.
+  async beginCatalogImport(shop: string, connectionId: string) {
+    return this.serialize(async () => {
+      const state = await this.load();
+      if (
+        state.stopped ||
+        (state.binding && state.binding.credentialVersion !== connectionId)
+      )
+        return null;
+      return this.beginCatalog(state, shop);
+    });
+  }
+
   // Approved scopes can also unblock a catalog import that stopped for
   // missing access. This runs inside the serialized alarm, so its Shopify
   // reads use the provider directly; it never fails shipping.
   private async resumeCatalog(
+    state: CoordinatorState,
     shop: string,
     credentials: ShopCredentialsRecord,
   ) {
     try {
       await resumeCatalogImport(
         (query, variables) => this.providerGraphql(shop, query, variables),
-        this.env.KV,
+        // The serialized alarm verified the binding of these credentials.
+        catalogImportsOf(this.catalogImporter(shop), () =>
+          this.beginCatalog(state, shop),
+        ),
         shop,
         credentials.listingSourceId,
         credentials.accessToken,
@@ -504,7 +554,9 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
   // record is stored, so a failed replacement leaves them running. The old
   // binding's stop, cleanup and revocation then commit with the new binding
   // in this one serialized step, and overlapping callbacks each replace
-  // whichever connection is current when they run.
+  // whichever connection is current when they run. The replaced connection's
+  // catalog import stops once the new record is stored, and only the new
+  // connection may begin the next one.
   async saveConnection(shop: string, values: ShopCredentialsValues) {
     return this.serialize(async () => {
       const state = await this.load();
@@ -534,8 +586,10 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       state.seenHintVersion = hinted;
       // A reconnect always performs new acquisition, never relabels old data.
       this.enqueue(state, shop, record, true);
+      state.catalogStop = shop;
       await this.ctx.storage.setAlarm(Date.now() + 1000);
       await this.save(state);
+      await this.stopCatalog(state);
       return record;
     });
   }
@@ -611,7 +665,11 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
 
   async disconnectShipping(shop: string, erase = false) {
     return this.serialize(async () => {
+      // The connection's catalog import stops first, so a failure leaves the
+      // connection unchanged for a retry. The stopped binding begins no other.
+      await this.catalogImporter(shop).stop();
       const state = await this.load();
+      state.catalogStop = undefined;
       // The stop commits before any external cleanup. Unknown/late callbacks
       // cannot reopen this binding even if KV returns an older connection.
       state.stopped = true;
@@ -727,6 +785,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
   async alarm() {
     return this.serialize(async () => {
       const state = await this.load();
+      await this.stopCatalog(state);
       if (state.cleanup) {
         await this.ctx.storage.setAlarm(Date.now() + 60_000);
         await this.cleanupStep(state);
@@ -785,7 +844,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
           }
           this.enqueue(state, state.binding.shop, credentials, false);
           if (scopeChanged)
-            await this.resumeCatalog(state.binding.shop, credentials);
+            await this.resumeCatalog(state, state.binding.shop, credentials);
         }
       }
       if (

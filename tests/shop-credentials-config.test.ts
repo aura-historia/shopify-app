@@ -211,7 +211,6 @@ describe("shop OAuth credentials configuration", () => {
     assert.ok(
       uninstallWebhookRoute.includes("clearShopCredentialsDisconnected"),
     );
-    assert.ok(uninstallWebhookRoute.includes("clearBackfillContext"));
     assert.ok(uninstallWebhookRoute.includes("clearedAuraHistoriaCredentials"));
   });
 

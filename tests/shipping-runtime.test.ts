@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { describe, it } from "node:test";
 import type { AppLoadContext } from "react-router";
-import type { GraphqlRequestFn } from "../app/backfill.server";
+import type {
+  CatalogImportJob,
+  GraphqlRequestFn,
+} from "../app/backfill.server";
 import { buildAuraHistoriaOAuthAuthorizeUrl } from "../app/oauth.server";
 import { mapShipping } from "../app/shipping/mapper";
 import {
@@ -25,8 +28,14 @@ import {
 } from "../app/shop-credentials.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
 import {
+  type CatalogImporterInstance,
+  createImporter,
+  ImporterStorage,
+} from "./helpers/catalog-importer";
+import {
   boundChannel,
   channelResponse,
+  grantedScopes,
   isChannelQuery,
 } from "./helpers/channel-fixtures";
 import {
@@ -140,10 +149,24 @@ function isolatedRuntime() {
     SHOPIFY_APP_URL: "https://app.invalid",
     SCOPES: "read_products,read_locales,read_shipping",
   } as CloudflareShopifyEnv;
+  // The shop's actual catalog importer, without alarms of its own here.
+  const importerStorage = new ImporterStorage();
+  const importer: CatalogImporterInstance = createImporter(
+    importerStorage,
+    env,
+  );
+  env.CATALOG_IMPORTER = {
+    getByName: (name: string) => {
+      assert.equal(name, shop);
+      return importer;
+    },
+  } as unknown as CloudflareShopifyEnv["CATALOG_IMPORTER"];
   return {
     storage,
     kv,
     env,
+    importer,
+    importerStorage,
     create<T>(
       coordinatorClass: new (
         ctx: DurableObjectState,
@@ -2515,6 +2538,334 @@ describe("catalog access approval", () => {
       await scopeUpdate(runtime.catalog.scopes);
       await runtime.run();
       assert.equal(runtime.catalog.exports, 1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+
+describe("catalog imports across the connection lifecycle", () => {
+  // A connection with catalog access whose import was queued through
+  // "Import catalog again" and admitted by Shopify's completion webhook.
+  // The caller restores the global fetch.
+  async function importing() {
+    const runtime = connectionRuntime();
+    globalThis.fetch = runtime.fetcher;
+    runtime.catalog.scopes = grantedScopes;
+    assert.equal(await runtime.coordinator.requestShipping(shop), true);
+    assert.equal(
+      (await runtime.act("retry_backfill")).get("backfill"),
+      "queued",
+    );
+    const queued = await runtime.importerStorage.get<CatalogImportJob>("job");
+    await runtime.importer.start(queued?.bulkOperationId ?? "");
+    const job = (await runtime.importerStorage.get<CatalogImportJob>(
+      "job",
+    )) as CatalogImportJob;
+    assert.equal(job.admitted, true);
+    assert.ok(runtime.importerStorage.alarm);
+    return { runtime, job };
+  }
+  const contextKey = (generation: number) =>
+    `aura-historia:backfill:${shop}:${generation}`;
+  const token = (
+    runtime: ReturnType<typeof connectionRuntime>,
+    generation: number,
+  ) => JSON.parse(runtime.kv.get(contextKey(generation)) ?? "{}").accessToken;
+
+  it("stops the import before acknowledging a disconnect or uninstall and revives nothing", async () => {
+    for (const stop of ["disconnect", "uninstall"] as const) {
+      const original = globalThis.fetch;
+      try {
+        const { runtime, job } = await importing();
+        assert.equal(token(runtime, job.generation), credentials.accessToken);
+        if (stop === "disconnect")
+          assert.equal(
+            (await runtime.act("disconnect")).get("disconnect"),
+            "success",
+          );
+        // The uninstall webhook's first step.
+        else await runtime.coordinator.disconnectShipping(shop, true);
+        assert.equal(await runtime.importerStorage.get("job"), undefined);
+        assert.equal(runtime.importerStorage.alarm, null);
+        assert.equal(await runtime.importer.status(), null);
+        assert.equal(runtime.kv.has(contextKey(job.generation)), false);
+        // A request that read the connection before the stop starts no
+        // import, and a delayed completion admits nothing.
+        assert.equal(
+          await runtime.coordinator.beginCatalogImport(
+            shop,
+            credentials.connectionId,
+          ),
+          null,
+        );
+        await runtime.importer.start(job.bulkOperationId);
+        assert.equal(runtime.importerStorage.alarm, null);
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
+  it("keeps the connection and its import for a retry when the importer cannot stop", async () => {
+    const original = globalThis.fetch;
+    try {
+      const { runtime, job } = await importing();
+      const stop = runtime.importer.stop;
+      runtime.importer.stop = async () => {
+        throw new Error("Durable Object overloaded");
+      };
+      await assert.rejects(runtime.act("disconnect"), /overloaded/);
+      assert.equal((await storedState(runtime.storage)).stopped, false);
+      assert.ok(await loadShopCredentials(runtime.env.KV, shop));
+      assert.deepEqual(await runtime.importerStorage.get("job"), job);
+      assert.equal(
+        ((await runtime.home()) as HomeData).integration.status,
+        "connected",
+      );
+      runtime.importer.stop = stop;
+      assert.equal(
+        (await runtime.act("disconnect")).get("disconnect"),
+        "success",
+      );
+      assert.equal(await runtime.importerStorage.get("job"), undefined);
+      assert.equal(runtime.kv.has(contextKey(job.generation)), false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("leaves the current connection's import running when its replacement fails", async () => {
+    const original = globalThis.fetch;
+    try {
+      const { runtime, job } = await importing();
+      const alarm = runtime.importerStorage.alarm;
+      const status = await runtime.importer.status();
+      const set = runtime.kv.set.bind(runtime.kv);
+      runtime.kv.set = (key, value) => {
+        if (key === getShopCredentialsStorageKey(shop))
+          throw new Error("KV write failed");
+        return set(key, value);
+      };
+      assert.equal(
+        (await (await runtime.authorize("second"))()).get("oauth"),
+        "failed",
+      );
+      assert.deepEqual(await runtime.importerStorage.get("job"), job);
+      assert.equal(runtime.importerStorage.alarm, alarm);
+      assert.deepEqual(await runtime.importer.status(), status);
+      assert.equal(token(runtime, job.generation), credentials.accessToken);
+      assert.equal((await storedState(runtime.storage)).catalogStop, undefined);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("completes a replacement's catalog stop that failed when it was stored", async () => {
+    for (const completion of ["alarm", "newer import"] as const) {
+      const original = globalThis.fetch;
+      try {
+        const { runtime, job } = await importing();
+        const stop = runtime.importer.stop;
+        runtime.importer.stop = async () => {
+          runtime.importer.stop = stop;
+          throw new Error("Durable Object reset");
+        };
+        // The replacement is stored even though its stop failed.
+        const record = await runtime.coordinator.saveConnection(shop, {
+          listingSourceId: credentials.listingSourceId,
+          accessToken: "aura-token-second",
+        });
+        assert.equal((await storedState(runtime.storage)).catalogStop, shop);
+        assert.equal(
+          (await runtime.importerStorage.get<CatalogImportJob>("job"))
+            ?.generation,
+          job.generation,
+        );
+        if (completion === "alarm") await runtime.coordinator.alarm();
+        else
+          assert.equal(
+            typeof (await runtime.coordinator.beginCatalogImport(
+              shop,
+              record.connectionId,
+            )),
+            "number",
+          );
+        assert.equal(
+          (await storedState(runtime.storage)).catalogStop,
+          undefined,
+        );
+        assert.equal(await runtime.importerStorage.get("job"), undefined);
+        assert.equal(runtime.kv.has(contextKey(job.generation)), false);
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
+  it("begins imports for a connection the coordinator has not bound yet", async () => {
+    const runtime = connectionRuntime();
+    assert.equal(
+      typeof (await runtime.coordinator.beginCatalogImport(
+        shop,
+        credentials.connectionId,
+      )),
+      "number",
+    );
+    await runtime.coordinator.disconnectShipping(shop);
+    assert.equal(
+      await runtime.coordinator.beginCatalogImport(
+        shop,
+        credentials.connectionId,
+      ),
+      null,
+    );
+  });
+
+  it("hands the import to a replacing connection and refuses the replaced one", async () => {
+    const original = globalThis.fetch;
+    try {
+      const { runtime, job: older } = await importing();
+      const params = await (await runtime.authorize("second"))();
+      assert.equal(params.get("oauth"), "connected");
+      assert.equal(params.get("backfill"), "queued");
+      const newer = (await runtime.importerStorage.get<CatalogImportJob>(
+        "job",
+      )) as CatalogImportJob;
+      assert.ok(newer.generation > older.generation);
+      assert.notEqual(newer.bulkOperationId, older.bulkOperationId);
+      assert.equal(newer.admitted, false);
+      assert.equal(runtime.kv.has(contextKey(older.generation)), false);
+      assert.equal(token(runtime, newer.generation), "aura-token-second");
+      assert.equal(
+        await runtime.coordinator.beginCatalogImport(
+          shop,
+          credentials.connectionId,
+        ),
+        null,
+      );
+      await runtime.importer.start(older.bulkOperationId);
+      assert.equal(runtime.importerStorage.alarm, null);
+      assert.equal(
+        (await runtime.importerStorage.get<CatalogImportJob>("job"))
+          ?.generation,
+        newer.generation,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("stops the replaced connection's import when the replacement is stored", async () => {
+    const original = globalThis.fetch;
+    try {
+      const { runtime, job } = await importing();
+      // Even if the new connection never begins an import of its own.
+      const record = await runtime.coordinator.saveConnection(shop, {
+        listingSourceId: credentials.listingSourceId,
+        accessToken: "aura-token-second",
+      });
+      assert.equal(await runtime.importerStorage.get("job"), undefined);
+      assert.equal(runtime.importerStorage.alarm, null);
+      assert.equal(runtime.kv.has(contextKey(job.generation)), false);
+      assert.equal(
+        await runtime.coordinator.beginCatalogImport(
+          shop,
+          credentials.connectionId,
+        ),
+        null,
+      );
+      assert.equal(
+        typeof (await runtime.coordinator.beginCatalogImport(
+          shop,
+          record.connectionId,
+        )),
+        "number",
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("retires an overlapping callback's import begun before the newer replacement", async () => {
+    const runtime = connectionRuntime();
+    runtime.catalog.scopes = grantedScopes;
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      // The first callback's export is queued only after the second callback
+      // replaced its connection and began its own import.
+      let firstQueueing!: () => void;
+      const reached = new Promise<void>((resolve) => {
+        firstQueueing = resolve;
+      });
+      let secondDone!: () => void;
+      const released = new Promise<void>((resolve) => {
+        secondDone = resolve;
+      });
+      const put = runtime.env.KV.put;
+      runtime.env.KV.put = (async (key: string, value: string) => {
+        if (
+          key.startsWith("aura-historia:backfill:") &&
+          value.includes("aura-token-first")
+        ) {
+          firstQueueing();
+          await released;
+        }
+        return put(key, value);
+      }) as typeof put;
+      const first = (await runtime.authorize("first"))();
+      const second = await runtime.authorize("second");
+      await reached;
+      const secondParams = await second();
+      secondDone();
+      const firstParams = await first;
+      assert.equal(firstParams.get("oauth"), "connected");
+      assert.equal(firstParams.get("backfill"), "not_queued");
+      assert.equal(secondParams.get("backfill"), "queued");
+      assert.equal(
+        (await loadShopCredentials(runtime.env.KV, shop))?.accessToken,
+        "aura-token-second",
+      );
+      const job = await runtime.importerStorage.get<CatalogImportJob>("job");
+      assert.ok(job);
+      assert.equal(token(runtime, job.generation), "aura-token-second");
+      assert.deepEqual(
+        [...runtime.kv.keys()].filter((key) =>
+          key.startsWith("aura-historia:backfill:"),
+        ),
+        [contextKey(job.generation)],
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("leaves the import with the connection stored by overlapping callbacks", async () => {
+    const runtime = connectionRuntime();
+    runtime.catalog.scopes = grantedScopes;
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      await runtime.coordinator.requestShipping(shop);
+      const first = await runtime.authorize("first");
+      const second = await runtime.authorize("second");
+      const results = await Promise.all([first(), second()]);
+      assert.deepEqual(
+        results.map((params) => params.get("oauth")),
+        ["connected", "connected"],
+      );
+      const stored = await loadShopCredentials(runtime.env.KV, shop);
+      const job = await runtime.importerStorage.get<CatalogImportJob>("job");
+      assert.ok(job);
+      assert.equal(token(runtime, job.generation), stored?.accessToken);
+      assert.deepEqual(
+        [...runtime.kv.keys()].filter((key) =>
+          key.startsWith("aura-historia:backfill:"),
+        ),
+        [contextKey(job.generation)],
+      );
     } finally {
       globalThis.fetch = original;
     }

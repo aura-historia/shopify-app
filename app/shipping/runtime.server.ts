@@ -1,5 +1,9 @@
 import type { AppLoadContext } from "react-router";
-import type { GraphqlRequestFn } from "../backfill.server";
+import {
+  type CatalogImports,
+  catalogImportsOf,
+  type GraphqlRequestFn,
+} from "../backfill.server";
 
 // Internal Workers RPC only. No HTTP bridge, provider token, or backend caller.
 export function shopCoordinator(context: AppLoadContext, shop: string) {
@@ -8,6 +12,18 @@ export function shopCoordinator(context: AppLoadContext, shop: string) {
 
 export function catalogImporter(context: AppLoadContext, shop: string) {
   return context.cloudflare.env.CATALOG_IMPORTER.getByName(shop.toLowerCase());
+}
+
+// Imports for a stored connection. The coordinator begins one only while that
+// connection is neither stopped nor replaced, in order with both.
+export function catalogImports(
+  context: AppLoadContext,
+  shop: string,
+  connectionId: string,
+): CatalogImports {
+  return catalogImportsOf(catalogImporter(context, shop), () =>
+    shopCoordinator(context, shop).beginCatalogImport(shop, connectionId),
+  );
 }
 
 export function offlineGraphql(

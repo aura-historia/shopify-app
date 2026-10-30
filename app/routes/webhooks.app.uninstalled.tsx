@@ -1,6 +1,4 @@
 import type { ActionFunctionArgs } from "react-router";
-import { clearBackfillContext } from "../backfill.server";
-import { clearCatalogImportStatus } from "../catalog.server";
 import { shopCoordinator } from "../shipping/runtime.server";
 import {
   clearShopCredentials,
@@ -20,11 +18,11 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
 
   // Fence first and durably admit owned withdrawals. The worker resolves Aura
   // credentials from protected cleanup storage after Shopify sessions are gone.
+  // The same stop ends the catalog import and releases its progress and
+  // context.
   await shopCoordinator(context, shop).disconnectShipping(shop, true);
   await clearShopCredentials(context.cloudflare.env.KV, shop);
   await clearShopCredentialsDisconnected(context.cloudflare.env.KV, shop);
-  await clearBackfillContext(context.cloudflare.env.KV, shop);
-  await clearCatalogImportStatus(context.cloudflare.env.KV, shop);
 
   const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
   // KV's shop index can contain duplicates and entries whose session was

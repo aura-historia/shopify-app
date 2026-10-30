@@ -19,6 +19,7 @@ import {
   summarizeOAuthError,
 } from "../oauth.server";
 import {
+  catalogImports,
   offlineGraphql,
   queueShipping,
   shopCoordinator,
@@ -155,10 +156,12 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
         );
         return { graphqlRequest, metadata };
       },
-      async ({ graphqlRequest, metadata }) =>
+      // Only the connection stored by this callback can begin the import; a
+      // newer callback's replacement refuses it.
+      async ({ graphqlRequest, metadata }, record) =>
         (await triggerBackfill(
           graphqlRequest,
-          context.cloudflare.env.KV,
+          catalogImports(context, shopDomain, record.connectionId),
           shopDomain,
           listingSourceId,
           token.access_token,
