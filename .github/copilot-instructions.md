@@ -12,6 +12,7 @@
 - Product webhooks and compliance webhooks are declared in `shopify.app.toml`.
 - Uninstall, bulk-operation completion, shipping profile, market and scope-change webhooks are processed directly by this app. Product and compliance events use EventBridge.
 - Shipping acquisition, mapping and publication share the implementation in `app/shipping`; per-shop Durable Objects coordinate offline Shopify access for catalog and shipping. Catalog exports are processed by the per-shop `CatalogImporter` in bounded, checkpointed alarm steps, never in a request's `waitUntil`. Keep provider credentials inside the app's protected sessions.
+- The `CatalogImporter` owns the shop's import generations, their progress and per-generation contexts. Begin imports through the coordinator's `beginCatalogImport`, and keep disconnect, uninstall and connection replacement stopping the importer before they are acknowledged. Never write catalog status or contexts outside the importer.
 - Avoid adding demo pages, sample mutations, placeholder business logic, or unnecessary UI.
 
 ## Local development rules

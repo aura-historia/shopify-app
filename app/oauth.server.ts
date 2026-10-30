@@ -1,5 +1,6 @@
 import type { OAuthTokenResponseData } from "./generated/api/types.gen";
 import {
+  type ShopCredentialsRecord,
   type ShopCredentialsValues,
   saveShopCredentials,
 } from "./shop-credentials.server";
@@ -41,16 +42,21 @@ export async function connectAuraHistoriaShop<T>(
   credentials: ShopCredentialsValues,
   config: AuraHistoriaOAuthConfig,
   configureProvider: () => Promise<T>,
-  queueInitialBackfill: (metadata: T) => Promise<InitialBackfillStatus>,
-  persistCredentials = () => saveShopCredentials(kv, shopDomain, credentials),
+  // Receives the stored record, whose connection begins the import.
+  queueInitialBackfill: (
+    metadata: T,
+    record: ShopCredentialsRecord,
+  ) => Promise<InitialBackfillStatus>,
+  persistCredentials: () => Promise<ShopCredentialsRecord> = () =>
+    saveShopCredentials(kv, shopDomain, credentials),
 ): Promise<InitialBackfillStatus> {
   let credentialsSaved = false;
   try {
     const metadata = await configureProvider();
-    await persistCredentials();
+    const record = await persistCredentials();
     credentialsSaved = true;
     try {
-      return await queueInitialBackfill(metadata);
+      return await queueInitialBackfill(metadata, record);
     } catch (error) {
       console.error(
         "Failed to queue initial backfill:",

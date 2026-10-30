@@ -1,10 +1,9 @@
 import {
+  type CatalogImportError,
   type CatalogImportStatus,
   CHANNEL_PROVISIONING_ERRORS,
   CHANNEL_PUBLICATION_ERRORS,
-  loadCatalogImportStatus,
   resolveChannelPublication,
-  saveCatalogImportStatus,
 } from "./catalog.server";
 import {
   ensureAuraChannel,
@@ -214,13 +213,35 @@ export interface BackfillPlan {
 // Durable progress of one catalog import. It holds no credentials.
 export interface CatalogImportJob {
   shop: string;
+  // The import generation that owns this job, its context, status and alarm.
+  generation: number;
   bulkOperationId: string;
+  // Shopify reported the export complete and the importer admitted it.
+  admitted: boolean;
   result?: BulkOperationResult;
   // Index of the next batch in the plan.
   cursor: number;
   failed: number;
   withdrawn: number;
   attempts: number;
+}
+
+// The shop's import generations, owned by its CatalogImporter. Each import
+// begins a new generation, which retires the previous one; only the current
+// generation can queue an export or record a status.
+export interface CatalogImports {
+  // Null when the connection no longer acts for the shop.
+  begin(): Promise<number | null>;
+  queue(generation: number, context: BackfillContext): Promise<boolean>;
+  fail(generation: number, error: CatalogImportError): Promise<boolean>;
+  status(): Promise<CatalogImportStatus | null>;
+}
+
+// Thrown once an import's generation was retired. Nothing more is sent for it.
+export class SupersededImportError extends Error {
+  constructor() {
+    super("Catalog import generation was retired");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,8 +510,12 @@ export function parseProductsFromJsonl(jsonl: string): {
 // Backfill context KV helpers
 // ---------------------------------------------------------------------------
 
-function backfillContextKey(shop: string): string {
-  return `${BACKFILL_CONTEXT_PREFIX}${shop.toLowerCase()}`;
+// Every import generation keeps its own credential-bearing context. Cleanup of
+// an older import therefore never deletes or replaces a newer one's.
+function backfillContextKey(shop: string, generation: number): string {
+  if (!Number.isSafeInteger(generation) || generation <= 0)
+    throw new Error("Invalid catalog import generation");
+  return `${BACKFILL_CONTEXT_PREFIX}${shop.toLowerCase()}:${generation}`;
 }
 
 export async function storeBackfillContext(
@@ -502,9 +527,10 @@ export async function storeBackfillContext(
     ) => Promise<void>;
   },
   shop: string,
+  generation: number,
   context: BackfillContext,
 ): Promise<void> {
-  await kv.put(backfillContextKey(shop), JSON.stringify(context), {
+  await kv.put(backfillContextKey(shop, generation), JSON.stringify(context), {
     expirationTtl: BACKFILL_CONTEXT_TTL_SECONDS,
   });
 }
@@ -512,8 +538,9 @@ export async function storeBackfillContext(
 export async function loadBackfillContext(
   kv: { get: (key: string) => Promise<string | null> },
   shop: string,
+  generation: number,
 ): Promise<BackfillContext | null> {
-  const raw = await kv.get(backfillContextKey(shop));
+  const raw = await kv.get(backfillContextKey(shop, generation));
   if (!raw) return null;
   try {
     const context: unknown = JSON.parse(raw);
@@ -541,8 +568,9 @@ export async function loadBackfillContext(
 export async function clearBackfillContext(
   kv: { delete: (key: string) => Promise<void> },
   shop: string,
+  generation: number,
 ): Promise<void> {
-  await kv.delete(backfillContextKey(shop));
+  await kv.delete(backfillContextKey(shop, generation));
 }
 
 // ---------------------------------------------------------------------------
@@ -739,6 +767,8 @@ export async function sendProductBatch(
   accessToken: string,
   verb: "put" | "delete",
   idempotencyKey: string,
+  // Runs before a resend and throws once the import was retired.
+  beforeRetry: () => Promise<void> = async () => {},
 ): Promise<string[]> {
   if (items.length > BATCH_SIZE)
     throw new Error("Async batch exceeds 100 items");
@@ -749,6 +779,7 @@ export async function sendProductBatch(
   };
 
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await beforeRetry();
     const result =
       verb === "put"
         ? await putAsyncPartnerProductListings({
@@ -899,6 +930,7 @@ export function planBackfill(
 async function submitBackfillBatch(
   batch: BackfillBatch,
   context: BackfillContext,
+  beforeRetry: () => Promise<void>,
 ): Promise<string[]> {
   try {
     return await sendProductBatch(
@@ -912,8 +944,10 @@ async function submitBackfillBatch(
         batch.verb,
         batch.index,
       ),
+      beforeRetry,
     );
   } catch (error) {
+    if (error instanceof SupersededImportError) throw error;
     console.error(
       `Backfill ${batch.verb} batch ${batch.index} failed:`,
       (error instanceof Error ? error.message : "unknown error")
@@ -926,8 +960,10 @@ async function submitBackfillBatch(
 
 // Runs one bounded step of an import. `checkpoint` persists the job after
 // every admitted batch, so an interrupted step resumes at the next batch and
-// a replayed batch reuses its idempotency key. Throws on Shopify read errors
-// so the caller can retry the step.
+// a replayed batch reuses its idempotency key. It throws
+// SupersededImportError once the job's generation was retired; every batch
+// and resend is preceded by a successful checkpoint. Throws on Shopify read
+// errors so the caller can retry the step.
 export async function runCatalogImportStep(
   job: CatalogImportJob,
   context: BackfillContext,
@@ -978,7 +1014,7 @@ export async function runCatalogImportStep(
   // The batch budget starts after preparation, so a slow export download or
   // parse can never starve batch submission.
   const deadline = Date.now() + budgetMs;
-  // Fence before sending: a newer import may have been admitted meanwhile.
+  // Fence before sending: the import may have been retired meanwhile.
   await checkpoint(job);
   if (job.cursor === 0 && plan.rejected.length > 0) {
     console.error(
@@ -987,7 +1023,9 @@ export async function runCatalogImportStep(
   }
   while (job.cursor < plan.batches.length && Date.now() < deadline) {
     const batch = plan.batches[job.cursor];
-    const failures = await submitBackfillBatch(batch, context);
+    const failures = await submitBackfillBatch(batch, context, () =>
+      checkpoint(job),
+    );
     job.failed += failures.length;
     if (batch.verb === "delete")
       job.withdrawn += batch.items.length - failures.length;
@@ -1021,31 +1059,34 @@ export async function runCatalogImportStep(
 
 export async function triggerBackfill(
   graphqlRequest: GraphqlRequestFn,
-  kv: {
-    put: (
-      key: string,
-      value: string,
-      options?: { expirationTtl?: number },
-    ) => Promise<void>;
-  },
+  imports: CatalogImports,
   shopDomain: string,
   listingSourceId: string,
   accessToken: string,
   apiBaseUrl: string,
   validatedMetadata: ValidatedShopifyMetadata,
 ): Promise<boolean> {
+  let generation: number | null = null;
   try {
+    // Starting an import retires the shop's current one before anything is
+    // read or exported, so the older import submits no further batch. A
+    // connection that was disconnected or replaced cannot start one.
+    generation = await imports.begin();
+    if (generation === null) {
+      console.warn(
+        `Backfill not submitted for ${shopDomain}: connection retired`,
+      );
+      return false;
+    }
     // Every import first (re)binds the installation's channel connection to
     // the authorized source, so a failed or missing setup is repaired by
     // importing again. A refusal is reported, never treated as connected.
     const channel = await ensureAuraChannel(graphqlRequest, listingSourceId);
     if (channel.state !== "ready") {
-      await saveCatalogImportStatus(kv, shopDomain, {
-        phase: "failed",
-        total: 0,
-        failed: 0,
-        error: CHANNEL_PROVISIONING_ERRORS[channel.state],
-      });
+      await imports.fail(
+        generation,
+        CHANNEL_PROVISIONING_ERRORS[channel.state],
+      );
       console.warn(
         `Backfill not submitted for ${shopDomain}: channel ${channel.state}`,
       );
@@ -1058,12 +1099,10 @@ export async function triggerBackfill(
       listingSourceId,
     );
     if (publication.state !== "ready") {
-      await saveCatalogImportStatus(kv, shopDomain, {
-        phase: "failed",
-        total: 0,
-        failed: 0,
-        error: CHANNEL_PUBLICATION_ERRORS[publication.state],
-      });
+      await imports.fail(
+        generation,
+        CHANNEL_PUBLICATION_ERRORS[publication.state],
+      );
       console.warn(
         `Backfill not submitted for ${shopDomain}: publication ${publication.state}`,
       );
@@ -1074,23 +1113,24 @@ export async function triggerBackfill(
       publication.publicationId,
     );
 
-    await storeBackfillContext(kv, shopDomain, {
-      listingSourceId,
-      accessToken,
-      apiBaseUrl,
-      primaryLocale: validatedMetadata.primaryLocale,
-      currencyCode: validatedMetadata.currencyCode,
-      shopDomain,
-      bulkOperationId,
-      publicationId: publication.publicationId,
-      createdAt: new Date().toISOString(),
-    });
-
-    await saveCatalogImportStatus(kv, shopDomain, {
-      phase: "queued",
-      total: 0,
-      failed: 0,
-    });
+    // A newer import, disconnect or replacement since begin() discards the
+    // export; its completion webhook then admits nothing.
+    if (
+      !(await imports.queue(generation, {
+        listingSourceId,
+        accessToken,
+        apiBaseUrl,
+        primaryLocale: validatedMetadata.primaryLocale,
+        currencyCode: validatedMetadata.currencyCode,
+        shopDomain,
+        bulkOperationId,
+        publicationId: publication.publicationId,
+        createdAt: new Date().toISOString(),
+      }))
+    ) {
+      console.warn(`Backfill for ${shopDomain} was retired before queueing`);
+      return false;
+    }
 
     console.log(
       `Backfill bulk operation submitted for ${shopDomain}: ${bulkOperationId}`,
@@ -1105,6 +1145,11 @@ export async function triggerBackfill(
         .replace(/\s+/g, " ")
         .slice(0, 180),
     );
+    // The begun generation reports the failure instead of staying queued.
+    if (generation !== null)
+      await imports
+        .fail(generation, "SHOPIFY_READ_FAILED")
+        .catch(() => undefined);
     return false;
   }
 }
@@ -1114,14 +1159,14 @@ export async function triggerBackfill(
 // other import state is the merchant's to retry.
 export async function resumeCatalogImport(
   graphqlRequest: GraphqlRequestFn,
-  kv: Pick<CloudflareBindings["KV"], "get" | "put">,
+  imports: CatalogImports,
   shopDomain: string,
   listingSourceId: string,
   accessToken: string,
   apiBaseUrl: string,
 ): Promise<boolean> {
   try {
-    const status = await loadCatalogImportStatus(kv, shopDomain);
+    const status = await imports.status();
     if (status?.phase !== "failed" || status.error !== "MISSING_SCOPE")
       return false;
     if ((await readCatalogAccess(graphqlRequest)) !== "granted") return false;
@@ -1134,7 +1179,7 @@ export async function resumeCatalogImport(
     );
     return await triggerBackfill(
       graphqlRequest,
-      kv,
+      imports,
       shopDomain,
       listingSourceId,
       accessToken,

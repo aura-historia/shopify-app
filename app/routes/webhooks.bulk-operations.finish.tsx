@@ -1,6 +1,4 @@
 import type { ActionFunctionArgs } from "react-router";
-import { clearBackfillContext, loadBackfillContext } from "../backfill.server";
-import { saveCatalogImportStatus } from "../catalog.server";
 import { catalogImporter } from "../shipping/runtime.server";
 import { getShopifyWebhook } from "../shopify.server";
 
@@ -28,31 +26,15 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     return new Response(null, { status: 200 });
   }
 
-  const backfillCtx = await loadBackfillContext(
-    context.cloudflare.env.KV,
-    shop,
-  );
-
-  if (!backfillCtx || backfillCtx.bulkOperationId !== bulkOpId) {
-    return new Response(null, { status: 200 });
-  }
-
-  if (body.status !== "completed") {
-    await saveCatalogImportStatus(context.cloudflare.env.KV, shop, {
-      phase: "failed",
-      total: 0,
-      failed: 0,
-      error: "SHOPIFY_READ_FAILED",
-    });
-    await clearBackfillContext(context.cloudflare.env.KV, shop);
-    return new Response(null, { status: 200 });
-  }
-
   // Processing runs in bounded, resumable Durable Object alarms rather than
-  // this request's short waitUntil window. Admission is idempotent per bulk
-  // operation; Shopify retries the delivery if it could not be committed.
+  // this request's short waitUntil window. The importer admits only the
+  // export of its current import generation, once; deliveries for retired or
+  // finished imports change nothing. Shopify retries the delivery if it could
+  // not be committed.
+  const importer = catalogImporter(context, shop);
   try {
-    await catalogImporter(context, shop).start(shop, bulkOpId);
+    if (body.status === "completed") await importer.start(bulkOpId);
+    else await importer.exportFailed(bulkOpId);
   } catch {
     return new Response(null, { status: 503 });
   }

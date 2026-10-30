@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { loadCatalogImportStatus } from "../app/catalog.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
   getOAuthPendingContextStorageKey,
 } from "../app/oauth.server";
+import type { ShopCredentialsValues } from "../app/shop-credentials.server";
+import { createImporter, ImporterStorage } from "./helpers/catalog-importer";
 import { channelResponse, isChannelQuery } from "./helpers/channel-fixtures";
 
 // Node cannot load the route's CSS module, which the loader does not use.
@@ -312,17 +313,31 @@ function connectedEnv({ refuseChannel = false } = {}) {
       },
     };
   };
+  const env = makeEnv();
+  const importer = createImporter(new ImporterStorage(), env as never);
+  // Each stored connection gets a new identity; only the current one begins
+  // an import.
+  let connections = 0;
   const coordinator = {
-    prepareConnection: async () => {},
-    saveConnection: async () => {},
+    saveConnection: async (_shop: string, values: ShopCredentialsValues) => ({
+      ...values,
+      connectionId: `connection-${++connections}`,
+      updatedAt: new Date().toISOString(),
+    }),
+    beginCatalogImport: async (shop: string, connectionId: string) =>
+      connectionId === `connection-${connections}`
+        ? importer.begin(shop)
+        : null,
     requestShipping: async () => true,
     graphql,
   };
   return {
     shopify,
+    importer,
     env: {
-      ...makeEnv(),
+      ...env,
       SHOP_COORDINATOR: { getByName: () => coordinator },
+      CATALOG_IMPORTER: { getByName: () => importer },
     },
   };
 }
@@ -389,13 +404,13 @@ describe("Aura Historia connection channel setup", () => {
   });
 
   it("keeps the connection but never reports a refused channel as importable", async () => {
-    const { env, shopify } = connectedEnv({ refuseChannel: true });
+    const { env, shopify, importer } = connectedEnv({ refuseChannel: true });
     const result = await connect(env);
     assert.equal(result.get("oauth"), "connected");
     assert.equal(result.get("backfill"), "not_queued");
     assert.equal(shopify.channel, null);
     assert.equal(shopify.exports, 0);
-    const status = await loadCatalogImportStatus(env.KV as never, shopDomain);
+    const status = await importer.status();
     assert.equal(status?.phase, "failed");
     assert.equal(status?.error, "CHANNEL_REJECTED");
   });

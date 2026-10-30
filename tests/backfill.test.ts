@@ -35,11 +35,12 @@ import {
   triggerBackfill,
   type ValidatedShopifyMetadata,
 } from "../app/backfill.server";
+import type { CatalogImportStatus } from "../app/catalog.server";
 import {
-  type CatalogImportStatus,
-  loadCatalogImportStatus,
-  saveCatalogImportStatus,
-} from "../app/catalog.server";
+  createImporter,
+  ImporterStorage,
+  importsOf,
+} from "./helpers/catalog-importer";
 import {
   boundChannel,
   type ChannelState,
@@ -104,6 +105,26 @@ function makeKv() {
       entries.delete(key);
     }),
     entries,
+  };
+}
+
+// The shop's actual catalog importer on isolated storage. Imports begin
+// directly, as the coordinator begins them for its bound connection.
+function catalogImports() {
+  const kv = makeKv();
+  const storage = new ImporterStorage();
+  const importer = createImporter(storage, { KV: kv } as never);
+  return {
+    kv,
+    storage,
+    importer,
+    imports: importsOf(() => importer, shopDomain),
+    job: () => storage.get<CatalogImportJob>("job"),
+    // The context of the queued export.
+    async context() {
+      const job = await storage.get<CatalogImportJob>("job");
+      return job ? loadBackfillContext(kv, shopDomain, job.generation) : null;
+    },
   };
 }
 
@@ -355,9 +376,9 @@ describe("Shopify JSONL and KV context", () => {
   it("round-trips the new required context with a TTL and supports clearing", async () => {
     const kv = makeKv();
     const context = makeContext();
-    await storeBackfillContext(kv as never, shopDomain, context);
+    await storeBackfillContext(kv as never, shopDomain, 7, context);
     assert.deepEqual(
-      await loadBackfillContext(kv as never, shopDomain),
+      await loadBackfillContext(kv as never, shopDomain, 7),
       context,
     );
     assert.deepEqual(kv.put.mock.calls[0].arguments[2], {
@@ -365,48 +386,73 @@ describe("Shopify JSONL and KV context", () => {
     });
     assert.equal("shopId" in context, false);
     assert.equal("apiKey" in context, false);
-    await clearBackfillContext(kv as never, shopDomain);
-    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    await clearBackfillContext(kv as never, shopDomain, 7);
+    assert.equal(await loadBackfillContext(kv as never, shopDomain, 7), null);
     await storeBackfillContext(
       kv as never,
       shopDomain,
+      7,
       makeContext({ primaryLocale: undefined }),
     );
     assert.equal(
-      (await loadBackfillContext(kv as never, shopDomain))?.primaryLocale,
+      (await loadBackfillContext(kv as never, shopDomain, 7))?.primaryLocale,
       undefined,
     );
   });
 
+  it("keeps each import generation's context under its own key", async () => {
+    const kv = makeKv();
+    await storeBackfillContext(kv as never, shopDomain, 7, makeContext());
+    await storeBackfillContext(
+      kv as never,
+      shopDomain.toUpperCase(),
+      8,
+      makeContext({ bulkOperationId: "gid://shopify/BulkOperation/790" }),
+    );
+    await clearBackfillContext(kv as never, shopDomain, 7);
+    assert.deepEqual(
+      [...kv.entries.keys()],
+      [`aura-historia:backfill:${shopDomain}:8`],
+    );
+    assert.equal(
+      (await loadBackfillContext(kv as never, shopDomain, 8))?.bulkOperationId,
+      "gid://shopify/BulkOperation/790",
+    );
+    for (const generation of [0, -1, 1.5, Number.NaN])
+      await assert.rejects(
+        loadBackfillContext(kv as never, shopDomain, generation),
+        /generation/,
+      );
+  });
+
   it("returns null for absent or malformed context", async () => {
     const kv = makeKv();
-    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
-    kv.entries.set(`aura-historia:backfill:${shopDomain}`, "{");
-    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    const key = `aura-historia:backfill:${shopDomain}:7`;
+    const load = () => loadBackfillContext(kv as never, shopDomain, 7);
+    assert.equal(await load(), null);
+    kv.entries.set(key, "{");
+    assert.equal(await load(), null);
     kv.entries.set(
-      `aura-historia:backfill:${shopDomain}`,
+      key,
       JSON.stringify({
         ...makeContext(),
         listingSourceId: undefined,
         shopId: "550e8400-e29b-41d4-a716-446655440000",
       }),
     );
-    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    assert.equal(await load(), null);
     kv.entries.set(
-      `aura-historia:backfill:${shopDomain}`,
+      key,
       JSON.stringify(makeContext({ currencyCode: "XXX" as never })),
     );
-    assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+    assert.equal(await load(), null);
     // Contexts without the snapshot's publication and time are not applied.
     for (const overrides of [
       { publicationId: undefined },
       { publicationId: "gid://shopify/Channel/1" },
     ]) {
-      kv.entries.set(
-        `aura-historia:backfill:${shopDomain}`,
-        JSON.stringify(makeContext(overrides as never)),
-      );
-      assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+      kv.entries.set(key, JSON.stringify(makeContext(overrides as never)));
+      assert.equal(await load(), null);
     }
   });
 });
@@ -1019,7 +1065,9 @@ function fakeCatalog(
 function newJob(): CatalogImportJob {
   return {
     shop: shopDomain,
+    generation: 1,
     bulkOperationId,
+    admitted: true,
     cursor: 0,
     failed: 0,
     withdrawn: 0,
@@ -1580,7 +1628,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
 
   for (const status of [201, 204]) {
     it(`configures provider ${status} before independently submitting bulk work`, async () => {
-      const kv = makeKv();
+      const catalog = catalogImports();
       const graphql = mock.fn(graphqlRequest());
       const fetchMock = mock.fn(async (input: RequestInfo | URL) => {
         assert.deepEqual(await asRequest(input).json(), {
@@ -1600,11 +1648,11 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         );
         assert.deepEqual(metadata, validatedMetadata);
         assert.equal(graphql.mock.callCount(), 1);
-        assert.equal(kv.put.mock.callCount(), 0);
+        assert.equal(await catalog.imports.status(), null);
         assert.equal(
           await triggerBackfill(
             graphql,
-            kv as never,
+            catalog.imports,
             shopDomain,
             listingSourceId,
             accessToken,
@@ -1618,7 +1666,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       // Metadata, the idempotent connection check, the catalog scan, the own
       // catalog's publication and export.
       assert.equal(graphql.mock.callCount(), 8);
-      const stored = await loadBackfillContext(kv as never, shopDomain);
+      assert.equal((await catalog.imports.status())?.phase, "queued");
+      assert.equal((await catalog.job())?.admitted, false);
+      const stored = await catalog.context();
       assert.ok(stored);
       assert.equal(stored.listingSourceId, listingSourceId);
       assert.equal(stored.accessToken, accessToken);
@@ -1632,7 +1682,6 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
 
   it("refuses missing or unsupported currency before provider PUT or bulk submission", async () => {
     for (const currencyCode of [undefined, "XXX"]) {
-      const kv = makeKv();
       const graphql = mock.fn(async () => ({
         data: { shop: { currencyCode } },
       }));
@@ -1654,12 +1703,10 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       });
       assert.equal(graphql.mock.callCount(), 1);
       assert.equal(fetchMock.mock.callCount(), 0);
-      assert.equal(kv.put.mock.callCount(), 0);
     }
   });
 
   it("does not submit bulk work when provider configuration fails", async () => {
-    const kv = makeKv();
     const graphql = mock.fn(graphqlRequest());
     await withFetch(
       (async () => jsonResponse({ error: "Forbidden" }, 403)) as typeof fetch,
@@ -1676,11 +1723,10 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       },
     );
     assert.equal(graphql.mock.callCount(), 1);
-    assert.equal(kv.put.mock.callCount(), 0);
   });
 
   it("submits bulk work without metadata fetch or provider PUT and does not invent locale", async () => {
-    const kv = makeKv();
+    const catalog = catalogImports();
     const graphql = mock.fn(async (query: string, variables: Variables) => {
       if (isChannelQuery(query)) return publicationResponse(query, variables);
       assert.match(query, /bulkOperationRunQuery/);
@@ -1702,7 +1748,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       assert.equal(
         await triggerBackfill(
           graphql,
-          kv as never,
+          catalog.imports,
           shopDomain,
           listingSourceId,
           accessToken,
@@ -1714,17 +1760,19 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     });
     assert.equal(fetchMock.mock.callCount(), 0);
     assert.equal(graphql.mock.callCount(), 7);
-    const stored = await loadBackfillContext(kv as never, shopDomain);
+    const stored = await catalog.context();
     assert.ok(stored);
     assert.equal(stored.currencyCode, "JPY");
     assert.equal(stored.primaryLocale, undefined);
-    const raw = kv.entries.get(`aura-historia:backfill:${shopDomain}`);
+    const raw = catalog.kv.entries.get(
+      `aura-historia:backfill:${shopDomain}:${(await catalog.job())?.generation}`,
+    );
     assert.ok(raw);
     assert.equal("primaryLocale" in JSON.parse(raw), false);
   });
 
-  it("does not store context if bulk submission fails", async () => {
-    const kv = makeKv();
+  it("records a failed bulk submission and stores no context", async () => {
+    const catalog = catalogImports();
     const graphql: GraphqlRequestFn = async (query, variables) =>
       isChannelQuery(query)
         ? publicationResponse(query, variables)
@@ -1732,7 +1780,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     assert.equal(
       await triggerBackfill(
         graphql,
-        kv as never,
+        catalog.imports,
         shopDomain,
         listingSourceId,
         accessToken,
@@ -1741,49 +1789,80 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       ),
       false,
     );
-    assert.equal(kv.put.mock.callCount(), 0);
+    assert.equal(catalog.kv.put.mock.callCount(), 0);
+    assert.equal(await catalog.job(), undefined);
+    const status = await catalog.imports.status();
+    assert.equal(status?.phase, "failed");
+    assert.equal(status?.error, "SHOPIFY_READ_FAILED");
   });
 
-  it("keeps an accepted export usable when optional progress writes fail", async () => {
-    const kv = makeKv();
-    const put = kv.put;
-    let statusWrites = 0;
-    kv.put = mock.fn(async (key, value, options) => {
-      if (key.startsWith("aura-historia:catalog-status:")) {
-        statusWrites++;
-        throw new Error("KV unavailable");
-      }
-      await put(key, value, options);
+  it("starts nothing for a retired connection", async () => {
+    const graphql = mock.fn(async () => {
+      throw new Error("No Shopify read for a retired connection");
     });
+    const status = mock.fn(async () => null);
     assert.equal(
       await triggerBackfill(
-        async (query, variables) =>
-          isChannelQuery(query)
-            ? publicationResponse(query, variables)
-            : {
-                data: {
-                  bulkOperationRunQuery: {
-                    bulkOperation: {
-                      id: bulkOperationId,
-                      status: "CREATED",
-                    },
-                  },
-                },
-              },
-        kv,
+        graphql,
+        {
+          begin: async () => null,
+          queue: mock.fn(async () => true),
+          fail: mock.fn(async () => true),
+          status,
+        },
         shopDomain,
         listingSourceId,
         accessToken,
         apiBaseUrl,
         validatedMetadata,
       ),
-      true,
+      false,
     );
-    assert.equal(statusWrites, 3);
-    assert.equal(
-      (await loadBackfillContext(kv, shopDomain))?.bulkOperationId,
-      bulkOperationId,
-    );
+    assert.equal(graphql.mock.callCount(), 0);
+  });
+
+  it("discards an export whose import was stopped or replaced while it started", async () => {
+    for (const stop of ["disconnect", "replacement"] as const) {
+      const catalog = catalogImports();
+      let newer: number | null = null;
+      assert.equal(
+        await triggerBackfill(
+          async (query, variables) => {
+            if (isChannelQuery(query))
+              return publicationResponse(query, variables);
+            if (stop === "disconnect") await catalog.importer.stop();
+            else newer = await catalog.imports.begin();
+            return {
+              data: {
+                bulkOperationRunQuery: {
+                  bulkOperation: { id: bulkOperationId, status: "CREATED" },
+                  userErrors: [],
+                },
+              },
+            };
+          },
+          catalog.imports,
+          shopDomain,
+          listingSourceId,
+          accessToken,
+          apiBaseUrl,
+          validatedMetadata,
+        ),
+        false,
+      );
+      assert.equal(await catalog.job(), undefined, stop);
+      assert.equal(catalog.kv.entries.size, 0, stop);
+      // A late completion of the discarded export admits nothing.
+      await catalog.importer.start(bulkOperationId);
+      assert.equal(catalog.storage.alarm, null, stop);
+      // The disconnect cleared the progress; the newer import keeps its own.
+      assert.deepEqual(
+        (await catalog.imports.status())?.phase,
+        stop === "disconnect" ? undefined : "queued",
+      );
+      if (newer !== null)
+        assert.equal(await catalog.storage.get("generation"), newer);
+    }
   });
 
   const refuse = (query: string, variables: Variables) =>
@@ -1844,7 +1923,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     ],
   ] as const) {
     it(`records ${name} as retryable and never exports unfiltered products`, async () => {
-      const kv = makeKv();
+      const catalog = catalogImports();
       const queries: string[] = [];
       assert.equal(
         await triggerBackfill(
@@ -1853,7 +1932,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
             if (isChannelQuery(query)) return respond(query, variables);
             throw new Error("No bulk export without a verified publication");
           },
-          kv as never,
+          catalog.imports,
           shopDomain,
           listingSourceId,
           accessToken,
@@ -1866,8 +1945,9 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       // Missing access is detected before any publication read.
       if (error === "MISSING_SCOPE")
         assert.ok(!queries.some((query) => /AuraChannelCatalog/.test(query)));
-      assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
-      const status = await loadCatalogImportStatus(kv as never, shopDomain);
+      assert.equal(await catalog.job(), undefined);
+      assert.equal(catalog.kv.entries.size, 0);
+      const status = await catalog.imports.status();
       assert.equal(status?.phase, "failed");
       assert.equal(status?.error, error);
       assert.equal(status?.total, 0);
@@ -1875,7 +1955,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
   }
 
   it("sets up a missing channel connection before exporting its selection", async () => {
-    const kv = makeKv();
+    const catalog = catalogImports();
     let channel: unknown = null;
     const writes: unknown[] = [];
     assert.equal(
@@ -1898,7 +1978,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
             },
           };
         },
-        kv as never,
+        catalog.imports,
         shopDomain,
         listingSourceId,
         accessToken,
@@ -1915,10 +1995,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         accountName: "Aura Historia",
       },
     ]);
-    assert.equal(
-      (await loadBackfillContext(kv as never, shopDomain))?.publicationId,
-      publicationId,
-    );
+    assert.equal((await catalog.context())?.publicationId, publicationId);
   });
 });
 
@@ -1991,15 +2068,22 @@ describe("resumeCatalogImport after a scope update", () => {
       error: "MISSING_SCOPE",
     },
   ) {
-    const kv = makeKv();
-    if (status) await saveCatalogImportStatus(kv as never, shopDomain, status);
-    return kv;
+    const catalog = catalogImports();
+    if (status)
+      await catalog.storage.put("status", {
+        ...status,
+        updatedAt: new Date().toISOString(),
+      });
+    return catalog;
   }
 
-  const resume = (graphql: GraphqlRequestFn, kv: ReturnType<typeof makeKv>) =>
+  const resume = (
+    graphql: GraphqlRequestFn,
+    catalog: ReturnType<typeof catalogImports>,
+  ) =>
     resumeCatalogImport(
       graphql,
-      kv as never,
+      catalog.imports,
       shopDomain,
       listingSourceId,
       accessToken,
@@ -2007,21 +2091,15 @@ describe("resumeCatalogImport after a scope update", () => {
     );
 
   it("resumes an import that stopped for missing access once it is granted", async () => {
-    const kv = await blocked();
+    const catalog = await blocked();
     const shopify = approvedShop();
     const fetchMock = mock.fn(async () => new Response(null, { status: 204 }));
     await withFetch(fetchMock as typeof fetch, async () => {
-      assert.equal(await resume(shopify.graphql, kv), true);
+      assert.equal(await resume(shopify.graphql, catalog), true);
     });
     assert.equal(fetchMock.mock.callCount(), 1);
-    assert.equal(
-      (await loadCatalogImportStatus(kv as never, shopDomain))?.phase,
-      "queued",
-    );
-    assert.equal(
-      (await loadBackfillContext(kv as never, shopDomain))?.publicationId,
-      publicationId,
-    );
+    assert.equal((await catalog.imports.status())?.phase, "queued");
+    assert.equal((await catalog.context())?.publicationId, publicationId);
   });
 
   it("leaves every other import state to the merchant", async () => {
@@ -2032,13 +2110,13 @@ describe("resumeCatalogImport after a scope update", () => {
       { phase: "failed", total: 0, failed: 0, error: "SHOPIFY_READ_FAILED" },
       { phase: "failed", total: 0, failed: 0, error: "MISSING_CHANNEL" },
     ] as const) {
-      const kv = await blocked(status);
+      const catalog = await blocked(status);
       const shopify = approvedShop();
       const fetchMock = mock.fn(
         async () => new Response(null, { status: 204 }),
       );
       await withFetch(fetchMock as typeof fetch, async () => {
-        assert.equal(await resume(shopify.graphql, kv), false);
+        assert.equal(await resume(shopify.graphql, catalog), false);
       });
       assert.deepEqual(shopify.queries, []);
       assert.equal(fetchMock.mock.callCount(), 0);
@@ -2046,17 +2124,14 @@ describe("resumeCatalogImport after a scope update", () => {
   });
 
   it("stays blocked while publication access is still missing", async () => {
-    const kv = await blocked();
+    const catalog = await blocked();
     const shopify = approvedShop(["read_products", "read_product_listings"]);
     const fetchMock = mock.fn(async () => new Response(null, { status: 204 }));
     await withFetch(fetchMock as typeof fetch, async () => {
-      assert.equal(await resume(shopify.graphql, kv), false);
+      assert.equal(await resume(shopify.graphql, catalog), false);
     });
     assert.equal(fetchMock.mock.callCount(), 0);
-    assert.equal(
-      (await loadCatalogImportStatus(kv as never, shopDomain))?.error,
-      "MISSING_SCOPE",
-    );
+    assert.equal((await catalog.imports.status())?.error, "MISSING_SCOPE");
   });
 
   it("never throws or logs the Aura token when the resume fails", async () => {
@@ -2065,14 +2140,14 @@ describe("resumeCatalogImport after a scope update", () => {
       errors.push(args.map(String).join(" "));
     });
     try {
-      const kv = await blocked();
+      const catalog = await blocked();
       const fetchMock = mock.fn(async () => {
         throw new Error(`Connection reset for ${accessToken}`);
       });
       await withFetch(fetchMock as typeof fetch, async () => {
-        assert.equal(await resume(approvedShop().graphql, kv), false);
+        assert.equal(await resume(approvedShop().graphql, catalog), false);
       });
-      assert.equal(await loadBackfillContext(kv as never, shopDomain), null);
+      assert.equal(await catalog.job(), undefined);
       assert.ok(errors.length > 0);
       assert.ok(errors.every((line) => !line.includes(accessToken)));
     } finally {

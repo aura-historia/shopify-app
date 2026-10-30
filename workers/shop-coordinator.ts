@@ -6,6 +6,7 @@ import {
 } from "@shopify/shopify-api";
 import { SessionNotFoundError } from "@shopify/shopify-app-react-router/server";
 import {
+  type CatalogImports,
   type GraphqlRequestFn,
   resumeCatalogImport,
 } from "../app/backfill.server";
@@ -280,6 +281,36 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     }
   }
 
+  private catalogImporter(shop: string) {
+    return this.env.CATALOG_IMPORTER.getByName(shop.toLowerCase());
+  }
+
+  // The shop's catalog imports for the connection bound at the time of the
+  // serialized step. Disconnect and replacement stop the importer in their own
+  // serialized step, so an import begun here precedes that stop or is refused.
+  private catalogImports(
+    shop: string,
+    begin: () => Promise<number | null>,
+  ): CatalogImports {
+    const importer = this.catalogImporter(shop);
+    return {
+      begin,
+      queue: (generation, context) => importer.queue(generation, context),
+      fail: (generation, error) => importer.fail(generation, error),
+      status: () => importer.status(),
+    };
+  }
+
+  // A catalog import starts only for the bound, running connection.
+  async beginCatalogImport(shop: string, connectionId: string) {
+    return this.serialize(async () => {
+      const state = await this.load();
+      if (state.stopped || state.binding?.credentialVersion !== connectionId)
+        return null;
+      return this.catalogImporter(shop).begin(shop);
+    });
+  }
+
   // Approved scopes can also unblock a catalog import that stopped for
   // missing access. This runs inside the serialized alarm, so its Shopify
   // reads use the provider directly; it never fails shipping.
@@ -290,7 +321,8 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     try {
       await resumeCatalogImport(
         (query, variables) => this.providerGraphql(shop, query, variables),
-        this.env.KV,
+        // The serialized alarm verified the binding of these credentials.
+        this.catalogImports(shop, () => this.catalogImporter(shop).begin(shop)),
         shop,
         credentials.listingSourceId,
         credentials.accessToken,
@@ -504,7 +536,9 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
   // record is stored, so a failed replacement leaves them running. The old
   // binding's stop, cleanup and revocation then commit with the new binding
   // in this one serialized step, and overlapping callbacks each replace
-  // whichever connection is current when they run.
+  // whichever connection is current when they run. The catalog import of
+  // the replaced connection stops first: only the new connection may begin
+  // the next one.
   async saveConnection(shop: string, values: ShopCredentialsValues) {
     return this.serialize(async () => {
       const state = await this.load();
@@ -518,13 +552,15 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
           ? await this.startCleanup(state, shop, previous, false, true)
           : undefined;
       let record: ShopCredentialsRecord;
-      // The caller revokes the new grant when this throws, so all fallible KV
+      // The caller revokes the new grant when this throws, so all fallible
       // writes precede the record. Authorizing again ends a manual pause.
       try {
+        await this.catalogImporter(shop).stop();
         await clearShopCredentialsDisconnected(this.env.KV, shop);
         record = await saveShopCredentials(this.env.KV, shop, values);
       } catch (error) {
-        // No record was replaced; the previous binding keeps its work.
+        // No record was replaced; the previous binding keeps its shipping
+        // work, and importing again restarts a stopped catalog import.
         if (cleanup)
           await this.env.KV.delete(cleanup.credentialKey).catch(() => {});
         throw error;
@@ -620,6 +656,9 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       state.status.nextReconciliationAt = undefined;
       await this.ctx.storage.setAlarm(Date.now() + 1000);
       await this.save(state);
+      // The connection's catalog import stops before the stop is
+      // acknowledged, and the stopped binding can begin no other.
+      await this.catalogImporter(shop).stop();
       const credentials = await loadShopCredentials(this.env.KV, shop);
       if (credentials)
         await this.startCleanup(state, shop, credentials, erase, true);

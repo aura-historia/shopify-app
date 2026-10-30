@@ -1,15 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, redirect, useLoaderData, useNavigation } from "react-router";
 import {
-  clearBackfillContext,
   configureShopifyListingSource,
   triggerBackfill,
 } from "../backfill.server";
 import {
   type CatalogImportError,
-  clearCatalogImportStatus,
   getChannelPublication,
-  loadCatalogImportStatus,
 } from "../catalog.server";
 import {
   buildAuraHistoriaOAuthAuthorizeUrl,
@@ -19,6 +16,8 @@ import {
   summarizeOAuthError,
 } from "../oauth.server";
 import {
+  catalogImporter,
+  catalogImports,
   offlineGraphql,
   queueShipping,
   shopCoordinator,
@@ -145,8 +144,11 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
 
   return {
     shipping,
+    // Unavailable progress never prevents access to the app.
     catalogImport: credentials
-      ? await loadCatalogImportStatus(context.cloudflare.env.KV, session.shop)
+      ? await catalogImporter(context, session.shop)
+          .status()
+          .catch(() => null)
       : null,
     publication,
     // Shopify asks for pending required access on its installation page; a
@@ -227,7 +229,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
       );
       const queued = await triggerBackfill(
         graphqlRequest,
-        context.cloudflare.env.KV,
+        catalogImports(context, session.shop, credentials.connectionId),
         session.shop,
         credentials.listingSourceId,
         credentials.accessToken,
@@ -249,9 +251,8 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     return new Response("Unknown action", { status: 400 });
   }
 
+  // Shipping and the catalog import stop before the connection is cleared.
   await shopCoordinator(context, session.shop).disconnectShipping(session.shop);
-  await clearBackfillContext(context.cloudflare.env.KV, session.shop);
-  await clearCatalogImportStatus(context.cloudflare.env.KV, session.shop);
   await clearShopCredentials(context.cloudflare.env.KV, session.shop);
   await markShopCredentialsDisconnected(
     context.cloudflare.env.KV,

@@ -5,11 +5,9 @@ import {
   transformProduct,
 } from "../app/backfill.server";
 import {
-  clearCatalogImportStatus,
   getChannelPublication,
-  loadCatalogImportStatus,
+  readCatalogImportStatus,
   resolveChannelPublication,
-  saveCatalogImportStatus,
 } from "../app/catalog.server";
 import { exactMoney } from "../app/shipping/mapper";
 import {
@@ -175,128 +173,70 @@ describe("release catalog behavior", () => {
     for (const query of queries)
       assert.doesNotMatch(query, /currentAppInstallation\s*\{\s*publication/);
   });
-  it("only exposes public catalog progress fields from stored state", async () => {
-    const status = await loadCatalogImportStatus(
-      {
-        get: async () =>
-          JSON.stringify({
-            phase: "failed",
-            total: 3,
-            failed: 1,
-            updatedAt: "2026-10-26T00:00:00Z",
-            accessToken: "must not escape",
-          }),
-      } as never,
-      shop,
-    );
+  it("only exposes public catalog progress fields from stored state", () => {
+    const status = readCatalogImportStatus({
+      phase: "failed",
+      total: 3,
+      failed: 1,
+      updatedAt: "2026-10-26T00:00:00Z",
+      accessToken: "must not escape",
+    });
     assert.equal(status?.failed, 1);
     assert.doesNotMatch(JSON.stringify(status), /accessToken|must not escape/);
-    assert.equal(
-      await loadCatalogImportStatus({ get: async () => "null" } as never, shop),
-      null,
-    );
+    for (const absent of [undefined, null, "submitted"])
+      assert.equal(readCatalogImportStatus(absent), null);
   });
-  it("keeps unavailable or inconsistent progress from breaking the app", async () => {
-    assert.equal(
-      await loadCatalogImportStatus(
-        {
-          get: async () => {
-            throw new Error("KV unavailable");
-          },
-        } as never,
-        shop,
-      ),
-      null,
-    );
+  it("keeps inconsistent progress from breaking the app", () => {
     for (const inconsistent of [
       { failed: 2 },
       { eligible: 2 },
       { error: "PRIVATE_DIAGNOSTICS" },
       { withdrawn: -1 },
+      { phase: "running" },
+      { updatedAt: "yesterday" },
     ]) {
       assert.equal(
-        await loadCatalogImportStatus(
-          {
-            get: async () =>
-              JSON.stringify({
-                phase: "failed",
-                total: 1,
-                failed: 0,
-                updatedAt: new Date().toISOString(),
-                ...inconsistent,
-              }),
-          } as never,
-          shop,
-        ),
+        readCatalogImportStatus({
+          phase: "failed",
+          total: 1,
+          failed: 0,
+          updatedAt: new Date().toISOString(),
+          ...inconsistent,
+        }),
         null,
       );
     }
   });
-  it("keeps channel-filtered import outcomes", async () => {
-    const status = await loadCatalogImportStatus(
-      {
-        get: async () =>
-          JSON.stringify({
-            phase: "failed",
-            total: 4,
-            failed: 2,
-            eligible: 1,
-            withdrawn: 3,
-            error: "INCOMPLETE_EXPORT",
-            updatedAt: new Date().toISOString(),
-          }),
-      } as never,
-      shop,
-    );
+  it("keeps channel-filtered import outcomes", () => {
+    const status = readCatalogImportStatus({
+      phase: "failed",
+      total: 4,
+      failed: 2,
+      eligible: 1,
+      withdrawn: 3,
+      error: "INCOMPLETE_EXPORT",
+      updatedAt: new Date().toISOString(),
+    });
     assert.equal(status?.eligible, 1);
     assert.equal(status?.withdrawn, 3);
     assert.equal(status?.error, "INCOMPLETE_EXPORT");
   });
-  it("retries rapid status writes after KV's per-key write window", async () => {
-    const writes: { value: string; time: number }[] = [];
-    await saveCatalogImportStatus(
-      {
-        put: async (_key: string, value: string) => {
-          writes.push({ value, time: Date.now() });
-          if (writes.length === 1)
-            throw new Error("KV put failed: 429 Too Many Requests");
-        },
-      } as never,
-      shop,
-      { phase: "submitted", total: 1, failed: 0 },
-    );
-    assert.equal(writes.length, 2);
-    assert.ok(writes[1].time - writes[0].time >= 950);
-    assert.equal(writes[1].value, writes[0].value);
-    assert.equal(JSON.parse(writes[1].value).phase, "submitted");
-  });
-  it("keeps failed progress cleanup from preventing disconnection or uninstall", async () => {
-    let attempts = 0;
-    await clearCatalogImportStatus(
-      {
-        delete: async () => {
-          attempts++;
-          throw new Error("KV unavailable");
-        },
-      } as never,
-      shop,
-    );
-    assert.equal(attempts, 3);
-  });
-  it("reports interrupted background imports as failures after their processing window", async () => {
-    const status = await loadCatalogImportStatus(
-      {
-        get: async () =>
-          JSON.stringify({
-            phase: "processing",
-            total: 0,
-            failed: 0,
-            updatedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
-          }),
-      } as never,
-      shop,
-    );
-    assert.equal(status?.phase, "failed");
+  it("reports interrupted background imports as failures after their processing window", () => {
+    for (const [phase, minutes, expected] of [
+      ["processing", 6, "failed"],
+      ["processing", 4, "processing"],
+      ["queued", 61, "failed"],
+      ["queued", 59, "queued"],
+    ] as const)
+      assert.equal(
+        readCatalogImportStatus({
+          phase,
+          total: 0,
+          failed: 0,
+          updatedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
+        })?.phase,
+        expected,
+      );
   });
   it("maps new backend currencies and zero-decimal KRW consistently for catalog and shipping", () => {
     for (const [currency, price, amount] of [

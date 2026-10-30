@@ -118,15 +118,9 @@ An import is reported complete only when Shopify reported `COMPLETED` without an
 
 ### Resumable processing
 
-`bulk_operations/finish` only admits the export to the per-shop `CatalogImporter` Durable Object (`CATALOG_IMPORTER` binding, `catalog-importer-v1` SQLite migration). The webhook returns 503 if admission fails, so Shopify retries. Duplicate deliveries do not restart an admitted import.
+`bulk_operations/finish` only admits the export to the per-shop `CatalogImporter` Durable Object (`CATALOG_IMPORTER` binding, `catalog-importer-v1` SQLite migration). The webhook returns 503 if admission fails, so Shopify retries. Duplicate deliveries do not restart an admitted import, and deliveries for an export that is no longer the current import admit nothing.
 
 Each alarm prepares the export and then submits batches for up to 20 seconds, so a slow download or parse cannot starve submission. It checkpoints after every batch of 100. An evicted or failed step resumes at the next batch, and a batch whose checkpoint was lost is resent with its original idempotency key: `shopify-backfill-<operation>-<put|delete>-<index>`. Failed Shopify reads, including an unreadable publication, are retried with exponential backoff, at most six times, before the import is reported as failed. Only a confirmed missing scope, missing or rebound channel connection, missing publication or replaced publication ends an import immediately.
-
-A newer import can be admitted while an alarm awaits network I/O. Job, alarm and cleanup writes are guarded by the bulk operation that owns the stored job, so an older alarm stops without touching the newer import.
-
-The job stores no credentials. At the start of each alarm it reads the Aura access
-token from the backfill context in KV and stops if that context is missing or
-belongs to another import. “Import catalog again” starts a new export.
 
 Current limits: every step downloads and parses the entire export in memory before
 submitting batches. The submission budget does not bound that memory use. The KV
@@ -135,10 +129,46 @@ Shopify. OAuth exchange, source configuration, export downloads and each catalog
 batch request have a 20-second timeout. Large catalogs need a separate streaming
 and checkpointing design before claiming support beyond these limits.
 
-The KV context is checked at the start of each alarm, not before each external
-write. Disconnect or replacement during an in-flight step can therefore leave
-old batches in progress. Durable job ownership checks protect local checkpoints;
-they do not atomically coordinate KV status/context writes or backend requests.
+### Import generations
+
+The `CatalogImporter` is the authority over the shop's import generations. Every
+import attempt (the initial import, “Import catalog again”, or a resume after approved
+access) begins a new generation before it reads Shopify or starts an export, which
+retires the previous one. Disconnect, uninstall and connection replacement retire the
+current generation too:
+
+- **Ordering with the connection.** An import begins through the shop coordinator,
+  only for the bound, running connection, and in the same serialized order as
+  disconnect and replacement. A disconnect or uninstall stops the importer before it
+  is acknowledged; a replacement stops it before the new connection record is stored.
+  A request that read the connection before it was disconnected or replaced cannot
+  begin an import afterwards, and overlapping OAuth callbacks leave the import with the
+  connection that ends up stored.
+- **One owner per write.** Only the current generation can queue its export, be
+  admitted by the completion webhook, schedule the alarm, submit a batch or record
+  progress. Each of these writes checks the generation in the same Durable Object
+  transaction, and the job, its progress and its alarm are retired together. Progress
+  lives in the importer, not in KV, so an older import cannot overwrite a newer
+  status.
+- **Credentials per generation.** The job stores no credentials. Each generation's
+  Aura token and export metadata are stored in their own KV context
+  (`aura-historia:backfill:<shop>:<generation>`), written before the job that uses them
+  and released when the generation finishes or is retired. Releasing an older context
+  never touches a newer one. A context whose generation was retired while it was being
+  stored is released at once.
+- **Requests in flight.** Every batch, and every resend of an unconfirmed batch, is
+  preceded by a successful check of the generation. Once a stop or replacement is
+  acknowledged, nothing more is sent for the old generation. A request that was already
+  in flight completes or times out, and its result is discarded. A batch Aura admitted
+  stays admitted; it is not withdrawn. Batch idempotency keys are unchanged.
+- **No revival.** Delayed or duplicate completion webhooks, alarm retries and a new
+  instance after eviction find no job of a retired generation and change nothing. A
+  missing context of the current generation is retried like a failed read and then
+  reported as failed.
+- **Failed attempts.** An attempt that cannot export (missing access, channel or
+  publication, or a failed submission) records its failure as the current status.
+  Because it already retired the previous generation, an older import that was still
+  running stops as well; importing again starts over.
 
 ### Ordering with live listing events
 
@@ -561,7 +591,7 @@ The GitHub Actions workflow requires these repository secrets:
 
 See [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) for the release definition. A manual workflow dispatch runs the same checks and deploys only the Worker. A semver tag also releases the production Shopify app configuration. Production URL rewriting by Shopify development commands is disabled.
 
-The Worker keeps OAuth/authenticated responses private and uncached, uses `Referrer-Policy: no-referrer`, and redacts query strings from Cloudflare invocation logs. Catalog progress stores only phase/counts for seven days and is cleared on disconnect/uninstall; access tokens remain only in the separate existing credential stores. Channel counts come from the current Shopify channel connection and retain the API's lower-bound indicator. The bulk editor link targets that connection's publication. Import acceptance is distinct from search visibility.
+The Worker keeps OAuth/authenticated responses private and uncached, uses `Referrer-Policy: no-referrer`, and redacts query strings from Cloudflare invocation logs. Catalog progress stores only phase/counts in the shop's catalog importer, is replaced by each new import and is cleared on disconnect, uninstall and connection replacement; access tokens remain only in the separate existing credential stores and in each import's one-hour KV context. Channel counts come from the current Shopify channel connection and retain the API's lower-bound indicator. The bulk editor link targets that connection's publication. Import acceptance is distinct from search visibility.
 
 ## Production OAuth
 
