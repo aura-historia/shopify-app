@@ -5,8 +5,10 @@ import {
   CATALOG_EXPORT_WINDOW_MS,
   CATALOG_IMPORT_WINDOW_MS,
   type CatalogImportJob,
+  cancelBulkOperation,
   catalogProgress,
   clearBackfillContext,
+  EXPORT_PLAN_VERSION,
   type GraphqlRequestFn,
   loadBackfillContext,
   readBulkOperationState,
@@ -28,6 +30,9 @@ export const CATALOG_MAX_ATTEMPTS = 6;
 // While Shopify exports, the importer checks the export this often. It admits
 // an export whose completion webhook was lost and keeps the queued status
 // current, well within the hour after which a silent status reads as failed.
+// A completion is admitted until one check after the export window, so a
+// webhook delayed past the last check is not lost; the context's TTL leaves
+// an hour for this.
 export const CATALOG_EXPORT_POLL_MS = 5 * 60_000;
 
 type Progress = Omit<CatalogImportStatus, "updatedAt">;
@@ -35,12 +40,11 @@ const stamp = (status: Progress): CatalogImportStatus => ({
   ...status,
   updatedAt: new Date().toISOString(),
 });
-// Jobs from before import generations or streamed exports are never resumed:
-// their batches were planned differently.
+// Jobs from before import generations, or planned under other segment rules,
+// are never resumed: a batch could be resent with other content under the
+// same idempotency key.
 const resumable = (job: CatalogImportJob) =>
-  typeof job.generation === "number" &&
-  typeof job.queuedAt === "number" &&
-  typeof job.offset === "number";
+  typeof job.generation === "number" && job.plan === EXPORT_PLAN_VERSION;
 
 // Per-shop catalog import driven by alarms instead of a request's waitUntil,
 // so large catalogs are bounded per step and resume after interruptions.
@@ -141,6 +145,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         shop,
         generation,
         bulkOperationId: context.bulkOperationId,
+        plan: EXPORT_PLAN_VERSION,
         queuedAt: Date.now(),
         admitted: false,
         offset: 0,
@@ -192,7 +197,10 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
           await transaction.setAlarm(Date.now());
         return null;
       }
-      if (Date.now() >= job.queuedAt + CATALOG_EXPORT_WINDOW_MS) {
+      if (
+        Date.now() >=
+        job.queuedAt + CATALOG_EXPORT_WINDOW_MS + CATALOG_EXPORT_POLL_MS
+      ) {
         await this.end(transaction, "EXPORT_EXPIRED");
         return job;
       }
@@ -266,26 +274,21 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
 
   // Shopify is still exporting. A finished or failed export is handled as
   // its webhook would handle it, so a lost delivery delays the import by one
-  // check at most. An export still running when its window closes ends the
-  // import; Shopify's own limit is ten days.
+  // check at most. Only a check that reads the export as running keeps the
+  // queued status current; failing checks let it read as failed after an
+  // hour while checking continues. An export that has not completed by the
+  // last check, at the end of its window, ends the import and is cancelled.
   private async awaitExport(job: CatalogImportJob) {
     const deadline = job.queuedAt + CATALOG_EXPORT_WINDOW_MS;
-    let state: BulkOperationState = "running";
-    if (Date.now() < deadline) {
-      try {
-        state = await readBulkOperationState(
-          this.shopify(job.shop),
-          job.bulkOperationId,
-        );
-      } catch (error) {
-        console.warn(
-          `Catalog export of ${job.shop} could not be checked:`,
-          (error instanceof Error ? error.message : String(error)).slice(
-            0,
-            180,
-          ),
-        );
-      }
+    const shopify = this.shopify(job.shop);
+    let state: BulkOperationState | null = null;
+    try {
+      state = await readBulkOperationState(shopify, job.bulkOperationId);
+    } catch (error) {
+      console.warn(
+        `Catalog export of ${job.shop} could not be checked:`,
+        (error instanceof Error ? error.message : String(error)).slice(0, 180),
+      );
     }
     if (state === "completed") return this.start(job.bulkOperationId);
     if (state === "failed") return this.exportFailed(job.bulkOperationId);
@@ -297,16 +300,21 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         await this.end(transaction, "EXPORT_EXPIRED");
         return true;
       }
-      await transaction.put(
-        "status",
-        stamp({ phase: "queued", total: 0, failed: 0 }),
-      );
+      if (state === "running")
+        await transaction.put(
+          "status",
+          stamp({ phase: "queued", total: 0, failed: 0 }),
+        );
       await transaction.setAlarm(
         Math.min(Date.now() + CATALOG_EXPORT_POLL_MS, deadline),
       );
       return false;
     });
-    if (expired) await this.release(job.shop, job.generation);
+    if (!expired) return;
+    await this.release(job.shop, job.generation);
+    await cancelBulkOperation(shopify, job.bulkOperationId).catch(() =>
+      console.warn(`Expired catalog export of ${job.shop} was not cancelled`),
+    );
   }
 
   async alarm() {
@@ -333,6 +341,7 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
         error: "IMPORT_EXPIRED",
       });
     const graphql = this.shopify(job.shop);
+    const { offset, part } = job;
     let context: BackfillContext | null = null;
     let step: Awaited<ReturnType<typeof runCatalogImportStep>>;
     try {
@@ -363,7 +372,9 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     } catch (error) {
       // The newer import or the stop owns the job, alarm, status and context.
       if (error instanceof SupersededImportError) return;
-      job.attempts++;
+      // A step that moved on before it failed starts its retries afresh.
+      job.attempts =
+        job.offset !== offset || job.part !== part ? 1 : job.attempts + 1;
       const message = error instanceof Error ? error.message : String(error);
       console.error(
         `Catalog import step ${job.attempts} failed for ${job.shop}:`,

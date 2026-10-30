@@ -46,10 +46,15 @@ export const MAX_EXPORT_LINE_BYTES = 64 * 1024;
 // A segment holds at most 100 products and ends at the first product after
 // 1 MiB of retained product and image lines, counted in UTF-8 bytes. A single
 // product may retain at most 1 MiB, so a step holds at most 2 MiB of export
-// lines whatever the catalog size. Variant lines after the first are skipped.
+// lines whatever the catalog size. Variant lines are read for the first
+// price only and never count towards a segment.
 export const SEGMENT_BYTES = 1024 ** 2;
-// Longest wait for the export's response or its next chunk.
-const EXPORT_READ_TIMEOUT_MS = 20_000;
+// Bump whenever segment boundaries or batch contents change: an import
+// planned differently is never resumed under the same idempotency keys.
+export const EXPORT_PLAN_VERSION = 1;
+// Longest wait for the export's response or its next chunk. A step reads for
+// at most its budget and two of these, however slowly the export arrives.
+export const EXPORT_READ_TIMEOUT_MS = 20_000;
 
 // Shopify must finish the export within a day of its submission, and the
 // admitted import must finish within a day of that. The credential-bearing
@@ -264,6 +269,8 @@ export interface CatalogImportJob {
   // The import generation that owns this job, its context, status and alarm.
   generation: number;
   bulkOperationId: string;
+  // EXPORT_PLAN_VERSION of the segments and batches this job sends.
+  plan: number;
   // When the export was submitted (epoch milliseconds).
   queuedAt: number;
   // Shopify reported the export complete and the importer admitted it.
@@ -583,6 +590,7 @@ export class ExportLines {
   private skip: number;
   private readonly size: number | null;
   private readonly limit: number;
+  private readonly deadline: number;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
 
   constructor(
@@ -592,15 +600,29 @@ export class ExportLines {
     {
       // Leading bytes to drop when the server ignored the requested range.
       skip = 0,
-      // The export's size; a download that ends elsewhere was cut off.
+      // The export's size. A download that ends elsewhere was cut off, and
+      // one of unknown size is never verified complete.
       size = null,
       limit = MAX_EXPORT_BYTES,
-    }: { skip?: number; size?: number | null; limit?: number } = {},
+      // When reading must have finished (epoch milliseconds).
+      deadline = Number.POSITIVE_INFINITY,
+    }: {
+      skip?: number;
+      size?: number | null;
+      limit?: number;
+      deadline?: number;
+    } = {},
   ) {
     this.received = position;
     this.skip = skip;
     this.size = size;
     this.limit = limit;
+    this.deadline = deadline;
+  }
+
+  // The whole export of a known size was read.
+  get verified() {
+    return this.ended && this.size !== null;
   }
 
   // The next line, or null at the end of the export.
@@ -647,20 +669,9 @@ export class ExportLines {
   }
 
   private async fill() {
-    if (!this.reader) {
-      this.ended = true;
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const { done, value } = await Promise.race([
-      this.reader.read(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Shopify catalog export download stalled")),
-          EXPORT_READ_TIMEOUT_MS,
-        );
-      }),
-    ]).finally(() => clearTimeout(timer));
+    const { done, value } = this.reader
+      ? await this.read(this.reader)
+      : ({ done: true, value: undefined } as const);
     if (done) {
       // A connection that closed early is transient, never a short export.
       if (this.size !== null && this.received !== this.size)
@@ -677,6 +688,22 @@ export class ExportLines {
       throw new ExportCapacityError(
         `Shopify catalog export exceeds ${this.limit} bytes`,
       );
+  }
+
+  private async read(reader: ReadableStreamDefaultReader<Uint8Array>) {
+    const wait = Math.min(EXPORT_READ_TIMEOUT_MS, this.deadline - Date.now());
+    if (wait <= 0)
+      throw new Error("Shopify catalog export download is too slow");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Shopify catalog export download stalled")),
+          wait,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
   }
 }
 
@@ -756,6 +783,11 @@ export class ExportSegments {
     return products.length > 0
       ? { start, end: this.lines.position, products }
       : null;
+  }
+
+  // The whole export of a known size was read.
+  get verified() {
+    return this.lines.verified;
   }
 
   close() {
@@ -1016,19 +1048,54 @@ export async function fetchBulkOperationResult(
   };
 }
 
-// Where Shopify's export stands while the import waits for it. Anything but
-// a finished or ended operation, including a missing one, is still running
-// until the export window closes.
+// Where Shopify's export stands while the import waits for it. A missing
+// operation can never complete.
 export async function readBulkOperationState(
   graphqlRequest: GraphqlRequestFn,
   bulkOperationId: string,
 ): Promise<BulkOperationState> {
-  const status = (await readBulkOperation(graphqlRequest, bulkOperationId))
-    ?.status;
-  if (status === "COMPLETED") return "completed";
-  if (status === "FAILED" || status === "CANCELED" || status === "EXPIRED")
+  const node = await readBulkOperation(graphqlRequest, bulkOperationId);
+  if (node?.status === "COMPLETED") return "completed";
+  if (
+    !node ||
+    node.status === "FAILED" ||
+    node.status === "CANCELED" ||
+    node.status === "EXPIRED"
+  )
     return "failed";
   return "running";
+}
+
+const CANCEL_BULK_OPERATION_MUTATION = `
+mutation BulkOperationCancel($id: ID!) {
+  bulkOperationCancel(id: $id) {
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
+// Stops an export the import gave up on, so it does not hold Shopify's bulk
+// query capacity for up to its ten days.
+export async function cancelBulkOperation(
+  graphqlRequest: GraphqlRequestFn,
+  bulkOperationId: string,
+): Promise<void> {
+  const response = await graphqlRequest(CANCEL_BULK_OPERATION_MUTATION, {
+    id: bulkOperationId,
+  });
+  const errors =
+    formatGraphqlErrors(response.errors) ??
+    formatGraphqlErrors(
+      (
+        response.data?.bulkOperationCancel as
+          | { userErrors?: Array<{ message: string }> }
+          | undefined
+      )?.userErrors?.map(({ message }) => message),
+    );
+  if (errors) throw new Error(`Bulk operation cancellation failed: ${errors}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,43 +1256,60 @@ export async function putShopifyIngestionConfiguration(
 
 // Opens the export at a segment boundary. Shopify's signed result URL serves
 // byte ranges, so a resumed step downloads only what it has not consumed. A
-// server that ignores the range is skipped forward instead.
+// server that ignores the range is skipped forward instead. The export's
+// size is Shopify's `fileSize`, or else what the response reports for an
+// unencoded body.
 export async function openBackfillExport(
   result: BulkOperationResult,
   offset: number,
+  deadline = Number.POSITIVE_INFINITY,
 ): Promise<ExportSegments> {
-  const empty = () => new ExportSegments(new ExportLines(null, offset));
-  if (!result.url || (result.fileSize !== null && offset >= result.fileSize))
-    return empty();
+  const segments = (
+    reader: ReadableStreamDefaultReader<Uint8Array> | null,
+    size: number | null,
+    skip = 0,
+  ) =>
+    new ExportSegments(
+      new ExportLines(reader, offset, { size, skip, deadline }),
+    );
+  // An export without a URL has no objects.
+  if (!result.url) return segments(null, 0);
+  if (result.fileSize !== null && offset >= result.fileSize)
+    return segments(null, result.fileSize);
   // The timeout covers the response only; each chunk has its own, so a step
   // can stream for longer than one timeout.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EXPORT_READ_TIMEOUT_MS);
   const response = await fetch(result.url, {
-    headers: offset > 0 ? { Range: `bytes=${offset}-` } : {},
+    headers: { Range: `bytes=${offset}-` },
     signal: controller.signal,
   }).finally(() => clearTimeout(timer));
-  if (offset > 0 && response.status === 416) {
+  const range = /^bytes (\d+-\d+|\*)\/(\d+)$/.exec(
+    response.headers.get("Content-Range") ?? "",
+  );
+  const size =
+    result.fileSize ??
+    (response.status === 200
+      ? response.headers.has("Content-Encoding")
+        ? null
+        : parseCount(response.headers.get("Content-Length"))
+      : parseCount(range?.[2]));
+  if (response.status === 416) {
     await response.body?.cancel();
-    return empty();
+    return segments(null, size);
   }
   if (!response.ok) {
     await response.body?.cancel();
     throw new Error(`Failed to download JSONL: ${response.status}`);
   }
-  const ranged = response.status === 206;
-  if (
-    ranged &&
-    !response.headers.get("Content-Range")?.startsWith(`bytes ${offset}-`)
-  ) {
+  if (response.status === 206 && !range?.[1].startsWith(`${offset}-`)) {
     await response.body?.cancel();
     throw new Error("Shopify catalog export returned another byte range");
   }
-  return new ExportSegments(
-    new ExportLines(response.body?.getReader() ?? null, offset, {
-      skip: ranged ? 0 : offset,
-      size: result.fileSize,
-    }),
+  return segments(
+    response.body?.getReader() ?? null,
+    size,
+    response.status === 206 ? 0 : offset,
   );
 }
 
@@ -1376,7 +1460,11 @@ export async function runCatalogImportStep(
     await checkpoint(job);
   }
 
-  const segments = await openBackfillExport(result, job.offset);
+  const segments = await openBackfillExport(
+    result,
+    job.offset,
+    Date.now() + budgetMs + 2 * EXPORT_READ_TIMEOUT_MS,
+  );
   // The budget starts once the export responds, and every step imports at
   // least one segment, so a slow download can never starve submission.
   const deadline = Date.now() + budgetMs;
@@ -1384,11 +1472,13 @@ export async function runCatalogImportStep(
     for (let first = true; first || Date.now() < deadline; first = false) {
       const segment = await segments.next();
       if (!segment) {
-        // Only an export whose product rows match Shopify's root count and
-        // whose memberships were all explicit is complete. Unknown membership
-        // or a short export is never a complete catalog.
+        // Only an export read to its known size, whose product rows match
+        // Shopify's root count and whose memberships were all explicit is
+        // complete. Unknown membership or a short export never is.
         const complete =
-          result.rootObjectCount === job.total && job.unknown === 0;
+          segments.verified &&
+          result.rootObjectCount === job.total &&
+          job.unknown === 0;
         const progress = catalogProgress(job);
         return complete
           ? {
@@ -1400,7 +1490,11 @@ export async function runCatalogImportStep(
             }
           : failed("INCOMPLETE_EXPORT");
       }
-      if (job.total + segment.products.length > MAX_EXPORT_PRODUCTS)
+      // A resumed segment was counted with its first batch.
+      if (
+        job.part === 0 &&
+        job.total + segment.products.length > MAX_EXPORT_PRODUCTS
+      )
         throw new ExportCapacityError(
           `Shopify catalog export exceeds ${MAX_EXPORT_PRODUCTS} products`,
         );

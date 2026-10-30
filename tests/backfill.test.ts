@@ -11,10 +11,13 @@ import {
   CATALOG_EXPORT_WINDOW_MS,
   CATALOG_IMPORT_WINDOW_MS,
   type CatalogImportJob,
+  cancelBulkOperation,
   classifyShopifyBackfillAction,
   clearBackfillContext,
   configureShopifyListingSource,
   createBackfillIdempotencyKey,
+  EXPORT_PLAN_VERSION,
+  EXPORT_READ_TIMEOUT_MS,
   ExportCapacityError,
   ExportLines,
   type ExportSegment,
@@ -31,6 +34,7 @@ import {
   mapShopifyCurrencyCode,
   mapShopifyLocaleToLanguage,
   normalizeShopifyDomain,
+  openBackfillExport,
   planSegment,
   putShopifyIngestionConfiguration,
   readBulkOperationState,
@@ -710,14 +714,38 @@ describe("Shopify GraphQL", () => {
     );
   });
 
+  it("cancels an export and reports a refusal", async () => {
+    const calls: Variables[] = [];
+    await cancelBulkOperation(async (query, variables) => {
+      assert.match(query, /bulkOperationCancel\(id: \$id\)/);
+      calls.push(variables);
+      return { data: { bulkOperationCancel: { userErrors: [] } } };
+    }, bulkOperationId);
+    assert.deepEqual(calls, [{ id: bulkOperationId }]);
+    await assert.rejects(
+      cancelBulkOperation(
+        async () => ({
+          data: {
+            bulkOperationCancel: {
+              userErrors: [{ field: null, message: "Already completed" }],
+            },
+          },
+        }),
+        bulkOperationId,
+      ),
+      /Already completed/,
+    );
+  });
+
   it("reads where a pending export stands", async () => {
     const state = (node: unknown) =>
       readBulkOperationState(async () => ({ data: { node } }), bulkOperationId);
     assert.equal(await state({ status: "COMPLETED", url: null }), "completed");
     for (const status of ["FAILED", "CANCELED", "EXPIRED"])
       assert.equal(await state({ status }), "failed");
-    // A running, canceling or missing operation keeps the import waiting.
-    for (const node of [{ status: "RUNNING" }, { status: "CANCELING" }, null])
+    // A missing operation can never complete.
+    assert.equal(await state(null), "failed");
+    for (const node of [{ status: "RUNNING" }, { status: "CANCELING" }])
       assert.equal(await state(node), "running");
     await assert.rejects(
       readBulkOperationState(
@@ -1154,7 +1182,7 @@ function stepGraphql({
 // byte ranges in `chunk`-byte chunks as they are read, unless `ranges` is off,
 // and `cut` ends a download with a connection error after that many bytes.
 function fakeCatalog(
-  products: BulkJsonlProduct[] | string,
+  products: BulkJsonlProduct[] | string | Uint8Array,
   respond?: (body: Array<{ sourceListingId: string }>) => Response,
   {
     ranges = true,
@@ -1169,15 +1197,19 @@ function fakeCatalog(
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = asRequest(input, init);
     if (request.url === resultUrl) {
-      const bytes = bytesOf(
-        typeof products === "string" ? products : jsonl(products),
-      );
+      const bytes =
+        products instanceof Uint8Array
+          ? products
+          : bytesOf(typeof products === "string" ? products : jsonl(products));
       const range = ranges
         ? /^bytes=(\d+)-$/.exec(request.headers.get("Range") ?? "")
         : null;
       const start = range ? Number(range[1]) : 0;
       if (start >= bytes.length && range)
-        return new Response(null, { status: 416 });
+        return new Response(null, {
+          status: 416,
+          headers: { "Content-Range": `bytes */${bytes.length}` },
+        });
       const download = { start, served: 0 };
       const limit = cut(downloads.length);
       downloads.push(download);
@@ -1224,6 +1256,7 @@ function newJob(): CatalogImportJob {
     shop: shopDomain,
     generation: 1,
     bulkOperationId,
+    plan: EXPORT_PLAN_VERSION,
     queuedAt: Date.now(),
     admitted: true,
     admittedAt: Date.now(),
@@ -2194,10 +2227,178 @@ describe("streamed catalog exports", () => {
     }
   });
 
-  it("retries a download cut off before Shopify's file size, sending nothing of it", async () => {
+  it("resumes a segment after its first batch without recounting or resending it", async () => {
     const content = generatedExport(150);
-    const size = bytesOf(content).length;
-    const catalog = fakeCatalog(content.slice(0, -50));
+    const catalog = fakeCatalog(content);
+    const graphql = stepGraphql({ rootObjectCount: "150" });
+    const persisted: CatalogImportJob[] = [];
+    let evicted = false;
+    await withFetch(catalog.fetcher, async () => {
+      await assert.rejects(
+        runCatalogImportStep(
+          newJob(),
+          makeContext(),
+          graphql,
+          Number.POSITIVE_INFINITY,
+          async (next) => {
+            // The withdrawal batch is sent, but its checkpoint is lost.
+            if (next.cursor === 1 && !evicted) {
+              evicted = true;
+              throw new Error("evicted");
+            }
+            persisted.push(structuredClone(next));
+          },
+        ),
+        /evicted/,
+      );
+      const resumed = structuredClone(persisted.at(-1) as CatalogImportJob);
+      assert.equal(resumed.part, 1);
+      assert.equal(resumed.total, 100);
+      const { status } = await runCatalogImportStep(
+        resumed,
+        makeContext(),
+        graphql,
+        Number.POSITIVE_INFINITY,
+        async () => {},
+      );
+      const withdrawn = Array.from({ length: 150 }, (_, i) => i + 1).filter(
+        isWithdrawn,
+      ).length;
+      assert.deepEqual(status, {
+        phase: "submitted",
+        total: 150,
+        eligible: 150 - withdrawn,
+        withdrawn,
+        failed: 0,
+      });
+    });
+    assert.deepEqual(
+      catalog.writes.map(({ key }) => key),
+      [
+        "shopify-backfill-789-put-0",
+        "shopify-backfill-789-delete-0",
+        "shopify-backfill-789-delete-0",
+        "shopify-backfill-789-put-1",
+        "shopify-backfill-789-delete-1",
+      ],
+    );
+    assert.deepEqual(catalog.writes[1].ids, catalog.writes[2].ids);
+  });
+
+  it("caps the products it streams, counting a resumed segment once", async () => {
+    const content = generatedExport(100);
+    const graphql = stepGraphql({
+      rootObjectCount: String(MAX_EXPORT_PRODUCTS),
+    });
+    // The last segment of a catalog at the limit, after its upserts.
+    const atLimit = fakeCatalog(content);
+    await withFetch(atLimit.fetcher, async () => {
+      const { status } = await runCatalogImportStep(
+        { ...newJob(), part: 1, total: MAX_EXPORT_PRODUCTS },
+        makeContext(),
+        graphql,
+        Number.POSITIVE_INFINITY,
+        async () => {},
+      );
+      assert.equal(status.phase, "submitted");
+    });
+    assert.deepEqual(
+      atLimit.writes.map(({ key }) => key),
+      ["shopify-backfill-789-delete-0"],
+    );
+    // Shopify reported fewer products than the export holds.
+    const beyond = fakeCatalog(content);
+    const error = mock.method(console, "error", () => {});
+    try {
+      await withFetch(beyond.fetcher, async () => {
+        const { status } = await runCatalogImportStep(
+          { ...newJob(), total: MAX_EXPORT_PRODUCTS - 50 },
+          makeContext(),
+          graphql,
+          Number.POSITIVE_INFINITY,
+          async () => {},
+        );
+        assert.equal(status.error, "EXPORT_TOO_LARGE");
+      });
+    } finally {
+      error.mock.restore();
+    }
+    assert.deepEqual(beyond.writes, []);
+  });
+
+  it("never reports an export of unknown size complete", async () => {
+    const products = [makeProduct()];
+    // No file size from Shopify, and a response that reports none.
+    const catalog = fakeCatalog(products, undefined, { ranges: false });
+    await withFetch(catalog.fetcher, async () => {
+      const { status } = await runToCompletion(products);
+      assert.equal(status.phase, "failed");
+      assert.equal(status.error, "INCOMPLETE_EXPORT");
+      assert.equal(status.eligible, 1);
+    });
+    assert.equal(catalog.writes.length, 1);
+  });
+
+  it("times out a stalled or too slow download and a late response", async () => {
+    const pending = () =>
+      new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}) });
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const stalled = new ExportLines(pending().getReader(), 0).next();
+      mock.timers.tick(EXPORT_READ_TIMEOUT_MS);
+      await assert.rejects(stalled, /stalled/);
+      // The response must arrive within the timeout as well.
+      await withFetch(
+        (async (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          )) as typeof fetch,
+        async () => {
+          const response = openBackfillExport(
+            { url: resultUrl, rootObjectCount: 1, fileSize: 10 },
+            0,
+          );
+          mock.timers.tick(EXPORT_READ_TIMEOUT_MS);
+          await assert.rejects(response, /aborted/);
+        },
+      );
+    } finally {
+      mock.timers.reset();
+    }
+    // A step stops reading at its deadline, however steadily chunks arrive.
+    await assert.rejects(
+      new ExportLines(pending().getReader(), 0, {
+        deadline: Date.now() - 1,
+      }).next(),
+      /too slow/,
+    );
+  });
+
+  it("rejects a response for another byte range", async () => {
+    await withFetch(
+      (async () =>
+        new Response("{}", {
+          status: 206,
+          headers: { "Content-Range": "bytes 10-99/100" },
+        })) as typeof fetch,
+      async () => {
+        await assert.rejects(
+          openBackfillExport(
+            { url: resultUrl, rootObjectCount: 1, fileSize: 100 },
+            20,
+          ),
+          /another byte range/,
+        );
+      },
+    );
+  });
+
+  it("retries a download cut off before Shopify's file size, sending nothing of it", async () => {
+    const content = bytesOf(generatedExport(150));
+    const size = content.length;
+    const catalog = fakeCatalog(content.subarray(0, size - 50));
     await withFetch(catalog.fetcher, async () => {
       await assert.rejects(
         runCatalogImportStep(

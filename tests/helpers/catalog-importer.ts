@@ -57,14 +57,20 @@ export class ImporterStorage {
   }
 }
 
+// KV whose keys expire after their TTL on the (possibly mocked) clock.
 export function memoryKv() {
   const entries = new Map<string, string>();
   // The expiration TTL of each stored key.
   const ttls = new Map<string, number | undefined>();
+  const expiries = new Map<string, number>();
   return {
     entries,
     ttls,
-    get: async (key: string) => entries.get(key) ?? null,
+    get: async (key: string) => {
+      if (Date.now() >= (expiries.get(key) ?? Number.POSITIVE_INFINITY))
+        entries.delete(key);
+      return entries.get(key) ?? null;
+    },
     put: async (
       key: string,
       value: string,
@@ -72,6 +78,9 @@ export function memoryKv() {
     ) => {
       entries.set(key, value);
       ttls.set(key, options?.expirationTtl);
+      if (options?.expirationTtl)
+        expiries.set(key, Date.now() + options.expirationTtl * 1000);
+      else expiries.delete(key);
     },
     delete: async (key: string) => {
       entries.delete(key);

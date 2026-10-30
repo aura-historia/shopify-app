@@ -221,7 +221,7 @@ describe("Aura channel selection in the embedded home", () => {
   });
   it("explains capacity and time limits as actionable failures", () => {
     for (const [error, message] of [
-      ["EXPORT_TOO_LARGE", /up to 100,000 products and 1 GB.*Contact support/],
+      ["EXPORT_TOO_LARGE", /up to 100,000 products and 1 GiB.*Contact support/],
       ["EXPORT_EXPIRED", /did not finish the catalog export within 24 hours/],
       [
         "IMPORT_EXPIRED",
