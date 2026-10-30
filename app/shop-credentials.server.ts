@@ -10,7 +10,7 @@ export interface ShopCredentialsValues {
 
 export interface ShopCredentialsRecord extends ShopCredentialsValues {
   updatedAt: string;
-  connectionId?: string;
+  connectionId: string;
 }
 
 export interface PublicShopCredentialsRecord {
@@ -26,7 +26,6 @@ const SHOP_CREDENTIALS_KEY_PREFIX = "aura-historia:shop-credentials:";
 const SHOP_CREDENTIALS_DISCONNECTED_KEY_PREFIX =
   "aura-historia:shop-credentials-disconnected:";
 const LISTING_SOURCE_ID_PATTERN = /^ls_[0-7][0-9a-hjkmnp-tv-z]{25}$/;
-const ACCESS_TOKEN_PATTERN = /^aurahistoria(?:_[A-Za-z0-9-]+){2,}$/;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object");
@@ -41,8 +40,8 @@ function isShopCredentialsRecord(
       isValidListingSourceId(value.listingSourceId) &&
       typeof value.accessToken === "string" &&
       typeof value.updatedAt === "string" &&
-      (value.connectionId === undefined ||
-        typeof value.connectionId === "string") &&
+      typeof value.connectionId === "string" &&
+      value.connectionId.length > 0 &&
       (value.shopifyStoreName === undefined ||
         typeof value.shopifyStoreName === "string") &&
       (value.tokenType === undefined || typeof value.tokenType === "string") &&
@@ -60,16 +59,6 @@ export function getShopCredentialsDisconnectedStorageKey(shop: string) {
 
 export function isValidListingSourceId(value: string) {
   return LISTING_SOURCE_ID_PATTERN.test(value);
-}
-
-export function isValidAuraHistoriaAccessToken(value: string) {
-  return ACCESS_TOKEN_PATTERN.test(value);
-}
-
-// Identifies one stored connection. Records older than connection IDs use
-// their save time.
-export function credentialVersion(record: ShopCredentialsRecord) {
-  return record.connectionId ?? record.updatedAt;
 }
 
 export function toPublicShopCredentialsRecord(

@@ -134,6 +134,60 @@ describe("Aura Historia OAuth callback error boundary", () => {
     mock.restoreAll();
   });
 
+  it("does not reflect provider error descriptions into the page", async () => {
+    const url = new URL("https://partner-connect.test/oauth/callback");
+    url.searchParams.set("error", "server_error");
+    url.searchParams.set(
+      "error_description",
+      `Private diagnostic: ${clientSecret}`,
+    );
+    const result = await loader({
+      request: new Request(url),
+      context: { cloudflare: { env: makeEnv() } },
+      params: {},
+    } as never);
+    assert.ok(!(result instanceof Response));
+    assert.equal(
+      result.message,
+      "Aura Historia authorization failed. Reopen the Shopify app to retry.",
+    );
+    assertNoCredentials([JSON.stringify(result), ...logged], [clientSecret]);
+  });
+
+  it("uses the original callback URI when configuration changes during consent", async () => {
+    const env = makeEnv();
+    const started = await buildAuraHistoriaOAuthAuthorizeUrl(
+      env.KV as never,
+      env as never,
+      shopDomain,
+    );
+    assert.ok(started.isReady);
+    env.SHOPIFY_APP_URL = "https://new-app.test";
+    const fetcher = mock.method(
+      globalThis,
+      "fetch",
+      async (_input: unknown, init?: RequestInit) => {
+        assert.equal(
+          new URLSearchParams(init?.body as URLSearchParams).get(
+            "redirect_uri",
+          ),
+          "https://partner-connect.test/oauth/callback",
+        );
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      },
+    );
+    const url = new URL("https://partner-connect.test/oauth/callback");
+    url.searchParams.set("code", code);
+    url.searchParams.set("state", started.state);
+    url.searchParams.set("listing_source_id", listingSourceId);
+    await loader({
+      request: new Request(url),
+      context: { cloudflare: { env } },
+      params: {},
+    } as never);
+    assert.equal(fetcher.mock.callCount(), 1);
+  });
+
   it("keeps token-exchange problem details out of the Admin redirect and logs", async () => {
     const fetchMock = mock.method(
       globalThis,

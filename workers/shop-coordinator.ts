@@ -44,7 +44,6 @@ import {
 } from "../app/shipping/webhooks.server";
 import {
   clearShopCredentialsDisconnected,
-  credentialVersion,
   isShopCredentialsDisconnected,
   loadShopCredentials,
   type ShopCredentialsRecord,
@@ -334,7 +333,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       )
         return false;
       const state = await this.load();
-      if (retired(state, credentialVersion(credentials))) return false;
+      if (retired(state, credentials.connectionId)) return false;
       if (
         state.job?.publication?.retainUntil &&
         state.job.publication.retainUntil <= Date.now()
@@ -359,13 +358,13 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     state.binding = {
       shop,
       listingSourceId: credentials.listingSourceId,
-      credentialVersion: credentialVersion(credentials),
+      credentialVersion: credentials.connectionId,
     };
     state.reconcileAt ??= Date.now() + RECONCILIATION_INTERVAL;
     if (
       state.job &&
       state.job.listingSourceId === credentials.listingSourceId &&
-      state.job.credentialVersion === credentialVersion(credentials)
+      state.job.credentialVersion === credentials.connectionId
     ) {
       state.job.refreshRequested = true;
       if (resume) {
@@ -393,7 +392,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       state.job = {
         shop,
         listingSourceId: credentials.listingSourceId,
-        credentialVersion: credentialVersion(credentials),
+        credentialVersion: credentials.connectionId,
         sequence: state.sequence,
         runId: crypto.randomUUID(),
         acquisition: beginAcquisition(new Date().toISOString()),
@@ -445,7 +444,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         admission?.stopped ||
         binding.shop !== shop ||
         credentials.listingSourceId !== binding.listingSourceId ||
-        credentialVersion(credentials) !== binding.credentialVersion
+        credentials.connectionId !== binding.credentialVersion
       )
         return false;
       const now = Date.now();
@@ -515,7 +514,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       // revoked, bound or not. Its token is copied to cleanup storage before
       // the record holding it is overwritten.
       const cleanup =
-        previous && !retired(state, credentialVersion(previous))
+        previous && !retired(state, previous.connectionId)
           ? await this.startCleanup(state, shop, previous, false, true)
           : undefined;
       let record: ShopCredentialsRecord;
@@ -551,7 +550,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     const existing = cleanupJobs(state).find(
       (job) =>
         job.listingSourceId === credentials.listingSourceId &&
-        job.credentialVersion === credentialVersion(credentials),
+        job.credentialVersion === credentials.connectionId,
     );
     if (existing) {
       existing.erase ||= erase;
@@ -583,7 +582,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     const cleanup: CleanupJob = {
       shop,
       listingSourceId: credentials.listingSourceId,
-      credentialVersion: credentialVersion(credentials),
+      credentialVersion: credentials.connectionId,
       credentialKey,
       deadline: now + PRIVATE_RETENTION,
       attempts: 0,
@@ -649,7 +648,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
     );
     const credentials =
       storedCredentials?.listingSourceId === cleanup.listingSourceId &&
-      credentialVersion(storedCredentials) === cleanup.credentialVersion
+      storedCredentials.connectionId === cleanup.credentialVersion
         ? storedCredentials
         : null;
     const apiBaseUrl = getAuraHistoriaApiBaseUrl(this.env);
@@ -746,7 +745,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         const credentials =
           state.binding &&
           (await loadShopCredentials(this.env.KV, state.binding.shop));
-        if (credentials && retired(state, credentialVersion(credentials))) {
+        if (credentials && retired(state, credentials.connectionId)) {
           await this.save({
             sequence: state.sequence,
             mappings: {},
@@ -775,7 +774,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         if (
           credentials &&
           credentials.listingSourceId === state.binding.listingSourceId &&
-          credentialVersion(credentials) === state.binding.credentialVersion
+          credentials.connectionId === state.binding.credentialVersion
         ) {
           if (scopeChanged || state.job?.paused) {
             // Scope notifications fence previously prepared writes before any
@@ -802,7 +801,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
         if (
           credentials &&
           credentials.listingSourceId === state.binding.listingSourceId &&
-          credentialVersion(credentials) === state.binding.credentialVersion
+          credentials.connectionId === state.binding.credentialVersion
         ) {
           rememberPublication(state);
           state.job = undefined;
@@ -841,7 +840,7 @@ export class ShopCoordinator extends DurableObject<CloudflareShopifyEnv> {
       if (
         !credentials ||
         credentials.listingSourceId !== job.listingSourceId ||
-        credentialVersion(credentials) !== job.credentialVersion
+        credentials.connectionId !== job.credentialVersion
       ) {
         rememberPublication(state);
         state.job = undefined;

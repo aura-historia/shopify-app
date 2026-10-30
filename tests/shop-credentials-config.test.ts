@@ -8,7 +8,6 @@ import {
   getShopCredentialsDisconnectedStorageKey,
   getShopCredentialsStorageKey,
   isShopCredentialsDisconnected,
-  isValidAuraHistoriaAccessToken,
   isValidListingSourceId,
   loadShopCredentials,
   markShopCredentialsDisconnected,
@@ -28,11 +27,7 @@ const uninstallWebhookRoute = readFileSync(
 );
 
 describe("shop OAuth credentials configuration", () => {
-  it("validates canonical listing source TypeIDs and access token formats", () => {
-    const validAccessToken = "aurahistoria_accesstoken_1234567890abcdef";
-    const validMultiSegmentAccessToken =
-      "aurahistoria_accesstoken_access_1234567890abcdef";
-
+  it("validates canonical listing source TypeIDs", () => {
     assert.equal(isValidListingSourceId(listingSourceId), true);
     assert.equal(isValidListingSourceId(`ls_7${"v".repeat(25)}`), true);
     for (const invalid of [
@@ -46,15 +41,6 @@ describe("shop OAuth credentials configuration", () => {
     ]) {
       assert.equal(isValidListingSourceId(invalid), false, invalid);
     }
-    assert.equal(isValidAuraHistoriaAccessToken(validAccessToken), true);
-    assert.equal(
-      isValidAuraHistoriaAccessToken(validMultiSegmentAccessToken),
-      true,
-    );
-    assert.equal(
-      isValidAuraHistoriaAccessToken("aurahistoria_missingtail"),
-      false,
-    );
   });
 
   it("stores credentials and disconnect markers per shop with dedicated KV prefixes", () => {
@@ -96,6 +82,7 @@ describe("shop OAuth credentials configuration", () => {
       "aurahistoria_accesstoken_abcdef123456",
     );
     assert.equal(savedRecord.tokenType, "BEARER");
+    assert.ok(savedRecord.connectionId);
     assert.equal(
       savedRecord.scope,
       "listing-sources:write product-listings:write",
@@ -112,6 +99,7 @@ describe("shop OAuth credentials configuration", () => {
       scope: "listing-sources:write product-listings:write",
       shopifyStoreName: "example-shop",
       updatedAt: "2026-06-06T00:00:00.000Z",
+      connectionId: "fixture-connection",
     });
 
     assert.equal(publicRecord.hasAccessToken, true);
@@ -193,56 +181,27 @@ describe("shop OAuth credentials configuration", () => {
     );
   });
 
-  it("rejects legacy apiKey and shopId records instead of treating them as connected", async () => {
-    const entries = new Map<string, string>();
-    const kv = {
-      get: async (key: string) => entries.get(key) ?? null,
-      put: async (key: string, value: string) => {
-        entries.set(key, value);
-      },
+  it("rejects records without a valid source or connection identity", async () => {
+    const record = {
+      listingSourceId,
+      accessToken: "synthetic-access-token",
+      connectionId: "fixture-connection",
+      updatedAt: "2026-10-30T00:00:00.000Z",
     };
-
-    entries.set(
-      getShopCredentialsStorageKey("example-shop.myshopify.com"),
-      JSON.stringify({
-        shopId: "550e8400-e29b-41d4-a716-446655440000",
-        apiKey: "aurahistoria_accesstoken_legacy",
-        updatedAt: "2026-06-06T00:00:00.000Z",
-      }),
-    );
-
-    const savedRecord = await loadShopCredentials(
-      kv as never,
-      "example-shop.myshopify.com",
-    );
-
-    assert.equal(savedRecord, null);
-
-    entries.set(
-      getShopCredentialsStorageKey("example-shop.myshopify.com"),
-      JSON.stringify({
-        shopId: "550e8400-e29b-41d4-a716-446655440000",
-        accessToken: "aurahistoria_accesstoken_legacy",
-        updatedAt: "2026-06-06T00:00:00.000Z",
-      }),
-    );
-    assert.equal(
-      await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
-      null,
-    );
-
-    entries.set(
-      getShopCredentialsStorageKey("example-shop.myshopify.com"),
-      JSON.stringify({
-        listingSourceId: `ls_8${"0".repeat(25)}`,
-        accessToken: "aurahistoria_accesstoken_legacy",
-        updatedAt: "2026-06-06T00:00:00.000Z",
-      }),
-    );
-    assert.equal(
-      await loadShopCredentials(kv as never, "example-shop.myshopify.com"),
-      null,
-    );
+    for (const invalid of [
+      { ...record, listingSourceId: `ls_8${"0".repeat(25)}` },
+      { ...record, connectionId: undefined },
+      { ...record, connectionId: "" },
+      { ...record, connectionId: 123 },
+    ]) {
+      assert.equal(
+        await loadShopCredentials(
+          { get: async () => JSON.stringify(invalid) } as never,
+          "example-shop.myshopify.com",
+        ),
+        null,
+      );
+    }
   });
 
   it("clears app-owned Aura Historia connection data on uninstall", () => {

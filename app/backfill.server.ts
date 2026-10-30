@@ -177,13 +177,6 @@ export type GraphqlRequestFn = (
   variables: Record<string, unknown>,
 ) => Promise<GraphqlResponse>;
 
-export interface ShopifyAdminGraphqlClient {
-  graphql: (
-    query: string,
-    options?: { variables?: Record<string, unknown> },
-  ) => Promise<Response>;
-}
-
 export interface BulkJsonlProduct {
   id: string;
   title: string;
@@ -451,7 +444,6 @@ export function classifyShopifyBackfillAction(
     case "DRAFT":
     case "ARCHIVED":
       return "withdraw";
-    case "UNLISTED":
     default:
       return "ignore";
   }
@@ -636,19 +628,6 @@ export async function submitBulkOperation(
 }
 
 // ---------------------------------------------------------------------------
-// Shopify Admin GraphQL helpers
-// ---------------------------------------------------------------------------
-
-export function createAdminGraphqlRequest(
-  admin: ShopifyAdminGraphqlClient,
-): GraphqlRequestFn {
-  return async (query, variables) => {
-    const response = await admin.graphql(query, { variables });
-    return response.json() as Promise<GraphqlResponse>;
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Bulk operation result fetching (used in webhook handler)
 // ---------------------------------------------------------------------------
 
@@ -725,11 +704,14 @@ function isBatchReport(
   const report = value as Partial<AsyncProductListingBatchReport>;
   return (
     typeof report.submissionId === "string" &&
-    Number.isInteger(report.acceptedCount) &&
+    Number.isSafeInteger(report.acceptedCount) &&
+    (report.acceptedCount as number) >= 0 &&
     Array.isArray(report.failures) &&
     report.failures.every(
       (failure) =>
-        Number.isInteger(failure.index) &&
+        failure !== null &&
+        typeof failure === "object" &&
+        Number.isSafeInteger(failure.index) &&
         typeof failure.retryable === "boolean",
     )
   );
@@ -741,6 +723,8 @@ function reportFailures(
 ): string[] {
   if (
     report.acceptedCount + report.failures.length !== items.length ||
+    new Set(report.failures.map(({ index }) => index)).size !==
+      report.failures.length ||
     report.failures.some(({ index }) => index < 0 || index >= items.length)
   ) {
     throw new Error("Invalid async ProductListing admission report");
@@ -772,12 +756,14 @@ export async function sendProductBatch(
             body: items as UpsertProductListingData[],
             path: { listingSourceId },
             headers,
+            signal: AbortSignal.timeout(20_000),
           })
         : await deleteAsyncPartnerProductListings({
             client,
             body: items as WithdrawProductListingData[],
             path: { listingSourceId },
             headers,
+            signal: AbortSignal.timeout(20_000),
           });
     const report: unknown = result.error ?? result.data;
     if (isBatchReport(report)) {
@@ -829,6 +815,7 @@ export async function putShopifyIngestionConfiguration(
     body: buildShopifyIngestionConfiguration(metadata, shopDomain),
     path: { listingSourceId },
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(20_000),
   });
   if (result.response?.status !== 201 && result.response?.status !== 204) {
     throw new Error(
@@ -846,7 +833,9 @@ export async function downloadBackfillExport(
   result: BulkOperationResult,
 ): Promise<string> {
   if (!result.url) return "";
-  const response = await fetch(result.url);
+  const response = await fetch(result.url, {
+    signal: AbortSignal.timeout(20_000),
+  });
   if (!response.ok) {
     throw new Error(`Failed to download JSONL: ${response.status}`);
   }
@@ -927,7 +916,9 @@ async function submitBackfillBatch(
   } catch (error) {
     console.error(
       `Backfill ${batch.verb} batch ${batch.index} failed:`,
-      error instanceof Error ? error.message : "unknown error",
+      (error instanceof Error ? error.message : "unknown error")
+        .replaceAll(context.accessToken, "[redacted]")
+        .slice(0, 180),
     );
     return batch.items.map((item) => item.sourceListingId);
   }

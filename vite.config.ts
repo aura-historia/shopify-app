@@ -1,7 +1,6 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig, type UserConfig } from "vite";
-import tsconfigPaths from "vite-tsconfig-paths";
 
 if (
   process.env.HOST &&
@@ -9,7 +8,7 @@ if (
     process.env.SHOPIFY_APP_URL === process.env.HOST)
 ) {
   process.env.SHOPIFY_APP_URL = process.env.HOST;
-  process.env.HOST = undefined;
+  delete process.env.HOST;
 }
 
 const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost")
@@ -53,7 +52,6 @@ export default defineConfig({
   },
   plugins: [
     reactRouter(),
-    tsconfigPaths(),
     cloudflare({
       viteEnvironment: {
         name: "ssr",

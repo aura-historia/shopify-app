@@ -69,10 +69,17 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
     };
   };
 
-  const authorizationError =
-    url.searchParams.get("error_description") ?? url.searchParams.get("error");
-  if (authorizationError) {
-    return fail(authorizationError);
+  if (
+    url.searchParams.has("error") ||
+    url.searchParams.has("error_description")
+  ) {
+    // Callback parameters can contain private provider diagnostics. Never copy
+    // them into a second URL or render them as a trusted application message.
+    return fail(
+      url.searchParams.get("error") === "access_denied"
+        ? "Aura Historia authorization was declined. Reopen the Shopify app to retry."
+        : "Aura Historia authorization failed. Reopen the Shopify app to retry.",
+    );
   }
 
   const code = url.searchParams.get("code");
@@ -117,7 +124,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   let issuedToken: string | undefined;
   try {
     const token = await exchangeOAuthCodeForToken(
-      config,
+      { ...config, redirectUri: pending.redirectUri },
       code,
       pending.codeVerifier,
     );

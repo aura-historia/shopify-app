@@ -31,7 +31,6 @@ import {
 import {
   clearShopCredentials,
   clearShopCredentialsDisconnected,
-  credentialVersion,
   isShopCredentialsDisconnected,
   loadShopCredentials,
   markShopCredentialsDisconnected,
@@ -84,7 +83,7 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
   const [shipping, connectionStopped] = await Promise.all([
     coordinator.status(),
     storedCredentials && !disconnectedByAction
-      ? coordinator.connectionRetired(credentialVersion(storedCredentials))
+      ? coordinator.connectionRetired(storedCredentials.connectionId)
       : false,
   ]);
   const credentials =
@@ -163,21 +162,12 @@ export const loader = async ({ request, context }: LoaderFunctionArgs) => {
       ? toPublicShopCredentialsRecord(credentials)
       : null,
     shop: session.shop,
-    scopes:
-      session.scope
-        ?.split(",")
-        .map((scope: string) => scope.trim())
-        .filter(Boolean) ?? [],
     integration: {
       status,
       // A failed authorization never replaces the current connection.
       replacementFailed: Boolean(credentials) && oauthResult === "failed",
-      error: url.searchParams.get("oauth_error"),
-      disconnectError: url.searchParams.get("disconnect_error"),
-      disconnected: disconnectedByAction,
       backfill,
       shippingQueueError: url.searchParams.get("shipping") === "not_queued",
-      missingConfig,
     },
   };
 };
@@ -194,6 +184,8 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   redirectParams.delete("oauth_error");
   redirectParams.delete("backfill");
   redirectParams.delete("shipping");
+  redirectParams.delete("disconnect");
+  redirectParams.delete("disconnect_error");
 
   if (intent === "import_shipping") {
     if (!(await queueShipping(context, session.shop)))
@@ -213,7 +205,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
     if (
       !credentials ||
       (await shopCoordinator(context, session.shop).connectionRetired(
-        credentialVersion(credentials),
+        credentials.connectionId,
       ))
     ) {
       redirectParams.set("backfill", "not_queued");
@@ -254,8 +246,7 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   }
 
   if (intent !== "disconnect") {
-    redirectParams.set("disconnect_error", "Unknown action.");
-    return redirect(`/app?${redirectParams.toString()}`);
+    return new Response("Unknown action", { status: 400 });
   }
 
   await shopCoordinator(context, session.shop).disconnectShipping(session.shop);
@@ -268,7 +259,6 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   );
 
   redirectParams.set("disconnect", "success");
-  redirectParams.delete("disconnect_error");
 
   return redirect(`/app?${redirectParams.toString()}`);
 };

@@ -12,12 +12,12 @@ import { getShopifyWebhook } from "../shopify.server";
 export const action = async ({ request, context }: ActionFunctionArgs) => {
   const shopify = getShopifyWebhook(context);
   const { shop, topic } = await shopify.authenticate.webhook(request);
+  if (topic !== "APP_UNINSTALLED") return new Response(null, { status: 400 });
   const credentials = await loadShopCredentials(
     context.cloudflare.env.KV,
     shop,
   );
 
-  if (topic !== "APP_UNINSTALLED") return new Response(null, { status: 400 });
   // Fence first and durably admit owned withdrawals. The worker resolves Aura
   // credentials from protected cleanup storage after Shopify sessions are gone.
   await shopCoordinator(context, shop).disconnectShipping(shop, true);
@@ -27,14 +27,18 @@ export const action = async ({ request, context }: ActionFunctionArgs) => {
   await clearCatalogImportStatus(context.cloudflare.env.KV, shop);
 
   const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
-  await shopify.sessionStorage.deleteSessions(
-    sessions.map((session: { id: string }) => session.id),
-  );
+  // KV's shop index can contain duplicates and entries whose session was
+  // already deleted by an earlier, interrupted delivery.
+  const sessionIds = [
+    ...new Set(sessions.filter(Boolean).map((session) => session.id)),
+  ];
+  if (!(await shopify.sessionStorage.deleteSessions(sessionIds)))
+    return new Response(null, { status: 503 });
 
   console.info("Processed app/uninstalled webhook", {
     shop,
     topic,
-    deletedSessions: sessions.length,
+    deletedSessions: sessionIds.length,
     clearedAuraHistoriaCredentials: Boolean(credentials),
   });
 

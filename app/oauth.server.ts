@@ -428,6 +428,7 @@ export async function exchangeOAuthCodeForToken(
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body,
+    signal: AbortSignal.timeout(20_000),
   });
 
   if (!response.ok) {
@@ -441,7 +442,14 @@ export async function exchangeOAuthCodeForToken(
   const tokenResponse = (await response
     .json()
     .catch(() => null)) as OAuthTokenResponseData | null;
-  if (!tokenResponse?.access_token) {
+  if (
+    typeof tokenResponse?.access_token !== "string" ||
+    !tokenResponse.access_token.trim() ||
+    (tokenResponse.token_type !== undefined &&
+      typeof tokenResponse.token_type !== "string") ||
+    (tokenResponse.scope !== undefined &&
+      typeof tokenResponse.scope !== "string")
+  ) {
     throw new OAuthTokenExchangeError(
       "OAuth token response did not include an access token",
       response.status,

@@ -69,6 +69,7 @@ const credentials = {
   listingSourceId: "ls_01h455vb4pex5vy7enb1p677v1",
   accessToken: "aura-private-token",
   updatedAt: "2026-10-18T08:00:00Z",
+  connectionId: "fixture-connection",
 };
 const nextSource = "ls_01h455vb4pex5vy7enb1p677v2";
 type HomeData = Exclude<Awaited<ReturnType<typeof home.loader>>, Response>;
@@ -402,7 +403,7 @@ async function seedPublication(
       job: {
         shop,
         listingSourceId: credentials.listingSourceId,
-        credentialVersion: credentials.updatedAt,
+        credentialVersion: credentials.connectionId,
         sequence: publication.sequence,
         runId: publication.runId,
         publication,
@@ -726,7 +727,7 @@ describe("server-side shipping coordinator", () => {
     await coordinator.alarm();
     runtime.kv.set(
       `aura-historia:shop-credentials:${shop}`,
-      JSON.stringify({ ...credentials, updatedAt: "2026-10-18T09:00:00Z" }),
+      JSON.stringify({ ...credentials, connectionId: "next-connection" }),
     );
     await coordinator.requestShipping(shop);
     await coordinator.alarm();
@@ -1816,7 +1817,7 @@ describe("OAuth connection replacement", () => {
         ),
       );
       assert.equal(
-        await runtime.coordinator.connectionRetired(credentials.updatedAt),
+        await runtime.coordinator.connectionRetired(credentials.connectionId),
         false,
       );
       assert.equal(await runtime.coordinator.requestShipping(shop), true);
@@ -1844,7 +1845,7 @@ describe("OAuth connection replacement", () => {
       assert.ok(state.job.acquisition);
       const [cleanup, ...rest] = runtime.cleanups(state);
       assert.deepEqual(rest, []);
-      assert.equal(cleanup.credentialVersion, credentials.updatedAt);
+      assert.equal(cleanup.credentialVersion, credentials.connectionId);
       assert.equal(cleanup.revoke, true);
       assert.equal(
         JSON.parse(runtime.kv.get(cleanup.credentialKey) ?? "{}").accessToken,
@@ -1960,7 +1961,7 @@ describe("OAuth connection replacement", () => {
         await storedState(runtime.storage),
       );
       assert.deepEqual(rest, []);
-      assert.equal(cleanup.credentialVersion, credentials.updatedAt);
+      assert.equal(cleanup.credentialVersion, credentials.connectionId);
       assert.equal(cleanup.revoke, true);
       await runtime.run();
       assert.deepEqual(runtime.revoked, [credentials.accessToken]);
@@ -2008,7 +2009,7 @@ describe("OAuth connection replacement", () => {
       assert.equal(tombstone.stopped, true);
       assert.equal(runtime.storage.alarm, null);
       assert.equal(
-        await runtime.coordinator.connectionRetired(credentials.updatedAt),
+        await runtime.coordinator.connectionRetired(credentials.connectionId),
         true,
       );
       assert.equal(await runtime.coordinator.requestShipping(shop), false);
