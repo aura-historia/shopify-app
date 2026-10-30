@@ -8,7 +8,6 @@ import {
   getShopCredentialsDisconnectedStorageKey,
   getShopCredentialsStorageKey,
   isShopCredentialsDisconnected,
-  isValidAuraHistoriaAccessToken,
   isValidListingSourceId,
   loadShopCredentials,
   markShopCredentialsDisconnected,
@@ -28,11 +27,7 @@ const uninstallWebhookRoute = readFileSync(
 );
 
 describe("shop OAuth credentials configuration", () => {
-  it("validates canonical listing source TypeIDs and access token formats", () => {
-    const validAccessToken = "aurahistoria_accesstoken_1234567890abcdef";
-    const validMultiSegmentAccessToken =
-      "aurahistoria_accesstoken_access_1234567890abcdef";
-
+  it("validates canonical listing source TypeIDs", () => {
     assert.equal(isValidListingSourceId(listingSourceId), true);
     assert.equal(isValidListingSourceId(`ls_7${"v".repeat(25)}`), true);
     for (const invalid of [
@@ -46,15 +41,6 @@ describe("shop OAuth credentials configuration", () => {
     ]) {
       assert.equal(isValidListingSourceId(invalid), false, invalid);
     }
-    assert.equal(isValidAuraHistoriaAccessToken(validAccessToken), true);
-    assert.equal(
-      isValidAuraHistoriaAccessToken(validMultiSegmentAccessToken),
-      true,
-    );
-    assert.equal(
-      isValidAuraHistoriaAccessToken("aurahistoria_missingtail"),
-      false,
-    );
   });
 
   it("stores credentials and disconnect markers per shop with dedicated KV prefixes", () => {

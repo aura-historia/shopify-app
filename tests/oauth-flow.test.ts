@@ -51,6 +51,58 @@ function makeKv() {
 }
 
 describe("Aura Historia OAuth flow helpers", () => {
+  it("rejects malformed token fields before they can be stored as credentials", async () => {
+    for (const token of [
+      null,
+      { access_token: 123 },
+      { access_token: " " },
+      { access_token: "token", scope: [] },
+      { access_token: "token", token_type: {} },
+    ]) {
+      const mocked = mock.method(globalThis, "fetch", async () =>
+        Response.json(token),
+      );
+      try {
+        await assert.rejects(
+          () => exchangeOAuthCodeForToken(config, "code", "verifier"),
+          /access token/,
+        );
+      } finally {
+        mocked.mock.restore();
+      }
+    }
+  });
+
+  it("aborts a stalled OAuth exchange", async () => {
+    const controller = new AbortController();
+    const timeout = mock.method(
+      AbortSignal,
+      "timeout",
+      (milliseconds: number) => {
+        assert.equal(milliseconds, 20_000);
+        return controller.signal;
+      },
+    );
+    const fetcher = mock.method(
+      globalThis,
+      "fetch",
+      async (_input: unknown, init?: RequestInit) => {
+        assert.equal(init?.signal, controller.signal);
+        controller.abort(new DOMException("Timed out", "TimeoutError"));
+        init?.signal?.throwIfAborted();
+        return Response.json({ access_token: "unexpected" });
+      },
+    );
+    try {
+      await assert.rejects(
+        () => exchangeOAuthCodeForToken(config, "code", "verifier"),
+        { name: "TimeoutError" },
+      );
+    } finally {
+      fetcher.mock.restore();
+      timeout.mock.restore();
+    }
+  });
   it("selects the stage authorize URL for dev and prod URL for production", () => {
     const devConfig = getAuraHistoriaOAuthConfig({
       AURA_HISTORIA_OAUTH_ENV: "dev",

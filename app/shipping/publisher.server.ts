@@ -389,10 +389,6 @@ export async function publishShippingStep(
       const { objectKey: _creationOnly, ...replacement } = pending.body.import;
       pending.body.import = replacement;
     }
-    const profilePath =
-      "id" in pending
-        ? { ...sourcePath, shipping_profile_id: pending.id }
-        : null;
     const result =
       pending.kind === "create"
         ? await createShippingProfile({
@@ -411,10 +407,7 @@ export async function publishShippingStep(
                 ? restoreShippingProfile
                 : retireShippingProfile)({
                 ...common,
-                path: profilePath as {
-                  listing_source_id: string;
-                  shipping_profile_id: string;
-                },
+                path: { ...sourcePath, shipping_profile_id: pending.id },
                 body: pending.body,
               })
             : pending.kind === "default"

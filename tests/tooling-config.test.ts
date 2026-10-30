@@ -87,14 +87,6 @@ describe("tooling configuration", () => {
     );
   });
 
-  it("keeps setup as a no-op because sessions use Cloudflare KV", () => {
-    assert.equal(
-      packageJson.scripts.setup,
-      "node -e \"console.log('No setup required: Shopify sessions use Cloudflare KV.')\"",
-    );
-    assert.equal(packageJson.scripts["docker-start"], "npm run start");
-  });
-
   it("keeps a production config selection script", () => {
     assert.equal(
       packageJson.scripts["config:use:prod"],

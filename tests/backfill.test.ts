@@ -11,7 +11,6 @@ import {
   classifyShopifyBackfillAction,
   clearBackfillContext,
   configureShopifyListingSource,
-  createAdminGraphqlRequest,
   createBackfillIdempotencyKey,
   extractShopifyNumericId,
   fetchBulkOperationResult,
@@ -496,30 +495,19 @@ describe("Shopify GraphQL", () => {
     }
   });
 
-  it("adapts the Admin GraphQL client and fetches completed bulk URLs", async () => {
-    const admin = {
-      graphql: mock.fn(
-        async (
-          _query: string,
-          options?: { variables?: Record<string, unknown> },
-        ) => {
-          assert.deepEqual(options?.variables, { id: bulkOperationId });
-          return jsonResponse(
-            {
-              data: {
-                node: {
-                  id: bulkOperationId,
-                  status: "COMPLETED",
-                  url: "https://cdn.shopify.com/result.jsonl",
-                },
-              },
-            },
-            200,
-          );
+  it("fetches completed bulk URLs and rejects incomplete operations", async () => {
+    const request: GraphqlRequestFn = async (_query, variables) => {
+      assert.deepEqual(variables, { id: bulkOperationId });
+      return {
+        data: {
+          node: {
+            id: bulkOperationId,
+            status: "COMPLETED",
+            url: "https://cdn.shopify.com/result.jsonl",
+          },
         },
-      ),
+      };
     };
-    const request = createAdminGraphqlRequest(admin);
     assert.deepEqual(await fetchBulkOperationResult(request, bulkOperationId), {
       url: "https://cdn.shopify.com/result.jsonl",
       rootObjectCount: null,
@@ -822,6 +810,40 @@ describe("async product listing batches", () => {
         );
       },
     );
+  });
+
+  it("rejects duplicate failure indexes, negative counts and malformed failures", async () => {
+    const items = [{ sourceListingId: "1" }, { sourceListingId: "2" }];
+    for (const value of [
+      report(0, [
+        { index: 0, retryable: false, error: "BAD_BODY_VALUE" },
+        { index: 0, retryable: false, error: "BAD_BODY_VALUE" },
+      ]),
+      report(-1, [
+        { index: 0, retryable: false, error: "BAD_BODY_VALUE" },
+        { index: 1, retryable: false, error: "BAD_BODY_VALUE" },
+        { index: 1, retryable: false, error: "BAD_BODY_VALUE" },
+      ]),
+      { submissionId: "s", acceptedCount: 1, failures: [null] },
+    ]) {
+      await withFetch(
+        (async () => jsonResponse(value)) as typeof fetch,
+        async () => {
+          await assert.rejects(
+            () =>
+              sendProductBatch(
+                items,
+                apiBaseUrl,
+                listingSourceId,
+                accessToken,
+                "delete",
+                "invalid-report",
+              ),
+            /admission/,
+          );
+        },
+      );
+    }
   });
 
   it("retries the unchanged entire batch with the same key on retryable report failures", async () => {

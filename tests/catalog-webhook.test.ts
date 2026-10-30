@@ -24,7 +24,12 @@ function makeKv() {
 
 async function deliver(
   start: (shop: string, bulkOperationId: string) => Promise<void>,
-  { status = "completed", operation = bulkOperationId } = {},
+  {
+    status = "completed",
+    operation = bulkOperationId,
+    topic = "bulk_operations/finish",
+    payload = undefined as unknown,
+  } = {},
 ) {
   const kv = makeKv();
   await storeBackfillContext(kv, shop, {
@@ -37,11 +42,15 @@ async function deliver(
     publicationId: "gid://shopify/Publication/456",
     createdAt: new Date().toISOString(),
   });
-  const body = JSON.stringify({
-    type: "query",
-    status,
-    admin_graphql_api_id: operation,
-  });
+  const body = JSON.stringify(
+    payload === undefined
+      ? {
+          type: "query",
+          status,
+          admin_graphql_api_id: operation,
+        }
+      : payload,
+  );
   const getByName = mock.fn(() => ({ start }));
   const response = await action({
     request: new Request(
@@ -51,7 +60,7 @@ async function deliver(
         body,
         headers: {
           "Content-Type": "application/json",
-          "X-Shopify-Topic": "bulk_operations/finish",
+          "X-Shopify-Topic": topic,
           "X-Shopify-Shop-Domain": shop,
           "X-Shopify-API-Version": "2026-10",
           "X-Shopify-Webhook-Id": crypto.randomUUID(),
@@ -83,6 +92,19 @@ async function deliver(
 }
 
 describe("catalog completion webhook", () => {
+  it("rejects another signed topic and malformed bodies without admitting work", async () => {
+    for (const options of [
+      { topic: "app/uninstalled" },
+      { payload: null },
+      { payload: [] },
+    ]) {
+      const start = mock.fn(async () => {});
+      const { response, kv } = await deliver(start, options);
+      assert.equal(response.status, 400);
+      assert.equal(start.mock.callCount(), 0);
+      assert.ok(kv.entries.has(`aura-historia:backfill:${shop}`));
+    }
+  });
   it("durably admits the matching export to the shop's catalog importer", async () => {
     const start = mock.fn(async () => {});
     const { response, kv, getByName } = await deliver(start);

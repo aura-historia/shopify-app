@@ -42,7 +42,7 @@
 - Shops with `marketDrivenShipping` keep merchant shipping in Markets. Read it only through `Market.delivery.shipping`; never read or fall back to legacy delivery profiles for such shops, and never call `marketCreate`/`marketUpdate`.
 - If you change authentication behavior, keep `authPathPrefix = "/auth"` and ensure the redirect URLs still include the callback route.
 - Prefer Shopify-provided install context such as `shop` and `host` query parameters. Treat manual `myshopify.com` entry as a fallback only.
-- Preserve the post-install redirect from the auth callback flow to `/success` unless the onboarding flow changes deliberately.
+- Keep the post-install redirect in Shopify Admin. The legacy `/success` route is informational and must not claim that an Aura connection exists.
 
 ## Public page requirements
 

@@ -125,7 +125,21 @@ Each alarm prepares the export and then submits batches for up to 20 seconds, so
 
 A newer import can be admitted while an alarm awaits network I/O. Job, alarm and cleanup writes are guarded by the bulk operation that owns the stored job, so an older alarm stops without touching the newer import.
 
-The job stores no credentials. It reads the Aura access token from the backfill context in KV, so disconnect, uninstall or a newer import stops it. “Import catalog again” starts a new export.
+The job stores no credentials. At the start of each alarm it reads the Aura access
+token from the backfill context in KV and stops if that context is missing or
+belongs to another import. “Import catalog again” starts a new export.
+
+Current limits: every step downloads and parses the entire export in memory before
+submitting batches. The submission budget does not bound that memory use. The KV
+context expires one hour after export submission, including time spent waiting for
+Shopify. OAuth exchange, source configuration, export downloads and each catalog
+batch request have a 20-second timeout. Large catalogs need a separate streaming
+and checkpointing design before claiming support beyond these limits.
+
+The KV context is checked at the start of each alarm, not before each external
+write. Disconnect or replacement during an in-flight step can therefore leave
+old batches in progress. Durable job ownership checks protect local checkpoints;
+they do not atomically coordinate KV status/context writes or backend requests.
 
 ### Ordering with live listing events
 
@@ -524,6 +538,10 @@ npm run build
 GitHub Actions runs these checks across Node.js 22.18, 24.15, and 26.1 on pushes and pull requests. See [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ## Deployment
+
+The supported runtime is Cloudflare Workers, including KV and Durable Object
+bindings. Use `npm run preview` for local production-build preview. The unused
+Node server/Docker template has been removed.
 
 - `npm run lint`
 - `npm run typecheck`

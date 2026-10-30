@@ -16,8 +16,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop");
   const host = url.searchParams.get("host");
-  const integration = url.searchParams.get("integration");
-  const missingConfig = url.searchParams.get("missing");
 
   const appSearchParams = new URLSearchParams();
   if (shop) {
@@ -30,8 +28,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     shop,
     appUrl: shop ? `/app?${appSearchParams.toString()}` : null,
-    integration,
-    missingConfig,
   };
 };
 
@@ -40,23 +36,19 @@ export const meta: MetaFunction = () => [
 ];
 
 export default function SuccessPage() {
-  const { appUrl, integration, missingConfig, shop } =
-    useLoaderData<typeof loader>();
-  const oauthConfigMissing = integration === "oauth-config-missing";
+  const { appUrl, shop } = useLoaderData<typeof loader>();
 
   return (
     <div className={styles.page}>
       <div className={styles.shell}>
         <header className={styles.header}>
           <div className={styles.brandBlock}>
-            <p className={styles.eyebrow}>Installation approved</p>
+            <p className={styles.eyebrow}>Shopify setup</p>
             <a className={styles.brand} href="https://aura-historia.com">
               Aura Historia
             </a>
             <p className={styles.brandMeta}>
-              {oauthConfigMissing
-                ? "Shopify approval is complete, but Aura Historia OAuth still needs runtime configuration."
-                : "Shopify approval is complete. Connecting your Aura Historia account in the embedded app sets up the Shopify sales channel connection for the products you publish to it."}
+              Open the app in Shopify to check your connection and finish setup.
             </p>
           </div>
           <nav className={styles.headerLinks} aria-label="Aura Historia links">
@@ -76,31 +68,15 @@ export default function SuccessPage() {
 
         <main className={styles.hero}>
           <section className={styles.introPanel} data-theme="dark">
-            <span className={styles.tag}>
-              {oauthConfigMissing ? "Action required" : "Success"}
-            </span>
+            <span className={styles.tag}>Continue setup</span>
             <h1 className={`${styles.title} ${styles.wideTitle}`}>
-              {oauthConfigMissing ? (
-                <>
-                  Shopify approved{" "}
-                  <span className={styles.shopName}>{shop}</span>, but OAuth is
-                  not configured yet.
-                </>
-              ) : shop ? (
-                <>
-                  Aura Historia Sales Channel is now installed on{" "}
-                  <span className={styles.shopName}>{shop}</span>.
-                </>
-              ) : (
-                "Aura Historia Sales Channel is now installed on your Shopify store."
-              )}
+              Open Aura Historia in Shopify.
             </h1>
             <p className={styles.lead}>
-              {oauthConfigMissing
-                ? `Set the missing OAuth environment variables${
-                    missingConfig ? ` (${missingConfig})` : ""
-                  } and reopen the embedded app to complete Aura Historia authorization automatically.`
-                : "Open the embedded app and connect your Aura Historia account to create the Aura Historia sales channel. Products you publish to it then reach Aura Historia through the configured EventBridge pipeline."}
+              {shop ? `Continue setup for ${shop}. ` : ""}
+              Shopify installation and Aura Historia authorization are separate
+              steps. The embedded app shows your current connection and import
+              status.
             </p>
 
             <div className={styles.buttonRow}>
@@ -121,9 +97,9 @@ export default function SuccessPage() {
               <article className={styles.surfaceCard}>
                 <h2 className={styles.cardTitle}>What happens next</h2>
                 <p className={styles.cardBody}>
-                  {oauthConfigMissing
-                    ? "The Shopify installation is approved, but the Aura Historia access token and partner shop ID were not stored because OAuth client settings are missing."
-                    : "After you connect your Aura Historia account, Aura Historia follows the products you publish to its Shopify sales channel and publishes them to its discovery surface. The public-app compliance subscriptions stay in place for ongoing App Store eligibility."}
+                  Connect your Aura Historia account, then choose which products
+                  to publish to the Aura Historia sales channel. The embedded
+                  app shows catalog and advertised shipping import progress.
                 </p>
               </article>
               <article className={styles.surfaceCardStrong}>

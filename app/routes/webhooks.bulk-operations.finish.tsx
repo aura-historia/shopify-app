@@ -12,7 +12,11 @@ interface BulkOperationPayload {
 
 export const action = async ({ request, context }: ActionFunctionArgs) => {
   const shopify = getShopifyWebhook(context);
-  const { shop, payload } = await shopify.authenticate.webhook(request);
+  const { shop, topic, payload } = await shopify.authenticate.webhook(request);
+  if (topic !== "BULK_OPERATIONS_FINISH")
+    return new Response(null, { status: 400 });
+  if (!payload || typeof payload !== "object" || Array.isArray(payload))
+    return new Response(null, { status: 400 });
   const body = payload as BulkOperationPayload;
 
   if (body.type !== "query") {
