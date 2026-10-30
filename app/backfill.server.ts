@@ -34,7 +34,31 @@ import { isValidListingSourceId } from "./shop-credentials.server";
 
 const BATCH_SIZE = 100;
 const BACKFILL_CONTEXT_PREFIX = "aura-historia:backfill:";
-const BACKFILL_CONTEXT_TTL_SECONDS = 3600;
+
+// Supported catalog. The export lists every product of the store, not only
+// those published to Aura, with all of its images and variants. A larger
+// export ends with EXPORT_TOO_LARGE before it is downloaded, or as soon as
+// streaming passes a limit.
+export const MAX_EXPORT_PRODUCTS = 100_000;
+export const MAX_EXPORT_BYTES = 1024 ** 3;
+// A product or image line of this query is a few KiB at most.
+export const MAX_EXPORT_LINE_BYTES = 64 * 1024;
+// A segment holds at most 100 products and ends at the first product after
+// 1 MiB of retained product and image lines, counted in UTF-8 bytes. A single
+// product may retain at most 1 MiB, so a step holds at most 2 MiB of export
+// lines whatever the catalog size. Variant lines after the first are skipped.
+export const SEGMENT_BYTES = 1024 ** 2;
+// Longest wait for the export's response or its next chunk.
+const EXPORT_READ_TIMEOUT_MS = 20_000;
+
+// Shopify must finish the export within a day of its submission, and the
+// admitted import must finish within a day of that. The credential-bearing
+// context outlives both windows, so an active import never loses it. It is
+// released as soon as the import ends or is retired, and never renewed.
+export const CATALOG_EXPORT_WINDOW_MS = 24 * 3600_000;
+export const CATALOG_IMPORT_WINDOW_MS = 24 * 3600_000;
+export const BACKFILL_CONTEXT_TTL_SECONDS =
+  (CATALOG_EXPORT_WINDOW_MS + CATALOG_IMPORT_WINDOW_MS) / 1000 + 3600;
 
 // Bulk queries take no variables. The validated publication GID is embedded so
 // every product row carries explicit membership in Aura's own channel.
@@ -89,9 +113,12 @@ query {
 }
 `;
 
+// Grouped output lists each product's images and variants directly after it,
+// so the export can be streamed product by product. Shopify does not
+// guarantee that order without it.
 const SUBMIT_BULK_OPERATION_MUTATION = `
 mutation BulkOperationRunQuery($query: String!) {
-  bulkOperationRunQuery(query: $query) {
+  bulkOperationRunQuery(query: $query, groupObjects: true) {
     bulkOperation {
       id
       status
@@ -113,6 +140,7 @@ query BulkOperationStatus($id: ID!) {
       errorCode
       objectCount
       rootObjectCount
+      fileSize
       url
     }
   }
@@ -190,7 +218,11 @@ export interface BulkJsonlProduct {
 export interface BulkOperationResult {
   url: string | null;
   rootObjectCount: number | null;
+  // Bytes of the file at `url`, when Shopify reported them.
+  fileSize: number | null;
 }
+
+export type BulkOperationState = "completed" | "failed" | "running";
 
 export interface BackfillBatch {
   verb: "put" | "delete";
@@ -198,15 +230,31 @@ export interface BackfillBatch {
   items: UpsertProductListingData[] | WithdrawProductListingData[];
 }
 
+// One product of the export with the children the import reads.
+export interface ExportProduct {
+  product: BulkJsonlProduct;
+  images: string[];
+  // Price of the first variant.
+  price: string | null;
+}
+
+// Consecutive products of the export. Both offsets are byte offsets of a
+// product boundary, so a segment never splits a product from its children.
+export interface ExportSegment {
+  start: number;
+  end: number;
+  products: ExportProduct[];
+}
+
 // Deterministic for one immutable export, so a resumed import replays the
 // same batches under the same idempotency keys.
-export interface BackfillPlan {
-  total: number;
+export interface SegmentPlan {
   eligible: number;
-  // The export was verified complete and every membership read was explicit.
-  complete: boolean;
   // Products with unknown membership or unmappable data; never submitted.
   rejected: string[];
+  // Products whose channel membership could not be read.
+  unknown: number;
+  // At most one upsert and one withdrawal batch, sent in this order.
   batches: BackfillBatch[];
 }
 
@@ -216,15 +264,32 @@ export interface CatalogImportJob {
   // The import generation that owns this job, its context, status and alarm.
   generation: number;
   bulkOperationId: string;
+  // When the export was submitted (epoch milliseconds).
+  queuedAt: number;
   // Shopify reported the export complete and the importer admitted it.
   admitted: boolean;
+  admittedAt?: number;
   result?: BulkOperationResult;
-  // Index of the next batch in the plan.
+  // Byte offset and index of the next segment of the export.
+  offset: number;
   cursor: number;
+  // Batches of that segment already sent.
+  part: number;
+  // Products of the segments counted so far.
+  total: number;
+  eligible: number;
+  rejected: number;
+  unknown: number;
   failed: number;
   withdrawn: number;
   attempts: number;
 }
+
+// The export is not well-formed, grouped JSONL. A retry reads the same file.
+export class MalformedExportError extends Error {}
+
+// The export exceeds the supported catalog size.
+export class ExportCapacityError extends Error {}
 
 // The shop's import generations, owned by its CatalogImporter. Each import
 // begins a new generation, which retires the previous one; only the current
@@ -487,36 +552,262 @@ export function classifyShopifyBackfillAction(
 // JSONL parsing
 // ---------------------------------------------------------------------------
 
-export function parseProductsFromJsonl(jsonl: string): {
-  products: BulkJsonlProduct[];
-  images: Map<string, string[]>;
-  variants: Map<string, string | null>;
-} {
-  const products: BulkJsonlProduct[] = [];
-  const images = new Map<string, string[]>();
-  const variants = new Map<string, string | null>();
-  const lines = jsonl.split("\n").filter((line) => line.trim());
+export interface ExportLine {
+  text: string;
+  // Byte offsets of the line in the export, the end after its newline.
+  start: number;
+  end: number;
+}
 
-  for (const line of lines) {
-    const obj = JSON.parse(line);
+function concatBytes(parts: Uint8Array[], length: number): Uint8Array {
+  if (parts.length === 1) return parts[0];
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
+}
 
-    if (!obj.__parentId) {
-      products.push(obj as BulkJsonlProduct);
-      if (!images.has(obj.id)) {
-        images.set(obj.id, []);
-      }
-    } else if (obj.url && obj.price === undefined) {
-      const parentImages = images.get(obj.__parentId) ?? [];
-      parentImages.push(obj.url);
-      images.set(obj.__parentId, parentImages);
-    } else if (obj.price !== undefined) {
-      if (!variants.has(obj.__parentId)) {
-        variants.set(obj.__parentId, obj.price);
+// Splits the export into lines by byte. Offsets stay exact for multibyte
+// text, and a line or character split across chunks is joined before it is
+// decoded. Only the current line is buffered.
+export class ExportLines {
+  private chunk: Uint8Array = new Uint8Array(0);
+  private index = 0;
+  private partial: Uint8Array[] = [];
+  private partialBytes = 0;
+  private ended = false;
+  private received: number;
+  private skip: number;
+  private readonly size: number | null;
+  private readonly limit: number;
+  private readonly decoder = new TextDecoder("utf-8", { fatal: true });
+
+  constructor(
+    private readonly reader: ReadableStreamDefaultReader<Uint8Array> | null,
+    // Byte offset of the first line.
+    public position: number,
+    {
+      // Leading bytes to drop when the server ignored the requested range.
+      skip = 0,
+      // The export's size; a download that ends elsewhere was cut off.
+      size = null,
+      limit = MAX_EXPORT_BYTES,
+    }: { skip?: number; size?: number | null; limit?: number } = {},
+  ) {
+    this.received = position;
+    this.skip = skip;
+    this.size = size;
+    this.limit = limit;
+  }
+
+  // The next line, or null at the end of the export.
+  async next(): Promise<ExportLine | null> {
+    for (;;) {
+      if (this.index < this.chunk.length) {
+        const newline = this.chunk.indexOf(0x0a, this.index);
+        const stop = newline === -1 ? this.chunk.length : newline;
+        const piece = this.chunk.subarray(this.index, stop);
+        this.index = newline === -1 ? stop : stop + 1;
+        if (this.partialBytes + piece.length > MAX_EXPORT_LINE_BYTES)
+          throw new ExportCapacityError(
+            `Shopify catalog export line at byte ${this.position} exceeds ${MAX_EXPORT_LINE_BYTES} bytes`,
+          );
+        this.partial.push(piece);
+        this.partialBytes += piece.length;
+        if (newline !== -1) return this.take(1);
+      } else if (this.ended) {
+        // The last line may have no newline.
+        return this.partialBytes > 0 ? this.take(0) : null;
+      } else {
+        await this.fill();
       }
     }
   }
 
-  return { products, images, variants };
+  async close() {
+    await this.reader?.cancel().catch(() => undefined);
+  }
+
+  private take(newline: number): ExportLine {
+    const bytes = concatBytes(this.partial, this.partialBytes);
+    const start = this.position;
+    this.position += this.partialBytes + newline;
+    this.partial = [];
+    this.partialBytes = 0;
+    try {
+      return { text: this.decoder.decode(bytes), start, end: this.position };
+    } catch {
+      throw new MalformedExportError(
+        `Shopify catalog export has invalid UTF-8 at byte ${start}`,
+      );
+    }
+  }
+
+  private async fill() {
+    if (!this.reader) {
+      this.ended = true;
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const { done, value } = await Promise.race([
+      this.reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Shopify catalog export download stalled")),
+          EXPORT_READ_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (done) {
+      // A connection that closed early is transient, never a short export.
+      if (this.size !== null && this.received !== this.size)
+        throw new Error("Shopify catalog export download was cut off");
+      this.ended = true;
+      return;
+    }
+    const dropped = Math.min(this.skip, value.length);
+    this.skip -= dropped;
+    this.chunk = value.subarray(dropped);
+    this.index = 0;
+    this.received += this.chunk.length;
+    if (this.received > this.limit)
+      throw new ExportCapacityError(
+        `Shopify catalog export exceeds ${this.limit} bytes`,
+      );
+  }
+}
+
+function parseExportRecord(line: ExportLine): Record<string, unknown> {
+  let record: unknown = null;
+  try {
+    record = JSON.parse(line.text);
+  } catch {}
+  if (!record || typeof record !== "object" || Array.isArray(record))
+    throw new MalformedExportError(
+      `Shopify catalog export has an invalid line at byte ${line.start}`,
+    );
+  return record as Record<string, unknown>;
+}
+
+// Reads the export segment by segment. Shopify's grouped output lists each
+// product's images and variants directly after it, so a segment ends right
+// before a product line. A child of any other product is malformed.
+export class ExportSegments {
+  private lookahead: ExportLine | null = null;
+
+  constructor(private readonly lines: ExportLines) {}
+
+  // The next segment, or null at the end of the export.
+  async next(): Promise<ExportSegment | null> {
+    const start = this.lookahead?.start ?? this.lines.position;
+    const products: ExportProduct[] = [];
+    let current: ExportProduct | undefined;
+    let priced = false;
+    let productBytes = 0;
+    let retained = 0;
+    for (;;) {
+      const line = this.lookahead ?? (await this.lines.next());
+      this.lookahead = null;
+      if (!line) break;
+      if (!line.text.trim()) continue;
+      const record = parseExportRecord(line);
+      const bytes = line.end - line.start;
+      if (record.__parentId === undefined) {
+        if (products.length === BATCH_SIZE || retained >= SEGMENT_BYTES) {
+          this.lookahead = line;
+          return { start, end: line.start, products };
+        }
+        if (typeof record.id !== "string")
+          throw new MalformedExportError(
+            `Shopify catalog export has a product without an ID at byte ${line.start}`,
+          );
+        current = {
+          product: record as unknown as BulkJsonlProduct,
+          images: [],
+          price: null,
+        };
+        products.push(current);
+        priced = false;
+        productBytes = bytes;
+      } else if (record.__parentId !== current?.product.id) {
+        throw new MalformedExportError(
+          `Shopify catalog export lists a child outside its product at byte ${line.start}`,
+        );
+      } else if (record.url && record.price === undefined) {
+        current.images.push(record.url as string);
+        productBytes += bytes;
+      } else {
+        // Only the first variant's price is read.
+        if (record.price !== undefined && !priced) {
+          current.price = record.price as string | null;
+          priced = true;
+        }
+        continue;
+      }
+      retained += bytes;
+      if (productBytes > SEGMENT_BYTES)
+        throw new ExportCapacityError(
+          `Shopify product ${current.product.id} exceeds ${SEGMENT_BYTES} bytes of export data`,
+        );
+    }
+    return products.length > 0
+      ? { start, end: this.lines.position, products }
+      : null;
+  }
+
+  close() {
+    return this.lines.close();
+  }
+}
+
+// Plans the batches of one segment. Batch indexes are segment indexes, so
+// keys stay deterministic: an index may have an upsert batch, a withdrawal
+// batch, both or neither.
+export function planSegment(
+  segment: ExportSegment,
+  index: number,
+  context: BackfillContext,
+): SegmentPlan {
+  let eligible = 0;
+  let unknown = 0;
+  const upserts: UpsertProductListingData[] = [];
+  const withdrawals: WithdrawProductListingData[] = [];
+  const rejected: string[] = [];
+  for (const { product, images, price } of segment.products) {
+    const action = classifyShopifyBackfillAction(product);
+    if (action === "withdraw") {
+      // Drafts, archived and unpublished products in the export are withdrawn
+      // by their own ID. Nothing is withdrawn for being absent from it.
+      withdrawals.push(transformWithdrawal(product));
+    } else if (action === "unknown") {
+      unknown++;
+      rejected.push(extractShopifyNumericId(product.id));
+    } else if (action === "upsert") {
+      eligible++;
+      try {
+        upserts.push(
+          transformProduct(
+            product,
+            images,
+            price,
+            context.primaryLocale,
+            context.currencyCode,
+            context.shopDomain,
+          ),
+        );
+      } catch {
+        rejected.push(extractShopifyNumericId(product.id));
+      }
+    }
+  }
+  const batches: BackfillBatch[] = [];
+  if (upserts.length > 0) batches.push({ verb: "put", index, items: upserts });
+  if (withdrawals.length > 0)
+    batches.push({ verb: "delete", index, items: withdrawals });
+  return { eligible, rejected, unknown, batches };
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +971,7 @@ interface BulkOperationNodeResponse {
       errorCode: string | null;
       objectCount?: string;
       rootObjectCount?: string;
+      fileSize?: string | null;
       url: string | null;
     } | null;
   };
@@ -692,10 +984,10 @@ function parseCount(value: unknown): number | null {
   return Number.isSafeInteger(count) ? count : null;
 }
 
-export async function fetchBulkOperationResult(
+async function readBulkOperation(
   graphqlRequest: GraphqlRequestFn,
   bulkOperationId: string,
-): Promise<BulkOperationResult> {
+) {
   const json = (await graphqlRequest(BULK_OPERATION_STATUS_QUERY, {
     id: bulkOperationId,
   })) as BulkOperationNodeResponse;
@@ -704,8 +996,14 @@ export async function fetchBulkOperationResult(
   if (errorMessage) {
     throw new Error(`Failed to query bulk operation: ${errorMessage}`);
   }
+  return json.data?.node;
+}
 
-  const node = json.data?.node;
+export async function fetchBulkOperationResult(
+  graphqlRequest: GraphqlRequestFn,
+  bulkOperationId: string,
+): Promise<BulkOperationResult> {
+  const node = await readBulkOperation(graphqlRequest, bulkOperationId);
   if (node?.status !== "COMPLETED" || node.errorCode)
     throw new Error("Shopify catalog export did not complete");
   if (!node.url && node.objectCount !== "0")
@@ -714,7 +1012,23 @@ export async function fetchBulkOperationResult(
   return {
     url: node.url ?? null,
     rootObjectCount: parseCount(node.rootObjectCount),
+    fileSize: parseCount(node.fileSize),
   };
+}
+
+// Where Shopify's export stands while the import waits for it. Anything but
+// a finished or ended operation, including a missing one, is still running
+// until the export window closes.
+export async function readBulkOperationState(
+  graphqlRequest: GraphqlRequestFn,
+  bulkOperationId: string,
+): Promise<BulkOperationState> {
+  const status = (await readBulkOperation(graphqlRequest, bulkOperationId))
+    ?.status;
+  if (status === "COMPLETED") return "completed";
+  if (status === "FAILED" || status === "CANCELED" || status === "EXPIRED")
+    return "failed";
+  return "running";
 }
 
 // ---------------------------------------------------------------------------
@@ -873,71 +1187,63 @@ export async function putShopifyIngestionConfiguration(
 // Process bulk operation results (resumable catalog import steps)
 // ---------------------------------------------------------------------------
 
-export async function downloadBackfillExport(
+// Opens the export at a segment boundary. Shopify's signed result URL serves
+// byte ranges, so a resumed step downloads only what it has not consumed. A
+// server that ignores the range is skipped forward instead.
+export async function openBackfillExport(
   result: BulkOperationResult,
-): Promise<string> {
-  if (!result.url) return "";
+  offset: number,
+): Promise<ExportSegments> {
+  const empty = () => new ExportSegments(new ExportLines(null, offset));
+  if (!result.url || (result.fileSize !== null && offset >= result.fileSize))
+    return empty();
+  // The timeout covers the response only; each chunk has its own, so a step
+  // can stream for longer than one timeout.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EXPORT_READ_TIMEOUT_MS);
   const response = await fetch(result.url, {
-    signal: AbortSignal.timeout(20_000),
-  });
+    headers: offset > 0 ? { Range: `bytes=${offset}-` } : {},
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
+  if (offset > 0 && response.status === 416) {
+    await response.body?.cancel();
+    return empty();
+  }
   if (!response.ok) {
+    await response.body?.cancel();
     throw new Error(`Failed to download JSONL: ${response.status}`);
   }
-  return response.text();
+  const ranged = response.status === 206;
+  if (
+    ranged &&
+    !response.headers.get("Content-Range")?.startsWith(`bytes ${offset}-`)
+  ) {
+    await response.body?.cancel();
+    throw new Error("Shopify catalog export returned another byte range");
+  }
+  return new ExportSegments(
+    new ExportLines(response.body?.getReader() ?? null, offset, {
+      skip: ranged ? 0 : offset,
+      size: result.fileSize,
+    }),
+  );
 }
 
-export function planBackfill(
-  jsonl: string,
-  rootObjectCount: number | null,
-  context: BackfillContext,
-): BackfillPlan {
-  const { products, images, variants } = parseProductsFromJsonl(jsonl);
-  // Only an export whose product rows match Shopify's root count is complete.
-  let complete = rootObjectCount === products.length;
-  let eligible = 0;
-  const upserts: UpsertProductListingData[] = [];
-  const withdrawals: WithdrawProductListingData[] = [];
-  const rejected: string[] = [];
-  for (const product of products) {
-    const action = classifyShopifyBackfillAction(product);
-    if (action === "withdraw") {
-      // Drafts, archived and unpublished products in the export are withdrawn
-      // by their own ID. Nothing is withdrawn for being absent from it.
-      withdrawals.push(transformWithdrawal(product));
-    } else if (action === "unknown") {
-      complete = false;
-      rejected.push(extractShopifyNumericId(product.id));
-    } else if (action === "upsert") {
-      eligible++;
-      try {
-        upserts.push(
-          transformProduct(
-            product,
-            images.get(product.id) ?? [],
-            variants.get(product.id) ?? null,
-            context.primaryLocale,
-            context.currencyCode,
-            context.shopDomain,
-          ),
-        );
-      } catch {
-        rejected.push(extractShopifyNumericId(product.id));
-      }
-    }
-  }
-  const batches: BackfillBatch[] = [];
-  for (const [verb, items] of [
-    ["put", upserts],
-    ["delete", withdrawals],
-  ] as const) {
-    for (let i = 0; i < items.length; i += BATCH_SIZE)
-      batches.push({
-        verb,
-        index: i / BATCH_SIZE,
-        items: items.slice(i, i + BATCH_SIZE),
-      });
-  }
-  return { total: products.length, eligible, complete, rejected, batches };
+// Progress of the counted segments, reported in every status.
+export function catalogProgress(job: CatalogImportJob) {
+  return {
+    total: job.total,
+    eligible: job.eligible,
+    withdrawn: job.withdrawn,
+    failed: job.failed + job.rejected,
+  };
+}
+
+function exceedsCapacity(result: BulkOperationResult) {
+  return (
+    (result.rootObjectCount ?? 0) > MAX_EXPORT_PRODUCTS ||
+    (result.fileSize ?? 0) > MAX_EXPORT_BYTES
+  );
 }
 
 async function submitBackfillBatch(
@@ -971,12 +1277,65 @@ async function submitBackfillBatch(
   }
 }
 
-// Runs one bounded step of an import. `checkpoint` persists the job after
-// every admitted batch, so an interrupted step resumes at the next batch and
-// a replayed batch reuses its idempotency key. It throws
-// SupersededImportError once the job's generation was retired; every batch
-// and resend is preceded by a successful checkpoint. Throws on Shopify read
-// errors so the caller can retry the step.
+// Sends one segment's batches in order. The segment's counts are recorded
+// with its first checkpoint and the job moves on to the next segment with its
+// last one, so every checkpoint holds consistent counts.
+async function importSegment(
+  job: CatalogImportJob,
+  segment: ExportSegment,
+  context: BackfillContext,
+  checkpoint: (job: CatalogImportJob) => Promise<void>,
+) {
+  if (segment.start !== job.offset)
+    throw new Error("Catalog import segment does not start at its checkpoint");
+  const plan = planSegment(segment, job.cursor, context);
+  let counted = job.part > 0;
+  const count = () => {
+    if (counted) return;
+    counted = true;
+    if (plan.rejected.length > 0 && job.rejected < 50)
+      console.error(
+        `Backfill cannot classify or map ${plan.rejected.length} Shopify products: ${plan.rejected.slice(0, 50 - job.rejected).join(", ")}`,
+      );
+    job.total += segment.products.length;
+    job.eligible += plan.eligible;
+    job.rejected += plan.rejected.length;
+    job.unknown += plan.unknown;
+  };
+  const advance = () => {
+    count();
+    job.offset = segment.end;
+    job.cursor++;
+    job.part = 0;
+  };
+  if (plan.batches.length === 0) {
+    advance();
+    await checkpoint(job);
+    return;
+  }
+  for (let part = job.part; part < plan.batches.length; part++) {
+    const batch = plan.batches[part];
+    const failures = await submitBackfillBatch(batch, context, () =>
+      checkpoint(job),
+    );
+    count();
+    job.failed += failures.length;
+    if (batch.verb === "delete")
+      job.withdrawn += batch.items.length - failures.length;
+    job.part = part + 1;
+    if (job.part === plan.batches.length) advance();
+    await checkpoint(job);
+  }
+}
+
+// Runs one bounded step of an import. It streams the export from the job's
+// checkpoint, one segment at a time, and never holds more than one segment.
+// `checkpoint` persists the job after every admitted batch, so an
+// interrupted step resumes at the next batch and a replayed batch reuses its
+// idempotency key. It throws SupersededImportError once the job's generation
+// was retired; every batch and resend is preceded by a successful checkpoint.
+// Throws on Shopify read and download errors so the caller can retry the
+// step.
 export async function runCatalogImportStep(
   job: CatalogImportJob,
   context: BackfillContext,
@@ -987,6 +1346,10 @@ export async function runCatalogImportStep(
   const result =
     job.result ??
     (await fetchBulkOperationResult(graphqlRequest, job.bulkOperationId));
+  const failed = (error: CatalogImportError) => ({
+    done: true,
+    status: { phase: "failed" as const, ...catalogProgress(job), error },
+  });
   // Every step writes with the current installation's access and publication.
   // A revoked scope, a channel rebound to another source or a replaced
   // publication invalidates the whole snapshot; an unreadable publication is a
@@ -997,73 +1360,78 @@ export async function runCatalogImportStep(
   );
   if (publication.state === "unavailable")
     throw new Error("Shopify channel publication could not be read");
-  if (
-    publication.state !== "ready" ||
-    publication.publicationId !== context.publicationId
-  ) {
-    return {
-      done: true,
-      status: {
-        phase: "failed",
-        total: 0,
-        failed: 0,
-        error:
-          publication.state === "ready"
-            ? "PUBLICATION_CHANGED"
-            : CHANNEL_PUBLICATION_ERRORS[publication.state],
-      },
-    };
+  if (publication.state !== "ready")
+    return failed(CHANNEL_PUBLICATION_ERRORS[publication.state]);
+  if (publication.publicationId !== context.publicationId)
+    return failed("PUBLICATION_CHANGED");
+  // Shopify's own counts reject an oversized export before any download.
+  if (exceedsCapacity(result)) {
+    console.error(
+      `Backfill export ${job.bulkOperationId} exceeds the supported size: ${result.rootObjectCount} products, ${result.fileSize} bytes`,
+    );
+    return failed("EXPORT_TOO_LARGE");
   }
   if (!job.result) {
     job.result = result;
     await checkpoint(job);
   }
 
-  const plan = planBackfill(
-    await downloadBackfillExport(result),
-    result.rootObjectCount,
-    context,
-  );
-  // The batch budget starts after preparation, so a slow export download or
-  // parse can never starve batch submission.
+  const segments = await openBackfillExport(result, job.offset);
+  // The budget starts once the export responds, and every step imports at
+  // least one segment, so a slow download can never starve submission.
   const deadline = Date.now() + budgetMs;
-  // Fence before sending: the import may have been retired meanwhile.
-  await checkpoint(job);
-  if (job.cursor === 0 && plan.rejected.length > 0) {
-    console.error(
-      `Backfill cannot classify or map ${plan.rejected.length} Shopify products: ${plan.rejected.slice(0, 50).join(", ")}`,
-    );
-  }
-  while (job.cursor < plan.batches.length && Date.now() < deadline) {
-    const batch = plan.batches[job.cursor];
-    const failures = await submitBackfillBatch(batch, context, () =>
-      checkpoint(job),
-    );
-    job.failed += failures.length;
-    if (batch.verb === "delete")
-      job.withdrawn += batch.items.length - failures.length;
-    job.cursor++;
-    await checkpoint(job);
-  }
-
-  const counts = {
-    total: plan.total,
-    eligible: plan.eligible,
-    withdrawn: job.withdrawn,
-    failed: job.failed + plan.rejected.length,
-  };
-  if (job.cursor < plan.batches.length)
-    return { done: false, status: { phase: "processing", ...counts } };
-  // Unknown membership or a truncated export is never a complete catalog.
-  return plan.complete
-    ? {
-        done: true,
-        status: { phase: counts.failed ? "failed" : "submitted", ...counts },
+  try {
+    for (let first = true; first || Date.now() < deadline; first = false) {
+      const segment = await segments.next();
+      if (!segment) {
+        // Only an export whose product rows match Shopify's root count and
+        // whose memberships were all explicit is complete. Unknown membership
+        // or a short export is never a complete catalog.
+        const complete =
+          result.rootObjectCount === job.total && job.unknown === 0;
+        const progress = catalogProgress(job);
+        return complete
+          ? {
+              done: true,
+              status: {
+                phase: progress.failed ? "failed" : "submitted",
+                ...progress,
+              },
+            }
+          : failed("INCOMPLETE_EXPORT");
       }
-    : {
-        done: true,
-        status: { phase: "failed", ...counts, error: "INCOMPLETE_EXPORT" },
-      };
+      if (job.total + segment.products.length > MAX_EXPORT_PRODUCTS)
+        throw new ExportCapacityError(
+          `Shopify catalog export exceeds ${MAX_EXPORT_PRODUCTS} products`,
+        );
+      // Fence before sending: the import may have been retired meanwhile.
+      await checkpoint(job);
+      await importSegment(job, segment, context, checkpoint);
+    }
+  } catch (error) {
+    // The same file is read on every retry: what was submitted stays
+    // admitted, and the import ends as failed without further batches.
+    if (
+      error instanceof MalformedExportError ||
+      error instanceof ExportCapacityError
+    ) {
+      console.error(
+        `Backfill export ${job.bulkOperationId} cannot be imported: ${error.message}`,
+      );
+      return failed(
+        error instanceof ExportCapacityError
+          ? "EXPORT_TOO_LARGE"
+          : "INCOMPLETE_EXPORT",
+      );
+    }
+    throw error;
+  } finally {
+    await segments.close();
+  }
+  return {
+    done: false,
+    status: { phase: "processing", ...catalogProgress(job) },
+  };
 }
 
 // ---------------------------------------------------------------------------

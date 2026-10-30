@@ -59,11 +59,19 @@ export class ImporterStorage {
 
 export function memoryKv() {
   const entries = new Map<string, string>();
+  // The expiration TTL of each stored key.
+  const ttls = new Map<string, number | undefined>();
   return {
     entries,
+    ttls,
     get: async (key: string) => entries.get(key) ?? null,
-    put: async (key: string, value: string, _options?: unknown) => {
+    put: async (
+      key: string,
+      value: string,
+      options?: { expirationTtl?: number },
+    ) => {
       entries.set(key, value);
+      ttls.set(key, options?.expirationTtl);
     },
     delete: async (key: string) => {
       entries.delete(key);

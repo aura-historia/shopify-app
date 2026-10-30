@@ -18,6 +18,9 @@ export const CATALOG_IMPORT_ERRORS = [
   "SHOPIFY_READ_FAILED",
   "PUBLICATION_CHANGED",
   "INCOMPLETE_EXPORT",
+  "EXPORT_TOO_LARGE",
+  "EXPORT_EXPIRED",
+  "IMPORT_EXPIRED",
 ] as const;
 export type CatalogImportError = (typeof CATALOG_IMPORT_ERRORS)[number];
 

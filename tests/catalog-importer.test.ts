@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import {
+  BACKFILL_CONTEXT_TTL_SECONDS,
   type BackfillContext,
+  CATALOG_EXPORT_WINDOW_MS,
+  CATALOG_IMPORT_WINDOW_MS,
   type CatalogImportJob,
   loadBackfillContext,
 } from "../app/backfill.server";
@@ -15,7 +18,9 @@ import {
 } from "./helpers/catalog-importer";
 import { channelResponse, isChannelQuery } from "./helpers/channel-fixtures";
 
-const { CATALOG_MAX_ATTEMPTS } = await import("../workers/catalog-importer");
+const { CATALOG_EXPORT_POLL_MS, CATALOG_MAX_ATTEMPTS } = await import(
+  "../workers/catalog-importer"
+);
 
 const shop = "importer.myshopify.com";
 const bulkOperationId = "gid://shopify/BulkOperation/321";
@@ -56,7 +61,14 @@ function catalog(count = 1) {
   ).join("\n");
 }
 
-function shopify({ fail = false, publicationFailures = 0, products = 1 } = {}) {
+// Shopify reads of the importer. `exportStatus` is the bulk operation's
+// status on each read; it throws to fail that read.
+function shopify({
+  fail = false,
+  publicationFailures = 0,
+  products = 1,
+  exportStatus = (): string => "COMPLETED",
+} = {}) {
   let publicationReads = 0;
   return mock.fn(async (query: string, variables: Record<string, unknown>) => {
     if (fail) throw new Error("Shopify unavailable");
@@ -77,7 +89,7 @@ function shopify({ fail = false, publicationFailures = 0, products = 1 } = {}) {
     return {
       data: {
         node: {
-          status: "COMPLETED",
+          status: exportStatus(),
           objectCount: String(products),
           rootObjectCount: String(products),
           url: resultUrl,
@@ -450,9 +462,10 @@ describe("catalog import generations", () => {
       ),
       true,
     );
-    // A delayed completion of the older export admits nothing.
+    // A delayed completion of the older export admits nothing; only the
+    // newer export's next check is armed.
     await runtime.importer.start(bulkOperationId);
-    assert.equal(runtime.storage.alarm, null);
+    assert.ok((runtime.storage.alarm ?? 0) > Date.now() + 60_000);
     await runtime.importer.start(newerOperationId);
     const { batches, fetcher } = network();
     await withFetch(fetcher, () => runtime.importer.alarm());
@@ -479,7 +492,7 @@ describe("catalog import generations", () => {
     await imports.queue(newer, context({ bulkOperationId: newerOperationId }));
     await importer.start(bulkOperationId);
     await importer.exportFailed(bulkOperationId);
-    assert.equal(storage.alarm, null);
+    assert.ok((storage.alarm ?? 0) > Date.now() + 60_000);
     assert.equal((await job())?.bulkOperationId, newerOperationId);
     assert.equal((await job())?.admitted, false);
     assert.equal((await imports.status())?.phase, "queued");
@@ -583,5 +596,219 @@ describe("catalog import generations", () => {
       ],
     );
     assert.equal((await runtime.importer.status())?.phase, "submitted");
+  });
+});
+
+describe("catalog import lifetime", () => {
+  // `new Date()` and `Date.now()` advance only with the mocked clock.
+  beforeEach(() => mock.timers.enable({ apis: ["Date"], now: Date.now() }));
+  afterEach(() => mock.timers.reset());
+
+  async function queued(graphql = shopify()) {
+    const runtime = importerRuntime(graphql);
+    const generation = (await runtime.imports.begin()) as number;
+    assert.equal(await runtime.imports.queue(generation, context()), true);
+    return { ...runtime, generation, queuedAt: Date.now() };
+  }
+
+  it("keeps the context for the export and import windows, released when the import ends", async () => {
+    const runtime = await queued();
+    assert.equal(
+      runtime.kv.ttls.get(contextKey(runtime.generation)),
+      BACKFILL_CONTEXT_TTL_SECONDS,
+    );
+    assert.ok(
+      BACKFILL_CONTEXT_TTL_SECONDS * 1000 >
+        CATALOG_EXPORT_WINDOW_MS + CATALOG_IMPORT_WINDOW_MS,
+    );
+    // Shopify exported for longer than a day less a minute, and the import
+    // ran almost a day after that: the context is still there.
+    mock.timers.tick(CATALOG_EXPORT_WINDOW_MS - 60_000);
+    await runtime.importer.start(bulkOperationId);
+    mock.timers.tick(CATALOG_IMPORT_WINDOW_MS - 60_000);
+    const { batches, fetcher } = network();
+    await withFetch(fetcher, () => runtime.importer.alarm());
+    assert.equal(batches.length, 1);
+    assert.equal((await runtime.importer.status())?.phase, "submitted");
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+  });
+
+  it("keeps a Shopify export queued past one hour and imports it when it completes", async () => {
+    let state = "RUNNING";
+    const runtime = await queued(shopify({ exportStatus: () => state }));
+    assert.equal(
+      runtime.storage.alarm,
+      runtime.queuedAt + CATALOG_EXPORT_POLL_MS,
+    );
+    // Two hours of export: every check keeps the import queued and current.
+    for (let check = 0; check < 24; check++) {
+      mock.timers.tick(CATALOG_EXPORT_POLL_MS);
+      await runtime.importer.alarm();
+      assert.equal(runtime.storage.alarm, Date.now() + CATALOG_EXPORT_POLL_MS);
+    }
+    assert.equal(Date.now() - runtime.queuedAt, 2 * 3600_000);
+    assert.equal((await runtime.importer.status())?.phase, "queued");
+    assert.equal((await runtime.job())?.admitted, false);
+    assert.ok(runtime.kv.entries.has(contextKey(runtime.generation)));
+    state = "COMPLETED";
+    await runtime.importer.start(bulkOperationId);
+    // The admitted import runs past the hour as well.
+    mock.timers.tick(3600_000);
+    const { batches, fetcher } = network();
+    await withFetch(fetcher, () => runtime.importer.alarm());
+    assert.deepEqual(
+      batches.map(({ key }) => key),
+      ["shopify-backfill-321-put-0"],
+    );
+    assert.equal((await runtime.importer.status())?.phase, "submitted");
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+  });
+
+  it("admits a completed export whose webhook was lost", async () => {
+    const runtime = await queued();
+    mock.timers.tick(CATALOG_EXPORT_POLL_MS);
+    await runtime.importer.alarm();
+    const job = (await runtime.job()) as CatalogImportJob;
+    assert.equal(job.admitted, true);
+    assert.equal(job.admittedAt, Date.now());
+    assert.equal(runtime.storage.alarm, Date.now());
+    const { batches, fetcher } = network();
+    await withFetch(fetcher, () => runtime.importer.alarm());
+    assert.equal(batches.length, 1);
+    assert.equal((await runtime.importer.status())?.phase, "submitted");
+  });
+
+  it("ends the import when Shopify reports the export failed", async () => {
+    const runtime = await queued(shopify({ exportStatus: () => "CANCELED" }));
+    mock.timers.tick(CATALOG_EXPORT_POLL_MS);
+    await runtime.importer.alarm();
+    assert.equal(await runtime.job(), undefined);
+    assert.equal(runtime.storage.alarm, null);
+    assert.equal(
+      (await runtime.importer.status())?.error,
+      "SHOPIFY_READ_FAILED",
+    );
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+  });
+
+  it("keeps checking an export Shopify cannot report on", async () => {
+    const runtime = await queued(
+      shopify({
+        exportStatus: () => {
+          throw new Error("Throttled");
+        },
+      }),
+    );
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      mock.timers.tick(CATALOG_EXPORT_POLL_MS);
+      await runtime.importer.alarm();
+    } finally {
+      warn.mock.restore();
+    }
+    assert.equal(warn.mock.callCount(), 1);
+    assert.equal(runtime.storage.alarm, Date.now() + CATALOG_EXPORT_POLL_MS);
+    assert.equal((await runtime.importer.status())?.phase, "queued");
+    assert.ok(runtime.kv.entries.has(contextKey(runtime.generation)));
+  });
+
+  it("ends an export that did not finish within its window", async () => {
+    let reads = 0;
+    const runtime = await queued(
+      shopify({
+        exportStatus: () => {
+          reads++;
+          return "RUNNING";
+        },
+      }),
+    );
+    // The last check is due when the window closes.
+    mock.timers.tick(CATALOG_EXPORT_WINDOW_MS - 60_000);
+    await runtime.importer.alarm();
+    assert.equal(
+      runtime.storage.alarm,
+      runtime.queuedAt + CATALOG_EXPORT_WINDOW_MS,
+    );
+    mock.timers.tick(60_000);
+    await runtime.importer.alarm();
+    assert.equal(reads, 1);
+    const status = await runtime.importer.status();
+    assert.equal(status?.phase, "failed");
+    assert.equal(status?.error, "EXPORT_EXPIRED");
+    assert.equal(await runtime.job(), undefined);
+    assert.equal(runtime.storage.alarm, null);
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+    // A late completion admits nothing.
+    await runtime.importer.start(bulkOperationId);
+    assert.equal(runtime.storage.alarm, null);
+  });
+
+  it("refuses a completion delivered after the export window even without an alarm", async () => {
+    const runtime = await queued();
+    runtime.storage.alarm = null;
+    mock.timers.tick(CATALOG_EXPORT_WINDOW_MS);
+    await runtime.importer.start(bulkOperationId);
+    assert.equal(await runtime.job(), undefined);
+    assert.equal((await runtime.importer.status())?.error, "EXPORT_EXPIRED");
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+  });
+
+  it("ends an import that outlived its window and reports its progress", async () => {
+    const runtime = await queued();
+    await runtime.importer.start(bulkOperationId);
+    const job = (await runtime.job()) as CatalogImportJob;
+    await runtime.storage.put("job", {
+      ...job,
+      offset: 4096,
+      cursor: 1,
+      total: 100,
+      eligible: 90,
+      withdrawn: 10,
+      rejected: 1,
+    });
+    mock.timers.tick(CATALOG_IMPORT_WINDOW_MS);
+    const { batches, fetcher } = network();
+    await withFetch(fetcher, () => runtime.importer.alarm());
+    assert.equal(fetcher.mock.callCount(), 0);
+    assert.deepEqual(batches, []);
+    const status = await runtime.importer.status();
+    assert.deepEqual(
+      { ...status, updatedAt: undefined },
+      {
+        phase: "failed",
+        total: 100,
+        eligible: 90,
+        withdrawn: 10,
+        failed: 1,
+        error: "IMPORT_EXPIRED",
+        updatedAt: undefined,
+      },
+    );
+    assert.equal(await runtime.job(), undefined);
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+  });
+
+  it("never resumes an import planned before streamed exports", async () => {
+    const runtime = importerRuntime();
+    const generation = await runtime.admitted();
+    const {
+      queuedAt: _queuedAt,
+      offset: _offset,
+      ...legacy
+    } = (await runtime.job()) as CatalogImportJob;
+    await runtime.storage.put("job", legacy);
+    const { fetcher } = network();
+    await withFetch(fetcher, () => runtime.importer.alarm());
+    assert.equal(fetcher.mock.callCount(), 0);
+    assert.equal(await runtime.job(), undefined);
+    assert.equal((await runtime.importer.status())?.error, "INCOMPLETE_EXPORT");
+    assert.equal(runtime.kv.entries.has(contextKey(generation)), false);
+    // An unadmitted one is never admitted.
+    await runtime.storage.put("job", { ...legacy, admitted: false });
+    await runtime.importer.start(bulkOperationId);
+    assert.equal(
+      (await runtime.storage.get<CatalogImportJob>("job"))?.admitted,
+      false,
+    );
   });
 });

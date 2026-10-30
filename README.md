@@ -114,20 +114,44 @@ The app is a channel-config-extension sales channel, so it manages explicit chan
 
 Imports withdraw only products that are in the Shopify export and known to be ineligible: `DRAFT`/`ARCHIVED` products and `ACTIVE` products not published to the channel, each by its own Shopify product ID. Withdrawing a product that was never imported is a no-op downstream. Aura listings are never read or withdrawn because they are absent from the export.
 
-An import is reported complete only when Shopify reported `COMPLETED` without an error code, the number of product rows equals the operation's `rootObjectCount`, and every membership read was explicit. Otherwise the import is reported as failed with a retry.
+An import is reported complete only when Shopify reported `COMPLETED` without an error code, the whole export was read, the number of product rows equals the operation's `rootObjectCount`, and every membership read was explicit. Otherwise the import is reported as failed with a retry.
 
 ### Resumable processing
 
 `bulk_operations/finish` only admits the export to the per-shop `CatalogImporter` Durable Object (`CATALOG_IMPORTER` binding, `catalog-importer-v1` SQLite migration). The webhook returns 503 if admission fails, so Shopify retries. Duplicate deliveries do not restart an admitted import, and deliveries for an export that is no longer the current import admit nothing.
 
-Each alarm prepares the export and then submits batches for up to 20 seconds, so a slow download or parse cannot starve submission. It checkpoints after every batch of 100. An evicted or failed step resumes at the next batch, and a batch whose checkpoint was lost is resent with its original idempotency key: `shopify-backfill-<operation>-<put|delete>-<index>`. Failed Shopify reads, including an unreadable publication, are retried with exponential backoff, at most six times, before the import is reported as failed. Only a confirmed missing scope, missing or rebound channel connection, missing publication or replaced publication ends an import immediately.
+Each alarm streams the export from its checkpoint and submits batches for up to 20 seconds; the budget starts once the export responds, and every alarm imports at least one segment, so a slow download cannot starve submission. Failed Shopify reads and downloads, including an unreadable publication, are retried with exponential backoff, at most six times, before the import is reported as failed with the progress made so far. Only a confirmed missing scope, missing or rebound channel connection, missing publication or replaced publication ends an import immediately.
 
-Current limits: every step downloads and parses the entire export in memory before
-submitting batches. The submission budget does not bound that memory use. The KV
-context expires one hour after export submission, including time spent waiting for
-Shopify. OAuth exchange, source configuration, export downloads and each catalog
-batch request have a 20-second timeout. Large catalogs need a separate streaming
-and checkpointing design before claiming support beyond these limits.
+#### Streamed exports
+
+The export is submitted with `groupObjects: true`, so Shopify lists each product's images and variants directly after it; without it, Shopify does not guarantee that order. The importer reads the JSONL line by line from a stream, splitting on bytes, so a line or a multibyte character split across network chunks is joined before it is decoded and every offset is a UTF-8 byte offset.
+
+- **Segments.** The export is consumed in segments of consecutive products. A segment ends right before a product line once it holds 100 products or 1 MiB of retained product and image lines, so it never separates a product from its images or variants. Variant lines after a product's first one are read and skipped; they do not count towards the segment.
+- **Batches and keys.** Segment *n* yields at most one upsert and one withdrawal batch, keyed `shopify-backfill-<operation>-put-<n>` and `shopify-backfill-<operation>-delete-<n>`. Segment boundaries depend only on the immutable export, so retries and restarts rebuild the same batches under the same keys.
+- **Checkpoints.** The job stores the byte offset and index of the next segment, the batches of that segment already sent, and the counts so far. It is checkpointed before every segment's batches (which also fences them against a retired generation) and after every batch. An evicted, failed or interrupted step resumes at that offset with an HTTP `Range` request, so a resumed step neither downloads nor parses the consumed part again; a server that ignores the range is skipped forward to the offset. A batch whose checkpoint was lost is resent with its original key and content.
+- **Truthful outcomes.** A download that ends before Shopify's `fileSize` or stalls for 20 seconds is retried from the checkpoint. A line that is not valid UTF-8 or JSON, or a child that does not directly follow its product, ends the import as `INCOMPLETE_EXPORT`; the malformed segment is not submitted. Batches already admitted stay admitted, nothing is withdrawn for products the import did not read, and a partial import is never reported complete.
+
+#### Supported catalog, memory and lifetime
+
+These limits are enforced in code, not measured under live load:
+
+| Limit | Value | Enforcement |
+| --- | --- | --- |
+| Products in the export | 100,000 | Shopify's `rootObjectCount` before any download, then while streaming |
+| Export file | 1 GiB (UTF-8 bytes of all product, image and variant lines) | Shopify's `fileSize` before any download, then while streaming |
+| One JSONL line | 64 KiB | While streaming |
+| One product with its images | 1 MiB | While streaming |
+| Retained per step | One segment: at most 100 products and about 2 MiB of product and image lines | By construction |
+| Shopify export | 24 hours from submission | Importer alarm and completion webhook |
+| Import | 24 hours from admission | Importer alarm |
+
+The export lists every product of the store, not only those published to Aura, so the product limit applies to the whole catalog. A larger export ends as `EXPORT_TOO_LARGE`: before anything is downloaded when Shopify reports its size, otherwise when streaming passes a limit, after the segments before it were submitted. The merchant is asked to contact support.
+
+While Shopify exports, the importer checks the bulk operation every five minutes. A completed export is admitted even if its webhook was lost, a failed or canceled one ends the import as a read failure, and each check keeps the queued status current. An export still running after 24 hours ends as `EXPORT_EXPIRED`, and an import still running 24 hours after admission ends as `IMPORT_EXPIRED` with its progress; both are retried with “Import catalog again”. Shopify itself allows ten days per export, but the import does not keep credentials that long.
+
+The generation's KV context, which carries the Aura token, is stored with a TTL of 49 hours: both windows plus an hour. An active import therefore never loses it, and it is never renewed. It is released as soon as the import finishes, fails, expires or is retired by a newer import, disconnect, uninstall or connection replacement; the TTL only bounds a copy whose release failed. The job itself holds no credentials. OAuth exchange, source configuration, the export's response and each of its chunks, and each catalog batch request have a 20-second timeout.
+
+Offline tests cover generated exports of up to 2,500 products with multibyte text read in chunks down to one byte, segment byte bounds, the line, product and export limits, malformed, partial and ungrouped lines, interrupted and cut-off downloads resumed with byte ranges, a server that ignores ranges, and exports and imports that run past the former one-hour limit or expire. No live load test backs these limits.
 
 ### Import generations
 
@@ -156,9 +180,10 @@ the current generation too:
 - **Credentials per generation.** The job stores no credentials. Each generation's
   Aura token and export metadata are stored in their own KV context
   (`aura-historia:backfill:<shop>:<generation>`), written before the job that uses them
-  and released when the generation finishes or is retired. Releasing an older context
-  never touches a newer one. A context whose generation was retired while it was being
-  stored is released at once.
+  and released when the generation finishes or is retired. Its TTL covers the export and
+  import windows (see [Supported catalog, memory and lifetime](#supported-catalog-memory-and-lifetime)).
+  Releasing an older context never touches a newer one. A context whose generation was
+  retired while it was being stored is released at once.
 - **Requests in flight.** Every batch, and every resend of an unconfirmed batch, is
   preceded by a successful check of the generation. Once a stop or replacement is
   acknowledged, no batch is sent for the old generation. A request that was already in
@@ -166,10 +191,12 @@ the current generation too:
   stays admitted; it is not withdrawn. Batch idempotency keys are unchanged. An attempt
   retired while it was still preparing may finish its channel setup and Shopify export;
   that export is never admitted.
-- **No revival.** Delayed or duplicate completion webhooks, alarm retries and a new
-  instance after eviction find no job of a retired generation and change nothing. Jobs
-  from before import generations are never admitted. A missing context of the current
-  generation is retried like a failed read and then reported as failed.
+- **No revival.** Delayed or duplicate completion webhooks, export checks, alarm
+  retries and a new instance after eviction find no job of a retired generation and
+  change nothing. Jobs from before import generations or streamed exports are never
+  admitted, and an admitted one ends as `INCOMPLETE_EXPORT`: its batches were planned
+  differently. A missing context of the current generation is retried like a failed
+  read and then reported as failed.
 - **Failed attempts.** An attempt that cannot export (missing access, channel or
   publication, or a failed submission) records its failure as the current status.
   Because it already retired the previous generation, an older import that was still
@@ -189,7 +216,7 @@ Bulk writes use the existing canonical asynchronous upsert and withdrawal endpoi
 - The channel count is Shopify's `productsCount` of active products published to the channel connection. It is not an import count.
 - “Last import” reports the Shopify products checked, the eligible products submitted, the admitted withdrawals of unpublished or inactive products, and failures.
 - Acceptance by Aura Historia means queue admission. Search visibility follows asynchronously and still applies product-status rules.
-- Missing permissions, a missing or refused channel connection, a missing publication and incomplete exports remain visible as failures with a retry. They are never shown as a successful zero-product import.
+- Missing permissions, a missing or refused channel connection, a missing publication, incomplete or malformed exports, oversized exports and expired exports or imports remain visible as failures with a retry. They are never shown as a successful zero-product import. While an import is processing, the counts cover the segments read so far.
 
 ### Rollout
 
@@ -206,6 +233,7 @@ This is a fresh release with no existing installations. Credential records requi
    - Title, image, price and stock updates.
    - Draft, archive, delete and reactivation.
    - An import that overlaps a publication change, repaired by importing again.
+   - A catalog of several hundred products imports across alarms, with ranged downloads of Shopify's grouped export.
 
 ## Local development
 

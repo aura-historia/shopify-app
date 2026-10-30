@@ -3,30 +3,42 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, mock } from "node:test";
 import {
+  BACKFILL_CONTEXT_TTL_SECONDS,
   type BackfillContext,
   type BulkJsonlProduct,
   buildBulkProductsQuery,
   buildShopifyIngestionConfiguration,
+  CATALOG_EXPORT_WINDOW_MS,
+  CATALOG_IMPORT_WINDOW_MS,
   type CatalogImportJob,
   classifyShopifyBackfillAction,
   clearBackfillContext,
   configureShopifyListingSource,
   createBackfillIdempotencyKey,
+  ExportCapacityError,
+  ExportLines,
+  type ExportSegment,
+  ExportSegments,
   extractShopifyNumericId,
   fetchBulkOperationResult,
   fetchShopMetadata,
   type GraphqlRequestFn,
   loadBackfillContext,
+  MAX_EXPORT_BYTES,
+  MAX_EXPORT_LINE_BYTES,
+  MAX_EXPORT_PRODUCTS,
+  MalformedExportError,
   mapShopifyCurrencyCode,
   mapShopifyLocaleToLanguage,
   normalizeShopifyDomain,
-  parseProductsFromJsonl,
-  planBackfill,
+  planSegment,
   putShopifyIngestionConfiguration,
+  readBulkOperationState,
   requireSupportedShopifyCurrency,
   resolveLanguage,
   resumeCatalogImport,
   runCatalogImportStep,
+  SEGMENT_BYTES,
   sendProductBatch,
   storeBackfillContext,
   submitBulkOperation,
@@ -147,8 +159,8 @@ function jsonResponse(value: unknown, status = 202): Response {
   });
 }
 
-function asRequest(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
+function asRequest(input: RequestInfo | URL, init?: RequestInit): Request {
+  return input instanceof Request ? input : new Request(input, init);
 }
 
 function withFetch(
@@ -160,6 +172,48 @@ function withFetch(
   return run().finally(() => {
     globalThis.fetch = original;
   });
+}
+
+const bytesOf = (text: string) => new TextEncoder().encode(text);
+
+// The export as a stream of `size`-byte chunks.
+function exportStream(content: string | Uint8Array, size = 64 * 1024) {
+  const bytes = typeof content === "string" ? bytesOf(content) : content;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < bytes.length; i += size)
+        controller.enqueue(bytes.slice(i, i + size));
+      controller.close();
+    },
+  });
+}
+
+// Every segment of an export read from `offset`, in `chunk`-byte chunks.
+async function readSegments(
+  content: string | Uint8Array,
+  {
+    chunk = 64 * 1024,
+    offset = 0,
+    size = null as number | null,
+    limit = MAX_EXPORT_BYTES,
+  } = {},
+) {
+  const bytes = typeof content === "string" ? bytesOf(content) : content;
+  const segments = new ExportSegments(
+    new ExportLines(
+      exportStream(bytes.subarray(offset), chunk).getReader(),
+      offset,
+      { size, limit },
+    ),
+  );
+  const all: ExportSegment[] = [];
+  for (
+    let segment = await segments.next();
+    segment;
+    segment = await segments.next()
+  )
+    all.push(segment);
+  return all;
 }
 
 describe("Shopify IDs, locale, currency and domain", () => {
@@ -347,30 +401,36 @@ describe("Shopify product transformation", () => {
 });
 
 describe("Shopify JSONL and KV context", () => {
-  it("parses product, image and first variant price without description HTML", () => {
-    const jsonl = [
+  it("parses product, image and first variant price without description HTML", async () => {
+    const lines = [
       JSON.stringify(makeProduct({ id: "gid://shopify/Product/1" })),
       '{"id":"gid://shopify/ProductImage/10","url":"https://cdn.shopify.com/1.jpg","__parentId":"gid://shopify/Product/1"}',
       '{"id":"gid://shopify/ProductVariant/10","price":"49.99","__parentId":"gid://shopify/Product/1"}',
       '{"id":"gid://shopify/ProductVariant/11","price":"50.00","__parentId":"gid://shopify/Product/1"}',
-    ].join("\n");
-    const { products, images, variants } = parseProductsFromJsonl(jsonl);
-    assert.deepEqual(products, [
-      makeProduct({ id: "gid://shopify/Product/1" }),
+    ];
+    const jsonl = lines.join("\n");
+    assert.deepEqual(await readSegments(jsonl), [
+      {
+        start: 0,
+        end: bytesOf(jsonl).length,
+        products: [
+          {
+            product: makeProduct({ id: "gid://shopify/Product/1" }),
+            images: ["https://cdn.shopify.com/1.jpg"],
+            price: "49.99",
+          },
+        ],
+      },
     ]);
-    assert.deepEqual(images.get(products[0].id), [
-      "https://cdn.shopify.com/1.jpg",
-    ]);
-    assert.equal(variants.get(products[0].id), "49.99");
   });
 
-  it("returns empty collections for empty JSONL and initializes images for products", () => {
-    const empty = parseProductsFromJsonl("");
-    assert.equal(empty.products.length, 0);
-    assert.equal(empty.images.size, 0);
-    assert.equal(empty.variants.size, 0);
-    const parsed = parseProductsFromJsonl(JSON.stringify(makeProduct()));
-    assert.deepEqual(parsed.images.get(makeProduct().id), []);
+  it("returns no segment for an empty export and no images for a bare product", async () => {
+    for (const empty of ["", "\n", "\n\n  \n"])
+      assert.deepEqual(await readSegments(empty), []);
+    const [segment] = await readSegments(JSON.stringify(makeProduct()));
+    assert.deepEqual(segment.products, [
+      { product: makeProduct(), images: [], price: null },
+    ]);
   });
 
   it("round-trips the new required context with a TTL and supports clearing", async () => {
@@ -382,8 +442,14 @@ describe("Shopify JSONL and KV context", () => {
       context,
     );
     assert.deepEqual(kv.put.mock.calls[0].arguments[2], {
-      expirationTtl: 3600,
+      expirationTtl: BACKFILL_CONTEXT_TTL_SECONDS,
     });
+    // The context outlives Shopify's export window and the import window
+    // that follows it, by an hour.
+    assert.equal(
+      BACKFILL_CONTEXT_TTL_SECONDS,
+      (CATALOG_EXPORT_WINDOW_MS + CATALOG_IMPORT_WINDOW_MS) / 1000 + 3600,
+    );
     assert.equal("shopId" in context, false);
     assert.equal("apiKey" in context, false);
     await clearBackfillContext(kv as never, shopDomain, 7);
@@ -481,9 +547,14 @@ describe("Shopify GraphQL", () => {
     );
   });
 
-  it("submits a bulk query without descriptions and returns the operation ID", async () => {
+  it("submits a grouped bulk query without descriptions and returns the operation ID", async () => {
     const graphqlRequest: GraphqlRequestFn = mock.fn(
-      async (_mutation, variables) => {
+      async (mutation, variables) => {
+        // Children directly follow their product, so the export streams.
+        assert.match(
+          mutation,
+          /bulkOperationRunQuery\(query: \$query, groupObjects: true\)/,
+        );
         const bulkQuery = variables.query;
         assert.equal(typeof bulkQuery, "string");
         assert.match(bulkQuery as string, /handle/);
@@ -557,6 +628,7 @@ describe("Shopify GraphQL", () => {
     assert.deepEqual(await fetchBulkOperationResult(request, bulkOperationId), {
       url: "https://cdn.shopify.com/result.jsonl",
       rootObjectCount: null,
+      fileSize: null,
     });
     for (const node of [
       null,
@@ -584,7 +656,25 @@ describe("Shopify GraphQL", () => {
         }),
         bulkOperationId,
       ),
-      { url: null, rootObjectCount: 0 },
+      { url: null, rootObjectCount: 0, fileSize: null },
+    );
+    assert.equal(
+      (
+        await fetchBulkOperationResult(
+          async () => ({
+            data: {
+              node: {
+                status: "COMPLETED",
+                url: "https://cdn.shopify.com/result.jsonl",
+                rootObjectCount: "2",
+                fileSize: "4096",
+              },
+            },
+          }),
+          bulkOperationId,
+        )
+      ).fileSize,
+      4096,
     );
     for (const rootObjectCount of [
       undefined,
@@ -617,6 +707,24 @@ describe("Shopify GraphQL", () => {
           bulkOperationId,
         ),
       /Invalid API key/,
+    );
+  });
+
+  it("reads where a pending export stands", async () => {
+    const state = (node: unknown) =>
+      readBulkOperationState(async () => ({ data: { node } }), bulkOperationId);
+    assert.equal(await state({ status: "COMPLETED", url: null }), "completed");
+    for (const status of ["FAILED", "CANCELED", "EXPIRED"])
+      assert.equal(await state({ status }), "failed");
+    // A running, canceling or missing operation keeps the import waiting.
+    for (const node of [{ status: "RUNNING" }, { status: "CANCELING" }, null])
+      assert.equal(await state(node), "running");
+    await assert.rejects(
+      readBulkOperationState(
+        async () => ({ errors: [{ message: "Throttled" }] }),
+        bulkOperationId,
+      ),
+      /Throttled/,
     );
   });
 });
@@ -1016,8 +1124,12 @@ function jsonl(products: BulkJsonlProduct[]) {
 // channel connection and its publication.
 function stepGraphql({
   rootObjectCount = "0",
+  fileSize,
   ...channel
-}: { rootObjectCount?: string } & ChannelState = {}): GraphqlRequestFn {
+}: {
+  rootObjectCount?: string;
+  fileSize?: string;
+} & ChannelState = {}): GraphqlRequestFn {
   return async (query, variables) =>
     isChannelQuery(query)
       ? channelResponse(
@@ -1031,25 +1143,70 @@ function stepGraphql({
               status: "COMPLETED",
               objectCount: rootObjectCount,
               rootObjectCount,
+              fileSize,
               url: rootObjectCount === "0" ? null : resultUrl,
             },
           },
         };
 }
 
-// Fake Shopify export download plus Aura async writes.
+// Fake Shopify export download plus Aura async writes. The download serves
+// byte ranges in `chunk`-byte chunks as they are read, unless `ranges` is off,
+// and `cut` ends a download with a connection error after that many bytes.
 function fakeCatalog(
   products: BulkJsonlProduct[] | string,
   respond?: (body: Array<{ sourceListingId: string }>) => Response,
+  {
+    ranges = true,
+    chunk = 64 * 1024,
+    cut = (_download: number): number | undefined => undefined,
+  } = {},
 ) {
   const writes: Array<{ method: string; key: string | null; ids: string[] }> =
     [];
-  const fetcher = (async (input: RequestInfo | URL) => {
-    const request = asRequest(input);
+  // Requested start and bytes served of every download.
+  const downloads: Array<{ start: number; served: number }> = [];
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = asRequest(input, init);
     if (request.url === resultUrl) {
-      return new Response(
+      const bytes = bytesOf(
         typeof products === "string" ? products : jsonl(products),
       );
+      const range = ranges
+        ? /^bytes=(\d+)-$/.exec(request.headers.get("Range") ?? "")
+        : null;
+      const start = range ? Number(range[1]) : 0;
+      if (start >= bytes.length && range)
+        return new Response(null, { status: 416 });
+      const download = { start, served: 0 };
+      const limit = cut(downloads.length);
+      downloads.push(download);
+      const body = bytes.subarray(start);
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (limit !== undefined && download.served >= limit)
+            return controller.error(new TypeError("terminated"));
+          if (download.served >= body.length) return controller.close();
+          const next = body.slice(
+            download.served,
+            Math.min(
+              download.served + chunk,
+              limit ?? body.length,
+              body.length,
+            ),
+          );
+          download.served += next.length;
+          controller.enqueue(next);
+        },
+      });
+      return range
+        ? new Response(stream, {
+            status: 206,
+            headers: {
+              "Content-Range": `bytes ${start}-${bytes.length - 1}/${bytes.length}`,
+            },
+          })
+        : new Response(stream);
     }
     const body = (await request.json()) as Array<{ sourceListingId: string }>;
     writes.push({
@@ -1059,7 +1216,7 @@ function fakeCatalog(
     });
     return respond?.(body) ?? jsonResponse(report(body.length));
   }) as typeof fetch;
-  return { fetcher, writes };
+  return { fetcher, writes, downloads };
 }
 
 function newJob(): CatalogImportJob {
@@ -1067,8 +1224,16 @@ function newJob(): CatalogImportJob {
     shop: shopDomain,
     generation: 1,
     bulkOperationId,
+    queuedAt: Date.now(),
     admitted: true,
+    admittedAt: Date.now(),
+    offset: 0,
     cursor: 0,
+    part: 0,
+    total: 0,
+    eligible: 0,
+    rejected: 0,
+    unknown: 0,
     failed: 0,
     withdrawn: 0,
     attempts: 0,
@@ -1121,7 +1286,7 @@ describe("Aura channel eligibility", () => {
     );
   });
 
-  it("plans deterministic batches of at most 100 with unique keys", () => {
+  it("plans deterministic segments of at most 100 products with unique keys", async () => {
     const products = Array.from({ length: 101 }, (_, index) =>
       makeProduct({
         id: `gid://shopify/Product/${index + 1}`,
@@ -1131,40 +1296,36 @@ describe("Aura channel eligibility", () => {
     products.push(
       makeProduct({ id: "gid://shopify/Product/102", status: "ARCHIVED" }),
     );
-    const plan = planBackfill(jsonl(products), 102, makeContext());
+    const segments = await readSegments(jsonl(products));
+    const plans = segments.map((segment, index) =>
+      planSegment(segment, index, makeContext()),
+    );
     assert.deepEqual(
-      plan.batches.map(({ verb, index, items }) => [verb, index, items.length]),
+      plans.flatMap(({ batches }) =>
+        batches.map(({ verb, index, items }) => [verb, index, items.length]),
+      ),
       [
         ["put", 0, 100],
         ["put", 1, 1],
-        ["delete", 0, 1],
+        ["delete", 1, 1],
       ],
     );
-    assert.deepEqual(planBackfill(jsonl(products), 102, makeContext()), plan);
-    assert.equal(plan.total, 102);
-    assert.equal(plan.eligible, 101);
-    assert.equal(plan.complete, true);
-  });
-
-  it("verifies completeness against Shopify's root object count", () => {
-    const products = [makeProduct()];
-    assert.equal(
-      planBackfill(jsonl(products), 1, makeContext()).complete,
-      true,
-    );
-    for (const rootObjectCount of [2, null])
-      assert.equal(
-        planBackfill(jsonl(products), rootObjectCount, makeContext()).complete,
-        false,
-      );
-    // A complete empty export is a valid empty selection.
-    assert.equal(planBackfill("", 0, makeContext()).complete, true);
-    assert.throws(() =>
-      planBackfill(
-        `${JSON.stringify(makeProduct())}\n{"id":"gid://shopify/Pro`,
-        2,
-        makeContext(),
+    assert.deepEqual(
+      (await readSegments(jsonl(products), { chunk: 7 })).map(
+        (segment, index) => planSegment(segment, index, makeContext()),
       ),
+      plans,
+    );
+    assert.deepEqual(
+      plans.map(({ eligible, rejected, unknown }) => [
+        eligible,
+        rejected.length,
+        unknown,
+      ]),
+      [
+        [100, 0, 0],
+        [1, 0, 0],
+      ],
     );
   });
 });
@@ -1193,10 +1354,10 @@ describe("catalog import steps", () => {
     const catalog = fakeCatalog(products);
     let upsertBody: unknown;
     await withFetch(
-      (async (input: RequestInfo | URL) => {
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = asRequest(input);
         if (request.method === "PUT") upsertBody = await request.clone().json();
-        return catalog.fetcher(input);
+        return catalog.fetcher(input, init);
       }) as typeof fetch,
       async () => {
         const { status } = await runToCompletion(products);
@@ -1298,16 +1459,27 @@ describe("catalog import steps", () => {
     );
   });
 
-  it("reports a truncated export as incomplete", async () => {
+  it("reports a short export or a missing root count as incomplete", async () => {
     const products = [makeProduct()];
     const catalog = fakeCatalog(products);
     await withFetch(catalog.fetcher, async () => {
-      const { status } = await runToCompletion(
-        products,
+      for (const graphql of [
         stepGraphql({ rootObjectCount: "2" }),
-      );
-      assert.equal(status.phase, "failed");
-      assert.equal(status.error, "INCOMPLETE_EXPORT");
+        async (query: string, variables: Variables) => {
+          const response = await stepGraphql({ rootObjectCount: "1" })(
+            query,
+            variables,
+          );
+          const node = response.data?.node as Record<string, unknown>;
+          if (node && "rootObjectCount" in node) delete node.rootObjectCount;
+          return response;
+        },
+      ]) {
+        const { status } = await runToCompletion(products, graphql);
+        assert.equal(status.phase, "failed");
+        assert.equal(status.error, "INCOMPLETE_EXPORT");
+        assert.equal(status.eligible, 1);
+      }
     });
   });
 
@@ -1359,6 +1531,8 @@ describe("catalog import steps", () => {
         assert.deepEqual(status, {
           phase: "failed",
           total: 0,
+          eligible: 0,
+          withdrawn: 0,
           failed: 0,
           error,
         });
@@ -1428,9 +1602,9 @@ describe("catalog import steps", () => {
     const clock = mock.method(Date, "now", () => now);
     try {
       await withFetch(
-        (async (input: RequestInfo | URL) => {
+        (async (input: RequestInfo | URL, init?: RequestInit) => {
           if (asRequest(input).method === "PUT") now += 15_000;
-          return catalog.fetcher(input);
+          return catalog.fetcher(input, init);
         }) as typeof fetch,
         async () => {
           const job = newJob();
@@ -1481,12 +1655,12 @@ describe("catalog import steps", () => {
     const clock = mock.method(Date, "now", () => now);
     try {
       await withFetch(
-        (async (input: RequestInfo | URL) => {
+        (async (input: RequestInfo | URL, init?: RequestInit) => {
           const request = asRequest(input);
           // Every step spends more than its whole budget on the download.
           if (request.url === resultUrl) now += 21_000;
           if (request.method === "PUT") now += 15_000;
-          return catalog.fetcher(input);
+          return catalog.fetcher(input, init);
         }) as typeof fetch,
         async () => {
           let job = newJob();
@@ -1579,6 +1753,468 @@ describe("catalog import steps", () => {
       ],
     );
     assert.deepEqual(catalog.writes[1].ids, catalog.writes[2].ids);
+  });
+});
+
+// A grouped export of `count` products with multibyte titles, image URLs
+// and several variants each, in a fixed mix of statuses and memberships:
+// every 17th product is a draft and every 5th is not published to Aura.
+function generatedExport(count: number) {
+  const lines: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    const id = `gid://shopify/Product/${i}`;
+    lines.push(
+      JSON.stringify(
+        makeProduct({
+          id,
+          title: `Pendule ${i} – 時計 🕰️ Ünïcødé`,
+          handle: `pendule-${i}`,
+          onlineStoreUrl: null,
+          status: i % 17 === 0 ? "DRAFT" : "ACTIVE",
+          publishedOnPublication: i % 5 !== 0,
+        }),
+      ),
+    );
+    for (let image = 0; image < i % 4; image++)
+      lines.push(
+        JSON.stringify({
+          id: `gid://shopify/ProductImage/${i}0${image}`,
+          url: `https://cdn.shopify.com/s/files/${i}/größe-${image}.jpg`,
+          __parentId: id,
+        }),
+      );
+    for (let variant = 0; variant <= i % 3; variant++)
+      lines.push(
+        JSON.stringify({
+          id: `gid://shopify/ProductVariant/${i}0${variant}`,
+          price: `${i}.${variant}0`,
+          __parentId: id,
+        }),
+      );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+const isWithdrawn = (i: number) => i % 17 === 0 || i % 5 === 0;
+
+// Runs steps until the import is done, each resumed from the last persisted
+// checkpoint as after an eviction.
+async function runSteps(
+  graphql: GraphqlRequestFn,
+  { budget = Number.POSITIVE_INFINITY, maxSteps = 100 } = {},
+) {
+  const persisted: CatalogImportJob[] = [];
+  let job = newJob();
+  for (let steps = 1; steps <= maxSteps; steps++) {
+    const step = await runCatalogImportStep(
+      job,
+      makeContext(),
+      graphql,
+      budget,
+      async (next) => {
+        persisted.push(structuredClone(next));
+      },
+    );
+    if (step.done) return { status: step.status, steps, persisted };
+    job = structuredClone(persisted.at(-1) as CatalogImportJob);
+  }
+  throw new Error("Import did not finish");
+}
+
+// Advances the clock on every Aura batch request, so a step's budget ends
+// after its first segment.
+function slowBatches(fetcher: typeof fetch, run: () => Promise<void>) {
+  let now = 1_000_000;
+  const clock = mock.method(Date, "now", () => now);
+  return withFetch(
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (asRequest(input, init).url !== resultUrl) now += 15_000;
+      return fetcher(input, init);
+    }) as typeof fetch,
+    run,
+  ).finally(() => clock.mock.restore());
+}
+
+describe("streamed catalog exports", () => {
+  it("splits a large generated export into byte-exact segments whatever the chunking", async () => {
+    const content = bytesOf(generatedExport(2_500));
+    const size = content.length;
+    const segments = await readSegments(content, { size });
+    assert.deepEqual(
+      segments.map(({ products }) => products.length),
+      Array(25).fill(100),
+    );
+    // Contiguous byte ranges that start at product lines and cover the file.
+    segments.forEach((segment, index) => {
+      assert.equal(segment.start, index ? segments[index - 1].end : 0);
+      assert.match(
+        new TextDecoder().decode(
+          content.subarray(segment.start, segment.start + 30),
+        ),
+        /^\{"id":"gid:\/\/shopify\/Product\//,
+      );
+    });
+    assert.equal(segments.at(-1)?.end, size);
+    // Multibyte text, children and the first variant's price survive.
+    const third = segments[0].products[2];
+    assert.equal(third.product.title, "Pendule 3 – 時計 🕰️ Ünïcødé");
+    assert.deepEqual(third.images, [
+      "https://cdn.shopify.com/s/files/3/größe-0.jpg",
+      "https://cdn.shopify.com/s/files/3/größe-1.jpg",
+      "https://cdn.shopify.com/s/files/3/größe-2.jpg",
+    ]);
+    assert.equal(third.price, "3.00");
+    // Lines and characters split across chunks give the same segments.
+    assert.deepEqual(
+      await readSegments(content, { chunk: 13, size }),
+      segments,
+    );
+    const small = bytesOf(generatedExport(150));
+    assert.deepEqual(
+      await readSegments(small, { chunk: 1 }),
+      await readSegments(small),
+    );
+    // Resumed at any segment boundary, the rest of the export is identical.
+    for (const index of [1, 12, 24])
+      assert.deepEqual(
+        await readSegments(content, {
+          offset: segments[index].start,
+          chunk: 4096,
+          size,
+        }),
+        segments.slice(index),
+      );
+  });
+
+  it("closes a segment after 1 MiB of product and image lines, never counting skipped variants", async () => {
+    const product = (i: number) => `gid://shopify/Product/${i}`;
+    const imageHeavy: string[] = [];
+    for (let i = 1; i <= 200; i++) {
+      imageHeavy.push(JSON.stringify(makeProduct({ id: product(i) })));
+      for (let image = 0; image < 30; image++)
+        imageHeavy.push(
+          JSON.stringify({
+            id: `gid://shopify/ProductImage/${i}0${image}`,
+            url: `https://cdn.shopify.com/${"ä".repeat(500)}/${image}.jpg`,
+            __parentId: product(i),
+          }),
+        );
+    }
+    const segments = await readSegments(imageHeavy.join("\n"));
+    assert.equal(
+      segments.reduce((sum, { products }) => sum + products.length, 0),
+      200,
+    );
+    for (const segment of segments) {
+      assert.ok(segment.products.length < 100);
+      // The segment ended at the first product after reaching the budget.
+      const bytes = segment.end - segment.start;
+      const perProduct = bytes / segment.products.length;
+      assert.ok(bytes < SEGMENT_BYTES + perProduct + 1, String(bytes));
+      if (segment !== segments.at(-1))
+        assert.ok(bytes - perProduct < SEGMENT_BYTES);
+    }
+
+    const variantHeavy: string[] = [];
+    for (let i = 1; i <= 100; i++) {
+      variantHeavy.push(JSON.stringify(makeProduct({ id: product(i) })));
+      for (let variant = 0; variant < 400; variant++)
+        variantHeavy.push(
+          JSON.stringify({
+            id: `gid://shopify/ProductVariant/${i}0${variant}`,
+            price: `${variant}.00`,
+            __parentId: product(i),
+          }),
+        );
+    }
+    const content = variantHeavy.join("\n");
+    assert.ok(bytesOf(content).length > 3 * SEGMENT_BYTES);
+    const [only, ...rest] = await readSegments(content);
+    assert.deepEqual(rest, []);
+    assert.equal(only.products.length, 100);
+    assert.ok(only.products.every(({ price }) => price === "0.00"));
+  });
+
+  it("rejects a line, a product or an export beyond the supported bytes", async () => {
+    // Two UTF-8 bytes per character: the limit counts bytes, not characters.
+    const title = "ü".repeat(MAX_EXPORT_LINE_BYTES / 2);
+    assert.ok(title.length < MAX_EXPORT_LINE_BYTES);
+    await assert.rejects(
+      readSegments(`${JSON.stringify(makeProduct({ title }))}\n`),
+      ExportCapacityError,
+    );
+    const images = Array.from({ length: 1_100 }, (_, image) =>
+      JSON.stringify({
+        id: `gid://shopify/ProductImage/${image}`,
+        url: `https://cdn.shopify.com/${"x".repeat(1_000)}/${image}.jpg`,
+        __parentId: makeProduct().id,
+      }),
+    );
+    await assert.rejects(
+      readSegments([JSON.stringify(makeProduct()), ...images].join("\n")),
+      ExportCapacityError,
+    );
+    await assert.rejects(
+      readSegments(generatedExport(10), { limit: 1_000 }),
+      ExportCapacityError,
+    );
+    assert.equal(MAX_EXPORT_BYTES, 1024 ** 3);
+    assert.equal(MAX_EXPORT_PRODUCTS, 100_000);
+  });
+
+  it("rejects malformed, partial and ungrouped lines", async () => {
+    const product = (id: number) =>
+      JSON.stringify(makeProduct({ id: `gid://shopify/Product/${id}` }));
+    const image = JSON.stringify({
+      id: "gid://shopify/ProductImage/1",
+      url: "https://cdn.shopify.com/1.jpg",
+      __parentId: "gid://shopify/Product/1",
+    });
+    for (const content of [
+      // A partial last line.
+      `${product(1)}\n{"id":"gid://shopify/Pro`,
+      `${product(1)}\n[1]`,
+      // A child after another product, or before any product.
+      `${product(1)}\n${product(2)}\n${image}`,
+      `${image}\n${product(1)}`,
+      '{"title":"No ID"}',
+    ])
+      await assert.rejects(readSegments(content), MalformedExportError);
+    const bytes = bytesOf(product(1));
+    await assert.rejects(
+      readSegments(
+        new Uint8Array([...bytes.subarray(0, 40), 0xff, ...bytes.subarray(40)]),
+      ),
+      MalformedExportError,
+    );
+  });
+
+  it("treats a download that ends before Shopify's file size as transient", async () => {
+    const content = bytesOf(generatedExport(3));
+    await assert.rejects(
+      readSegments(content.subarray(0, content.length - 20), {
+        size: content.length,
+      }),
+      (error: Error) =>
+        !(error instanceof MalformedExportError) &&
+        !(error instanceof ExportCapacityError) &&
+        /cut off/.test(error.message),
+    );
+  });
+
+  for (const [name, ranges, fileSize] of [
+    ["byte ranges and Shopify's file size", true, true],
+    ["byte ranges, ending on an unsatisfiable range", true, false],
+    ["a server that ignores byte ranges", false, true],
+  ] as const) {
+    it(`resumes each step at its checkpoint with ${name}`, async () => {
+      const content = generatedExport(1_050);
+      const size = bytesOf(content).length;
+      const segments = await readSegments(content);
+      assert.equal(segments.length, 11);
+      const catalog = fakeCatalog(content, undefined, { ranges, chunk: 4096 });
+      const graphql = stepGraphql({
+        rootObjectCount: "1050",
+        fileSize: fileSize ? String(size) : undefined,
+      });
+      await slowBatches(catalog.fetcher, async () => {
+        const { status, steps } = await runSteps(graphql, { budget: 20_000 });
+        // One segment per step, then a step at the end of the file.
+        assert.equal(steps, 12);
+        const withdrawn = Array.from({ length: 1_050 }, (_, i) => i + 1).filter(
+          isWithdrawn,
+        ).length;
+        assert.deepEqual(status, {
+          phase: "submitted",
+          total: 1_050,
+          eligible: 1_050 - withdrawn,
+          withdrawn,
+          failed: 0,
+        });
+      });
+      // Every step downloads from the previous step's checkpoint.
+      assert.deepEqual(
+        catalog.downloads.map(({ start }) => start),
+        ranges ? segments.map(({ start }) => start) : Array(11).fill(0),
+      );
+      // Each batch is sent once, in order, under its segment's keys.
+      assert.deepEqual(
+        catalog.writes.map(({ key }) => key),
+        segments.flatMap((_, index) => [
+          `shopify-backfill-789-put-${index}`,
+          `shopify-backfill-789-delete-${index}`,
+        ]),
+      );
+      // With byte ranges the export is downloaded about once in total, not
+      // once per step.
+      const served = catalog.downloads.reduce(
+        (sum, download) => sum + download.served,
+        0,
+      );
+      if (ranges) assert.ok(served < 1.25 * size, `${served} of ${size}`);
+    });
+  }
+
+  it("resumes an interrupted download at its last checkpoint without resending", async () => {
+    const content = generatedExport(450);
+    const size = bytesOf(content).length;
+    const segments = await readSegments(content);
+    const catalog = fakeCatalog(content, undefined, {
+      chunk: 1_000,
+      // The second download fails in a line of its first segment.
+      cut: (download) =>
+        download === 1
+          ? Math.floor((segments[2].end - segments[2].start) / 2) + 7
+          : undefined,
+    });
+    const graphql = stepGraphql({
+      rootObjectCount: "450",
+      fileSize: String(size),
+    });
+    const persisted: CatalogImportJob[] = [];
+    const resume = () => structuredClone(persisted.at(-1) as CatalogImportJob);
+    const step = (job: CatalogImportJob) =>
+      runCatalogImportStep(
+        job,
+        makeContext(),
+        graphql,
+        40_000,
+        async (next) => {
+          persisted.push(structuredClone(next));
+        },
+      );
+    await slowBatches(catalog.fetcher, async () => {
+      assert.equal((await step(newJob())).done, false);
+      assert.equal(resume().cursor, 2);
+      await assert.rejects(step(resume()), /terminated/);
+      // The checkpoint still points at the interrupted segment.
+      assert.equal(resume().offset, segments[2].start);
+      let result = await step(resume());
+      while (!result.done) result = await step(resume());
+      assert.equal(result.status.phase, "submitted");
+      assert.equal(result.status.total, 450);
+    });
+    assert.deepEqual(
+      catalog.downloads.map(({ start }) => start),
+      [0, segments[2].start, segments[2].start, segments[4].start],
+    );
+    // Nothing of the partial segment was sent, and nothing was resent.
+    assert.deepEqual(
+      catalog.writes.map(({ key }) => key),
+      segments.flatMap((_, index) => [
+        `shopify-backfill-789-put-${index}`,
+        `shopify-backfill-789-delete-${index}`,
+      ]),
+    );
+  });
+
+  it("ends a malformed export as incomplete without its unread products", async () => {
+    const lines = generatedExport(250).split("\n");
+    const broken = lines.findIndex((line) =>
+      line.startsWith('{"id":"gid://shopify/Product/180"'),
+    );
+    lines[broken] = lines[broken].slice(0, 40);
+    const catalog = fakeCatalog(lines.join("\n"));
+    await withFetch(catalog.fetcher, async () => {
+      const { status } = await runToCompletion(
+        [],
+        stepGraphql({ rootObjectCount: "250" }),
+      );
+      const withdrawn = Array.from({ length: 100 }, (_, i) => i + 1).filter(
+        isWithdrawn,
+      ).length;
+      assert.deepEqual(status, {
+        phase: "failed",
+        total: 100,
+        eligible: 100 - withdrawn,
+        withdrawn,
+        failed: 0,
+        error: "INCOMPLETE_EXPORT",
+      });
+    });
+    // Only the first segment was submitted; nothing is withdrawn for the
+    // products the import could not read.
+    assert.deepEqual(
+      catalog.writes.map(({ key }) => key),
+      ["shopify-backfill-789-put-0", "shopify-backfill-789-delete-0"],
+    );
+  });
+
+  it("ends an export with an oversized line as too large", async () => {
+    const lines = generatedExport(150).split("\n");
+    lines.splice(
+      lines.findIndex((line) =>
+        line.startsWith('{"id":"gid://shopify/Product/120"'),
+      ),
+      1,
+      JSON.stringify(
+        makeProduct({
+          id: "gid://shopify/Product/120",
+          title: "x".repeat(MAX_EXPORT_LINE_BYTES),
+        }),
+      ),
+    );
+    const catalog = fakeCatalog(lines.join("\n"));
+    await withFetch(catalog.fetcher, async () => {
+      const { status } = await runToCompletion(
+        [],
+        stepGraphql({ rootObjectCount: "150" }),
+      );
+      assert.equal(status.phase, "failed");
+      assert.equal(status.error, "EXPORT_TOO_LARGE");
+      assert.equal(status.total, 100);
+    });
+    assert.equal(catalog.writes.length, 2);
+  });
+
+  it("refuses an export Shopify reports as too large before downloading it", async () => {
+    for (const reported of [
+      { rootObjectCount: String(MAX_EXPORT_PRODUCTS + 1) },
+      { rootObjectCount: "1", fileSize: String(MAX_EXPORT_BYTES + 1) },
+    ]) {
+      const catalog = fakeCatalog([makeProduct()]);
+      const error = mock.method(console, "error", () => {});
+      try {
+        await withFetch(catalog.fetcher, async () => {
+          const { status } = await runToCompletion([], stepGraphql(reported));
+          assert.deepEqual(status, {
+            phase: "failed",
+            total: 0,
+            eligible: 0,
+            withdrawn: 0,
+            failed: 0,
+            error: "EXPORT_TOO_LARGE",
+          });
+        });
+      } finally {
+        error.mock.restore();
+      }
+      assert.deepEqual(catalog.downloads, []);
+      assert.deepEqual(catalog.writes, []);
+    }
+  });
+
+  it("retries a download cut off before Shopify's file size, sending nothing of it", async () => {
+    const content = generatedExport(150);
+    const size = bytesOf(content).length;
+    const catalog = fakeCatalog(content.slice(0, -50));
+    await withFetch(catalog.fetcher, async () => {
+      await assert.rejects(
+        runCatalogImportStep(
+          newJob(),
+          makeContext(),
+          stepGraphql({ rootObjectCount: "150", fileSize: String(size) }),
+          Number.POSITIVE_INFINITY,
+          async () => {},
+        ),
+        /cut off/,
+      );
+    });
+    // The first segment was complete; the cut-off second one was not sent.
+    assert.deepEqual(
+      catalog.writes.map(({ key }) => key),
+      ["shopify-backfill-789-put-0", "shopify-backfill-789-delete-0"],
+    );
   });
 });
 
