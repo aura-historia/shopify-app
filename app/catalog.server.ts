@@ -111,11 +111,21 @@ export const CHANNEL_PUBLICATION_ERRORS: Record<
 
 // Shopify may return the app catalog of a new channel connection, or its
 // publication, only some time after `channelCreate`. Until it does, the
-// catalog scan finds no catalog listing the connection, or that catalog
-// returns no publication, which reads as unavailable like a failed read.
-// An import waits for these states within a bounded window. Missing access
-// and a missing or foreign connection are never awaited.
+// catalog scan finds no catalog listing the connection, or that catalog has
+// no publication: the publication is missing. An import that finds it
+// missing waits within a bounded window instead of failing. Missing access,
+// a missing or foreign connection and failed, denied or ambiguous reads
+// never start a wait; they are reported at once.
 export function awaitsChannelPublication(
+  state: ChannelPublicationState,
+): boolean {
+  return state === "missing_publication";
+}
+
+// While an import waits, a failed read is retried within the same window
+// rather than ending the wait; what Shopify last returned is reported when
+// the window closes.
+export function keepsAwaitingChannelPublication(
   state: ChannelPublicationState,
 ): boolean {
   return state === "missing_publication" || state === "unavailable";

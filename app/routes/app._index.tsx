@@ -455,8 +455,7 @@ export default function AppIndex() {
                   </s-paragraph>
                 </s-banner>
               ) : awaitingPublication &&
-                (publication?.state === "missing_publication" ||
-                  publication?.state === "unavailable") ? (
+                publication?.state === "missing_publication" ? (
                 <s-banner tone="info" heading="Sales channel being prepared">
                   <s-paragraph>
                     Shopify is still preparing the product selection of the Aura
@@ -517,7 +516,7 @@ export default function AppIndex() {
               {catalogPhase === "queued" && (
                 <s-paragraph>
                   {awaitingPublication
-                    ? "The catalog import was queued. It starts once Shopify returns the product selection of the Aura Historia sales channel."
+                    ? "The catalog import was queued. It starts automatically as soon as it reads the channel's product selection from Shopify."
                     : "Initial product backfill was queued."}
                 </s-paragraph>
               )}

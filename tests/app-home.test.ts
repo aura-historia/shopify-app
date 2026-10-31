@@ -171,26 +171,30 @@ describe("Aura channel selection in the embedded home", () => {
     assert.match(html, /Sales channel not found/);
   });
   it("shows a new channel's publication as being prepared while the import awaits it", () => {
-    for (const state of ["missing_publication", "unavailable"]) {
-      const html = renderHome(null, "queued", {
-        publication: { state },
-        catalogImport: {
-          phase: "queued",
-          total: 0,
-          failed: 0,
-          awaiting: "CHANNEL_PUBLICATION",
-        },
-      });
-      assert.match(html, /Sales channel being prepared/);
-      assert.match(html, /starts automatically once Shopify returns it/);
-      assert.match(
-        html,
-        /It starts once Shopify returns the product selection/,
-      );
-      assert.doesNotMatch(html, /Sales channel not found/);
-      assert.doesNotMatch(html, /Catalog import needs attention/);
-      assert.doesNotMatch(html, /Initial product backfill was queued/);
-    }
+    const awaiting = {
+      phase: "queued",
+      total: 0,
+      failed: 0,
+      awaiting: "CHANNEL_PUBLICATION",
+    };
+    const html = renderHome(null, "queued", {
+      publication: { state: "missing_publication" },
+      catalogImport: awaiting,
+    });
+    assert.match(html, /Sales channel being prepared/);
+    assert.match(html, /starts automatically once Shopify returns it/);
+    assert.match(html, /within 10 minutes/);
+    assert.match(html, /starts automatically as soon as it reads the channel/);
+    assert.doesNotMatch(html, /Sales channel not found/);
+    assert.doesNotMatch(html, /Catalog import needs attention/);
+    assert.doesNotMatch(html, /Initial product backfill was queued/);
+    // A failed read is reported as unavailable, never as being prepared.
+    const unreadable = renderHome(null, "queued", {
+      publication: { state: "unavailable" },
+      catalogImport: awaiting,
+    });
+    assert.match(unreadable, /channel selection is unavailable/);
+    assert.doesNotMatch(unreadable, /Sales channel being prepared/);
     // Shopify may return the selection to the page before the import's next
     // check: the count is shown and the import still reports its wait.
     const ready = renderHome(null, "queued", {
@@ -209,7 +213,7 @@ describe("Aura channel selection in the embedded home", () => {
       },
     });
     assert.match(ready, /2 active products are published/);
-    assert.match(ready, /It starts once Shopify returns the product selection/);
+    assert.match(ready, /starts automatically as soon as it reads the channel/);
     assert.doesNotMatch(ready, /Sales channel being prepared/);
   });
   it("keeps missing access and a missing connection actionable while an import waits", () => {

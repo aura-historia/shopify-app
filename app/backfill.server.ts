@@ -35,6 +35,7 @@ import { isValidListingSourceId } from "./shop-credentials.server";
 
 const BATCH_SIZE = 100;
 const BACKFILL_CONTEXT_PREFIX = "aura-historia:backfill:";
+const SETUP_CONTEXT_PREFIX = "aura-historia:backfill-setup:";
 
 // Supported catalog. The export lists every product of the store, not only
 // those published to Aura, with all of its images and variants. A larger
@@ -71,11 +72,15 @@ export const BACKFILL_CONTEXT_TTL_SECONDS =
 // after setup may not find them yet (#405). The importer checks again after
 // 2 seconds, doubling the wait up to a minute, until the publication is
 // readable or 10 minutes after the import began waiting; then it reports
-// what Shopify last returned. The context written meanwhile is replaced,
-// with a fresh TTL, once the export is submitted.
+// what Shopify last returned. The waiting generation's credentials live in a
+// setup context of their own, which outlives the window by an hour and is
+// released once the wait ends; the export's context is written only when the
+// export is submitted.
 export const CATALOG_SETUP_WINDOW_MS = 10 * 60_000;
 export const CATALOG_SETUP_RETRY_MS = 2_000;
 export const CATALOG_SETUP_MAX_RETRY_MS = 60_000;
+export const CATALOG_SETUP_CONTEXT_TTL_SECONDS =
+  CATALOG_SETUP_WINDOW_MS / 1000 + 3600;
 
 // The wait before the next publication check, after `checks` checks of the
 // importer.
@@ -328,8 +333,6 @@ export interface CatalogSetupJob {
   since: number;
   // Publication checks of the importer so far.
   checks: number;
-  // What is reported if the window closes in the last observed state.
-  error: CatalogImportError;
 }
 
 // The export is not well-formed, grouped JSONL. A retry reads the same file.
@@ -345,12 +348,11 @@ export interface CatalogImports {
   // Null when the connection no longer acts for the shop.
   begin(): Promise<number | null>;
   queue(generation: number, context: BackfillContext): Promise<boolean>;
-  // The importer checks the publication again within the setup window and
-  // exports as soon as Shopify returns it; `error` is what it last returned.
+  // The importer checks the missing publication again within the setup
+  // window and exports as soon as Shopify returns it.
   awaitPublication(
     generation: number,
     context: CatalogSetupContext,
-    error: CatalogImportError,
   ): Promise<boolean>;
   fail(generation: number, error: CatalogImportError): Promise<boolean>;
   status(): Promise<CatalogImportStatus | null>;
@@ -364,8 +366,8 @@ export function catalogImportsOf(
   return {
     begin,
     queue: (generation, context) => importer.queue(generation, context),
-    awaitPublication: (generation, context, error) =>
-      importer.awaitPublication(generation, context, error),
+    awaitPublication: (generation, context) =>
+      importer.awaitPublication(generation, context),
     fail: (generation, error) => importer.fail(generation, error),
     status: () => importer.status(),
   };
@@ -913,21 +915,44 @@ export async function storeBackfillContext(
   },
   shop: string,
   generation: number,
-  // A generation awaiting its publication stores only its setup context; the
-  // context of its export replaces it.
-  context: CatalogSetupContext | BackfillContext,
+  context: BackfillContext,
 ): Promise<void> {
   await kv.put(backfillContextKey(shop, generation), JSON.stringify(context), {
     expirationTtl: BACKFILL_CONTEXT_TTL_SECONDS,
   });
 }
 
-async function readBackfillContext(
-  kv: { get: (key: string) => Promise<string | null> },
+// A generation awaiting its publication keeps its credentials under a key of
+// its own, so the export's context is never read before it is written.
+function setupContextKey(shop: string, generation: number): string {
+  return backfillContextKey(shop, generation).replace(
+    BACKFILL_CONTEXT_PREFIX,
+    SETUP_CONTEXT_PREFIX,
+  );
+}
+
+export async function storeCatalogSetupContext(
+  kv: {
+    put: (
+      key: string,
+      value: string,
+      options?: { expirationTtl?: number },
+    ) => Promise<void>;
+  },
   shop: string,
   generation: number,
+  context: CatalogSetupContext,
+): Promise<void> {
+  await kv.put(setupContextKey(shop, generation), JSON.stringify(context), {
+    expirationTtl: CATALOG_SETUP_CONTEXT_TTL_SECONDS,
+  });
+}
+
+async function readBackfillContext(
+  kv: { get: (key: string) => Promise<string | null> },
+  key: string,
 ): Promise<Partial<BackfillContext> | null> {
-  const raw = await kv.get(backfillContextKey(shop, generation));
+  const raw = await kv.get(key);
   if (!raw) return null;
   try {
     const context: unknown = JSON.parse(raw);
@@ -954,7 +979,10 @@ export async function loadCatalogSetupContext(
   shop: string,
   generation: number,
 ): Promise<CatalogSetupContext | null> {
-  const value = await readBackfillContext(kv, shop, generation);
+  const value = await readBackfillContext(
+    kv,
+    setupContextKey(shop, generation),
+  );
   if (!value) return null;
   const context = value as CatalogSetupContext;
   return {
@@ -974,7 +1002,10 @@ export async function loadBackfillContext(
   shop: string,
   generation: number,
 ): Promise<BackfillContext | null> {
-  const value = await readBackfillContext(kv, shop, generation);
+  const value = await readBackfillContext(
+    kv,
+    backfillContextKey(shop, generation),
+  );
   return value &&
     typeof value.bulkOperationId === "string" &&
     typeof value.publicationId === "string" &&
@@ -990,6 +1021,14 @@ export async function clearBackfillContext(
   generation: number,
 ): Promise<void> {
   await kv.delete(backfillContextKey(shop, generation));
+}
+
+export async function clearCatalogSetupContext(
+  kv: { delete: (key: string) => Promise<void> },
+  shop: string,
+  generation: number,
+): Promise<void> {
+  await kv.delete(setupContextKey(shop, generation));
 }
 
 // ---------------------------------------------------------------------------
@@ -1657,25 +1696,21 @@ export async function triggerBackfill(
       listingSourceId,
     );
     if (publication.state !== "ready") {
-      const error = CHANNEL_PUBLICATION_ERRORS[publication.state];
       // Shopify may not return a connection's publication right after its
-      // setup. The importer checks again within a bounded window and exports
-      // only once it is readable; missing access or a missing or foreign
-      // connection is reported at once.
+      // setup. A missing one is checked again by the importer within a
+      // bounded window, which exports only once it is readable; missing
+      // access, a missing or foreign connection and failed reads are
+      // reported at once.
       if (awaitsChannelPublication(publication.state)) {
         if (
-          !(await imports.awaitPublication(
-            generation,
-            {
-              listingSourceId,
-              accessToken,
-              apiBaseUrl,
-              primaryLocale: validatedMetadata.primaryLocale,
-              currencyCode: validatedMetadata.currencyCode,
-              shopDomain,
-            },
-            error,
-          ))
+          !(await imports.awaitPublication(generation, {
+            listingSourceId,
+            accessToken,
+            apiBaseUrl,
+            primaryLocale: validatedMetadata.primaryLocale,
+            currencyCode: validatedMetadata.currencyCode,
+            shopDomain,
+          }))
         ) {
           console.warn(
             `Backfill for ${shopDomain} was retired before queueing`,
@@ -1687,7 +1722,10 @@ export async function triggerBackfill(
         );
         return true;
       }
-      await imports.fail(generation, error);
+      await imports.fail(
+        generation,
+        CHANNEL_PUBLICATION_ERRORS[publication.state],
+      );
       console.warn(
         `Backfill not submitted for ${shopDomain}: publication ${publication.state}`,
       );

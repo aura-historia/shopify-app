@@ -132,13 +132,25 @@ describe("release catalog behavior", () => {
         { state: "missing_channel" },
       );
     }
-    assert.deepEqual(
-      await resolveChannelPublication(
-        channelGraphql({ publication: null }),
-        listingSourceId,
-      ),
-      { state: "missing_publication" },
-    );
+    // No app catalog lists the connection, or its catalog has no
+    // publication, as right after the connection was set up (#405).
+    for (const listed of [false, true])
+      assert.deepEqual(
+        await resolveChannelPublication(
+          channelGraphql({ publication: null, listed }),
+          listingSourceId,
+        ),
+        { state: "missing_publication" },
+      );
+    // A publication that is neither a publication nor null is unreadable.
+    for (const publication of [{ id: null }, {}])
+      assert.deepEqual(
+        await resolveChannelPublication(
+          channelGraphql({ publication }),
+          listingSourceId,
+        ),
+        { state: "unavailable" },
+      );
     assert.deepEqual(
       await resolveChannelPublication(
         channelGraphql({ channel: new Error("Internal error") }),

@@ -2767,6 +2767,24 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       () => ({ errors: [{ message: "Throttled" }] }),
       "SHOPIFY_READ_FAILED",
     ],
+    // Read failures, denials and ambiguity are not a channel being set up:
+    // they are reported at once, never awaited.
+    [
+      "a malformed publication",
+      (query: string, variables: Variables) =>
+        publicationResponse(query, variables, {
+          publication: { id: "gid://shopify/Channel/1" },
+        }),
+      "SHOPIFY_READ_FAILED",
+    ],
+    [
+      "a denied publication read",
+      (query: string, variables: Variables) =>
+        publicationResponse(query, variables, {
+          publication: new Error("Access denied for publication field."),
+        }),
+      "SHOPIFY_READ_FAILED",
+    ],
   ] as const) {
     it(`records ${name} as retryable and never exports unfiltered products`, async () => {
       const catalog = catalogImports();
@@ -2792,10 +2810,13 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       if (error === "MISSING_SCOPE")
         assert.ok(!queries.some((query) => /AuraChannelCatalog/.test(query)));
       assert.equal(await catalog.job(), undefined);
+      assert.equal(await catalog.storage.get("setup"), undefined);
+      assert.equal(catalog.storage.alarm, null);
       assert.equal(catalog.kv.entries.size, 0);
       const status = await catalog.imports.status();
       assert.equal(status?.phase, "failed");
       assert.equal(status?.error, error);
+      assert.equal(status?.awaiting, undefined);
       assert.equal(status?.total, 0);
     });
   }
@@ -2847,8 +2868,13 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
   // Shopify 2026-10 right after `channelCreate`: the new connection exists,
   // but its app catalog or the catalog's publication is not returned yet
   // (#405).
-  function settingUp(publication: unknown) {
-    const state = { channel: null as unknown, publication, created: 0 };
+  function settingUp(publication: unknown, listed = false) {
+    const state = {
+      channel: null as unknown,
+      publication,
+      listed,
+      created: 0,
+    };
     const queries: string[] = [];
     const graphql: GraphqlRequestFn = async (query, variables) => {
       queries.push(query);
@@ -2863,6 +2889,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         return publicationResponse(query, variables, {
           channel: state.channel,
           publication: state.publication,
+          listed: state.listed || state.publication !== null,
         });
       assert.match(query, /bulkOperationRunQuery/);
       // Only the channel's own membership is exported.
@@ -2897,19 +2924,15 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       validatedMetadata,
     );
 
-  for (const [name, publication, error] of [
+  for (const [name, listed] of [
     // No app catalog lists the new connection yet.
-    ["no catalog of the new connection", null, "MISSING_PUBLICATION"],
-    // Its catalog returns no valid publication yet.
-    [
-      "an unreadable publication",
-      { id: "gid://shopify/Channel/1" },
-      "SHOPIFY_READ_FAILED",
-    ],
+    ["no catalog of the new connection", false],
+    // Its catalog lists it, but has no publication yet.
+    ["a catalog without a publication", true],
   ] as const) {
     it(`awaits ${name} instead of failing or exporting unfiltered products`, async () => {
       const catalog = catalogImports();
-      const shopify = settingUp(publication);
+      const shopify = settingUp(null, listed);
       assert.equal(await trigger(shopify.graphql, catalog), true);
       assert.equal(shopify.state.created, 1);
       assert.ok(shopify.queries.every(isChannelQuery));
@@ -2925,13 +2948,12 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       assert.equal(setup.shop, shopDomain);
       assert.equal(setup.listingSourceId, listingSourceId);
       assert.equal(setup.checks, 0);
-      assert.equal(setup.error, error);
       // The importer checks again shortly.
       assert.ok(
         (catalog.storage.alarm ?? 0) <= Date.now() + CATALOG_SETUP_RETRY_MS,
       );
-      // The generation keeps the credentials its export needs, and no export
-      // context exists yet.
+      // The generation keeps the credentials its export needs in its setup
+      // context; no export context exists yet.
       assert.deepEqual(
         await loadCatalogSetupContext(catalog.kv, shopDomain, setup.generation),
         {

@@ -494,7 +494,7 @@ describe("Aura channel publication lookup", () => {
     assert.match(warnings[1], /Access denied for publication field/);
   });
 
-  it("never trusts a denied, missing or changed publication read", async () => {
+  it("never trusts a denied, malformed or changed publication read", async () => {
     const catalog = ownPublication.data.catalog;
     for (const read of [
       // Without `read_publications` Shopify denies the field.
@@ -507,7 +507,8 @@ describe("Aura channel publication lookup", () => {
           },
         ],
       }),
-      () => ({ data: { catalog: { ...catalog, publication: null } } }),
+      () => ({ data: { catalog: { ...catalog, publication: {} } } }),
+      () => ({ data: { catalog: { ...catalog, publication: undefined } } }),
       () => ({
         data: { catalog: { ...catalog, publication: { id: "untrusted" } } },
       }),
@@ -532,6 +533,19 @@ describe("Aura channel publication lookup", () => {
       });
       assert.deepEqual(shop.reads, [own.id]);
     }
+  });
+
+  it("reports a catalog that lists the connection without a publication as missing", async () => {
+    // As right after the connection was set up (#405): Shopify answers the
+    // granted field without an error, but with no publication yet.
+    const catalog = ownPublication.data.catalog;
+    const shop = catalogShop([catalogPage([...others, own])], () => ({
+      data: { catalog: { ...catalog, publication: null } },
+    }));
+    assert.deepEqual(await findChannelPublication(shop.graphql, channel), {
+      state: "missing",
+    });
+    assert.deepEqual(shop.reads, [own.id]);
   });
 });
 

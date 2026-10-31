@@ -324,7 +324,8 @@ function connectedEnv({ refuseChannel = false, catalogReady = true } = {}) {
     };
   };
   const env = makeEnv();
-  const importer = createImporter(new ImporterStorage(), env as never);
+  const importerStorage = new ImporterStorage();
+  const importer = createImporter(importerStorage, env as never);
   // Each stored connection gets a new identity; only the current one begins
   // an import.
   let connections = 0;
@@ -346,6 +347,7 @@ function connectedEnv({ refuseChannel = false, catalogReady = true } = {}) {
   return {
     shopify,
     importer,
+    importerStorage,
     env: {
       ...env,
       SHOP_COORDINATOR: { getByName: () => coordinator },
@@ -407,7 +409,9 @@ describe("Aura Historia connection channel setup", () => {
   });
 
   it("imports a new channel's selection once Shopify returns its catalog", async () => {
-    const { env, shopify, importer } = connectedEnv({ catalogReady: false });
+    const { env, shopify, importer, importerStorage } = connectedEnv({
+      catalogReady: false,
+    });
     const result = await connect(env);
     assert.equal(result.get("oauth"), "connected");
     assert.equal(result.get("backfill"), "queued");
@@ -416,9 +420,11 @@ describe("Aura Historia connection channel setup", () => {
     let status = await importer.status();
     assert.equal(status?.phase, "queued");
     assert.equal(status?.awaiting, "CHANNEL_PUBLICATION");
-    // The merchant presses nothing: the importer checks again.
+    // The merchant presses nothing: the importer's own alarm checks again.
+    assert.ok(importerStorage.alarm !== null);
     await importer.alarm();
     assert.equal(shopify.exports, 0);
+    assert.ok(importerStorage.alarm !== null);
     shopify.catalogReady = true;
     await importer.alarm();
     assert.equal(shopify.exports, 1);

@@ -2571,6 +2571,8 @@ describe("catalog imports across the connection lifecycle", () => {
   }
   const contextKey = (generation: number) =>
     `aura-historia:backfill:${shop}:${generation}`;
+  const setupKey = (generation: number) =>
+    `aura-historia:backfill-setup:${shop}:${generation}`;
   const token = (
     runtime: ReturnType<typeof connectionRuntime>,
     generation: number,
@@ -2625,6 +2627,8 @@ describe("catalog imports across the connection lifecycle", () => {
         "setup",
       )) as CatalogSetupJob;
       assert.ok(first);
+      assert.ok(runtime.kv.has(setupKey(first.generation)));
+      assert.ok(runtime.importerStorage.alarm);
       assert.equal(runtime.catalog.exports, 0);
       let data = (await runtime.home()) as HomeData;
       assert.deepEqual(data.publication, { state: "missing_publication" });
@@ -2634,7 +2638,7 @@ describe("catalog imports across the connection lifecycle", () => {
       runtime.kv.delete(getShopCredentialsStorageKey(shop));
       assert.equal(await runtime.importerStorage.get("setup"), undefined);
       assert.equal(runtime.importerStorage.alarm, null);
-      assert.equal(runtime.kv.has(contextKey(first.generation)), false);
+      assert.equal(runtime.kv.has(setupKey(first.generation)), false);
       runtime.catalog.ready = true;
       await runtime.importer.alarm();
       assert.equal(runtime.catalog.exports, 0);
@@ -2648,6 +2652,7 @@ describe("catalog imports across the connection lifecycle", () => {
         "setup",
       )) as CatalogSetupJob;
       assert.ok(second.generation > first.generation);
+      assert.ok(runtime.importerStorage.alarm);
       runtime.catalog.ready = true;
       await runtime.importer.alarm();
       assert.equal(runtime.catalog.exports, 1);
@@ -2657,12 +2662,61 @@ describe("catalog imports across the connection lifecycle", () => {
         second.generation,
       );
       assert.equal(token(runtime, second.generation), "aura-token-second");
+      assert.equal(runtime.kv.has(setupKey(second.generation)), false);
       data = (await runtime.home()) as HomeData;
       assert.equal(data.publication?.state, "ready");
       assert.equal(data.catalogImport?.phase, "queued");
       assert.equal(data.catalogImport?.awaiting, undefined);
     } finally {
       globalThis.fetch = original;
+    }
+  });
+
+  it("ends a connection's publication wait when it is disconnected or replaced", async () => {
+    for (const end of ["disconnect", "replacement"] as const) {
+      const runtime = connectionRuntime();
+      const original = globalThis.fetch;
+      globalThis.fetch = runtime.fetcher;
+      try {
+        runtime.catalog.scopes = grantedScopes;
+        runtime.catalog.ready = false;
+        assert.equal(await runtime.coordinator.requestShipping(shop), true);
+        assert.equal(
+          (await runtime.act("retry_backfill")).get("backfill"),
+          "queued",
+        );
+        const waiting = (await runtime.importerStorage.get<CatalogSetupJob>(
+          "setup",
+        )) as CatalogSetupJob;
+        assert.ok(waiting, end);
+        if (end === "disconnect")
+          assert.equal(
+            (await runtime.act("disconnect")).get("disconnect"),
+            "success",
+          );
+        else
+          await runtime.coordinator.saveConnection(shop, {
+            listingSourceId: credentials.listingSourceId,
+            accessToken: "aura-token-second",
+          });
+        assert.equal(await runtime.importerStorage.get("setup"), undefined);
+        assert.equal(runtime.importerStorage.alarm, null, end);
+        assert.equal(runtime.kv.has(setupKey(waiting.generation)), false);
+        // A late check exports nothing once Shopify returns the publication,
+        // and the retired connection begins no import.
+        runtime.catalog.ready = true;
+        await runtime.importer.alarm();
+        assert.equal(runtime.catalog.exports, 0, end);
+        assert.equal(
+          await runtime.coordinator.beginCatalogImport(
+            shop,
+            credentials.connectionId,
+          ),
+          null,
+        );
+      } finally {
+        globalThis.fetch = original;
+      }
     }
   });
 
