@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import type { AppLoadContext } from "react-router";
 import type {
   CatalogImportJob,
+  CatalogSetupJob,
   GraphqlRequestFn,
 } from "../app/backfill.server";
 import { buildAuraHistoriaOAuthAuthorizeUrl } from "../app/oauth.server";
@@ -210,9 +211,10 @@ function coordinatorRuntime<
     beforeRead: async () => {},
     afterRead: async () => {},
   };
-  // The installation's granted scopes for catalog reads and the catalog
-  // exports started through this coordinator.
-  const catalog = { scopes: [] as string[], exports: 0 };
+  // The installation's granted scopes for catalog reads, whether Shopify
+  // returns the channel's app catalog yet, and the catalog exports started
+  // through this coordinator.
+  const catalog = { scopes: [] as string[], ready: true, exports: 0 };
   class FixtureCoordinator extends ShopCoordinator {
     protected override async providerGraphql(
       _shop: string,
@@ -234,6 +236,7 @@ function coordinatorRuntime<
           {
             scopes: catalog.scopes,
             channel: boundChannel({ accountId: credentials.listingSourceId }),
+            ...(catalog.ready ? {} : { publication: null }),
           },
           variables,
         );
@@ -2568,6 +2571,8 @@ describe("catalog imports across the connection lifecycle", () => {
   }
   const contextKey = (generation: number) =>
     `aura-historia:backfill:${shop}:${generation}`;
+  const setupKey = (generation: number) =>
+    `aura-historia:backfill-setup:${shop}:${generation}`;
   const token = (
     runtime: ReturnType<typeof connectionRuntime>,
     generation: number,
@@ -2601,6 +2606,114 @@ describe("catalog imports across the connection lifecycle", () => {
         );
         await runtime.importer.start(job.bulkOperationId);
         assert.equal(runtime.importerStorage.alarm, null);
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
+  it("waits for a new channel's publication across uninstall and reinstall", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      runtime.catalog.scopes = grantedScopes;
+      // Shopify has not returned the new connection's app catalog yet (#405).
+      runtime.catalog.ready = false;
+      let params = await (await runtime.authorize("first"))();
+      assert.equal(params.get("oauth"), "connected");
+      assert.equal(params.get("backfill"), "queued");
+      const first = (await runtime.importerStorage.get<CatalogSetupJob>(
+        "setup",
+      )) as CatalogSetupJob;
+      assert.ok(first);
+      assert.ok(runtime.kv.has(setupKey(first.generation)));
+      assert.ok(runtime.importerStorage.alarm);
+      assert.equal(runtime.catalog.exports, 0);
+      let data = (await runtime.home()) as HomeData;
+      assert.deepEqual(data.publication, { state: "missing_publication" });
+      assert.equal(data.catalogImport?.awaiting, "CHANNEL_PUBLICATION");
+      // Uninstalling stops the wait in the webhook's first step.
+      await runtime.coordinator.disconnectShipping(shop, true);
+      runtime.kv.delete(getShopCredentialsStorageKey(shop));
+      assert.equal(await runtime.importerStorage.get("setup"), undefined);
+      assert.equal(runtime.importerStorage.alarm, null);
+      assert.equal(runtime.kv.has(setupKey(first.generation)), false);
+      runtime.catalog.ready = true;
+      await runtime.importer.alarm();
+      assert.equal(runtime.catalog.exports, 0);
+      // The reinstalled shop's connection waits as well, and exports its
+      // channel's selection once Shopify returns the catalog.
+      runtime.catalog.ready = false;
+      params = await (await runtime.authorize("second"))();
+      assert.equal(params.get("oauth"), "connected");
+      assert.equal(params.get("backfill"), "queued");
+      const second = (await runtime.importerStorage.get<CatalogSetupJob>(
+        "setup",
+      )) as CatalogSetupJob;
+      assert.ok(second.generation > first.generation);
+      assert.ok(runtime.importerStorage.alarm);
+      runtime.catalog.ready = true;
+      await runtime.importer.alarm();
+      assert.equal(runtime.catalog.exports, 1);
+      assert.equal(
+        (await runtime.importerStorage.get<CatalogImportJob>("job"))
+          ?.generation,
+        second.generation,
+      );
+      assert.equal(token(runtime, second.generation), "aura-token-second");
+      assert.equal(runtime.kv.has(setupKey(second.generation)), false);
+      data = (await runtime.home()) as HomeData;
+      assert.equal(data.publication?.state, "ready");
+      assert.equal(data.catalogImport?.phase, "queued");
+      assert.equal(data.catalogImport?.awaiting, undefined);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("ends a connection's publication wait when it is disconnected or replaced", async () => {
+    for (const end of ["disconnect", "replacement"] as const) {
+      const runtime = connectionRuntime();
+      const original = globalThis.fetch;
+      globalThis.fetch = runtime.fetcher;
+      try {
+        runtime.catalog.scopes = grantedScopes;
+        runtime.catalog.ready = false;
+        assert.equal(await runtime.coordinator.requestShipping(shop), true);
+        assert.equal(
+          (await runtime.act("retry_backfill")).get("backfill"),
+          "queued",
+        );
+        const waiting = (await runtime.importerStorage.get<CatalogSetupJob>(
+          "setup",
+        )) as CatalogSetupJob;
+        assert.ok(waiting, end);
+        if (end === "disconnect")
+          assert.equal(
+            (await runtime.act("disconnect")).get("disconnect"),
+            "success",
+          );
+        else
+          await runtime.coordinator.saveConnection(shop, {
+            listingSourceId: credentials.listingSourceId,
+            accessToken: "aura-token-second",
+          });
+        assert.equal(await runtime.importerStorage.get("setup"), undefined);
+        assert.equal(runtime.importerStorage.alarm, null, end);
+        assert.equal(runtime.kv.has(setupKey(waiting.generation)), false);
+        // A late check exports nothing once Shopify returns the publication,
+        // and the retired connection begins no import.
+        runtime.catalog.ready = true;
+        await runtime.importer.alarm();
+        assert.equal(runtime.catalog.exports, 0, end);
+        assert.equal(
+          await runtime.coordinator.beginCatalogImport(
+            shop,
+            credentials.connectionId,
+          ),
+          null,
+        );
       } finally {
         globalThis.fetch = original;
       }

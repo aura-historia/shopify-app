@@ -3,9 +3,16 @@ import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import {
   BACKFILL_CONTEXT_TTL_SECONDS,
   type BackfillContext,
+  buildBulkProductsQuery,
   CATALOG_EXPORT_WINDOW_MS,
   CATALOG_IMPORT_WINDOW_MS,
+  CATALOG_SETUP_CONTEXT_TTL_SECONDS,
+  CATALOG_SETUP_RETRY_MS,
+  CATALOG_SETUP_WINDOW_MS,
   type CatalogImportJob,
+  type CatalogSetupContext,
+  type CatalogSetupJob,
+  catalogSetupDelay,
   EXPORT_PLAN_VERSION,
   loadBackfillContext,
 } from "../app/backfill.server";
@@ -17,7 +24,11 @@ import {
   importsOf,
   memoryKv,
 } from "./helpers/catalog-importer";
-import { channelResponse, isChannelQuery } from "./helpers/channel-fixtures";
+import {
+  boundChannel,
+  channelResponse,
+  isChannelQuery,
+} from "./helpers/channel-fixtures";
 
 const { CATALOG_EXPORT_POLL_MS, CATALOG_MAX_ATTEMPTS } = await import(
   "../workers/catalog-importer"
@@ -30,6 +41,9 @@ const publicationId = "gid://shopify/Publication/654";
 const resultUrl = "https://cdn.shopify.com/importer.jsonl";
 const contextKey = (generation: number) =>
   `aura-historia:backfill:${shop}:${generation}`;
+// The credentials of a generation awaiting its channel publication.
+const setupKey = (generation: number) =>
+  `aura-historia:backfill-setup:${shop}:${generation}`;
 
 function context(overrides: Partial<BackfillContext> = {}): BackfillContext {
   return {
@@ -943,5 +957,408 @@ describe("catalog import lifetime", () => {
         false,
       );
     }
+  });
+});
+
+describe("catalog import setup", () => {
+  // `new Date()` and `Date.now()` advance only with the mocked clock.
+  beforeEach(() => mock.timers.enable({ apis: ["Date"], now: Date.now() }));
+  afterEach(() => mock.timers.reset());
+
+  const setupContext = (): CatalogSetupContext => {
+    const {
+      bulkOperationId: _operation,
+      publicationId: _publication,
+      createdAt: _created,
+      ...setup
+    } = context({ primaryLocale: "de" });
+    return setup;
+  };
+
+  // Shopify right after the channel connection was set up: its app catalog
+  // and publication are returned only once `publication` is set. `onRead`
+  // runs while the publication is read, `onSubmit` while the export is
+  // submitted.
+  function settingUp(
+    state: {
+      publication?: unknown;
+      listed?: boolean;
+      scopes?: string[];
+      channel?: unknown;
+      submission?: unknown;
+    } = {},
+  ) {
+    const shopify = {
+      publication: null as unknown,
+      listed: false,
+      scopes: ["read_product_listings", "read_publications"],
+      channel: boundChannel(),
+      submission: null as unknown,
+      onRead: async () => {},
+      onSubmit: async () => {},
+      // The bulk queries Shopify was asked to export, and the exports it was
+      // asked to cancel.
+      exports: [] as string[],
+      cancels: [] as unknown[],
+      ...state,
+    };
+    const graphql = mock.fn(
+      async (query: string, variables: Record<string, unknown>) => {
+        if (query.includes("AuraChannelCatalogs")) await shopify.onRead();
+        if (isChannelQuery(query))
+          return channelResponse(
+            query,
+            {
+              scopes: shopify.scopes,
+              channel: shopify.channel,
+              publication: shopify.publication,
+              listed: shopify.listed || shopify.publication !== null,
+            },
+            variables,
+          );
+        if (query.includes("bulkOperationCancel")) {
+          shopify.cancels.push(variables.id);
+          return { data: { bulkOperationCancel: { userErrors: [] } } };
+        }
+        if (query.includes("bulkOperationRunQuery")) {
+          shopify.exports.push(String(variables.query));
+          await shopify.onSubmit();
+          return (
+            shopify.submission ?? {
+              data: {
+                bulkOperationRunQuery: {
+                  bulkOperation: { id: bulkOperationId, status: "CREATED" },
+                  userErrors: [],
+                },
+              },
+            }
+          );
+        }
+        return {
+          data: {
+            node: {
+              status: "COMPLETED",
+              objectCount: "1",
+              rootObjectCount: "1",
+              url: resultUrl,
+            },
+          },
+        };
+      },
+    );
+    return { shopify, graphql };
+  }
+
+  // An import whose channel connection was set up, but whose publication
+  // Shopify did not return when it began.
+  async function waiting(state: Parameters<typeof settingUp>[0] = {}) {
+    const { shopify, graphql } = settingUp(state);
+    const runtime = importerRuntime(graphql);
+    const generation = (await runtime.imports.begin()) as number;
+    assert.equal(
+      await runtime.imports.awaitPublication(generation, setupContext()),
+      true,
+    );
+    // Its credentials wait in their own short-lived context.
+    assert.equal(
+      runtime.kv.ttls.get(setupKey(generation)),
+      CATALOG_SETUP_CONTEXT_TTL_SECONDS,
+    );
+    assert.equal(runtime.kv.entries.has(contextKey(generation)), false);
+    return {
+      ...runtime,
+      shopify,
+      generation,
+      since: Date.now(),
+      setup: () => runtime.storage.get<CatalogSetupJob>("setup"),
+      // Runs the importer's alarm at the time it is due.
+      async due() {
+        const alarm = runtime.storage.alarm;
+        assert.ok(alarm !== null, "an alarm is due");
+        mock.timers.tick(Math.max(0, alarm - Date.now()));
+        await runtime.importer.alarm();
+      },
+    };
+  }
+
+  it("exports the channel's selection once Shopify returns its publication", async () => {
+    const runtime = await waiting();
+    assert.equal(runtime.storage.alarm, runtime.since + CATALOG_SETUP_RETRY_MS);
+    const status = await runtime.importer.status();
+    assert.equal(status?.phase, "queued");
+    assert.equal(status?.awaiting, "CHANNEL_PUBLICATION");
+    assert.equal(await runtime.job(), undefined);
+    // Still no catalog for the new connection: nothing is exported.
+    await runtime.due();
+    assert.deepEqual(runtime.shopify.exports, []);
+    assert.equal((await runtime.setup())?.checks, 1);
+    assert.equal(runtime.storage.alarm, Date.now() + catalogSetupDelay(1));
+    // Then the catalog lists the connection without a publication, and a
+    // read fails: the import keeps waiting.
+    runtime.shopify.listed = true;
+    await runtime.due();
+    runtime.shopify.publication = new Error("Throttled");
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      await runtime.due();
+    } finally {
+      warn.mock.restore();
+    }
+    assert.deepEqual(runtime.shopify.exports, []);
+    assert.equal((await runtime.setup())?.checks, 3);
+    assert.equal(
+      (await runtime.importer.status())?.awaiting,
+      "CHANNEL_PUBLICATION",
+    );
+    // Shopify returns the catalog's publication.
+    runtime.shopify.publication = { id: publicationId };
+    await runtime.due();
+    assert.deepEqual(runtime.shopify.exports, [
+      buildBulkProductsQuery(publicationId),
+    ]);
+    assert.equal(await runtime.setup(), undefined);
+    const job = (await runtime.job()) as CatalogImportJob;
+    assert.equal(job.generation, runtime.generation);
+    assert.equal(job.bulkOperationId, bulkOperationId);
+    assert.equal(job.admitted, false);
+    assert.equal(runtime.storage.alarm, Date.now() + CATALOG_EXPORT_POLL_MS);
+    const queued = await runtime.importer.status();
+    assert.equal(queued?.phase, "queued");
+    assert.equal(queued?.awaiting, undefined);
+    // The export's context is written, and the setup context released.
+    assert.equal(runtime.kv.entries.has(setupKey(runtime.generation)), false);
+    const stored = await loadBackfillContext(
+      runtime.kv,
+      shop,
+      runtime.generation,
+    );
+    assert.equal(stored?.publicationId, publicationId);
+    assert.equal(stored?.bulkOperationId, bulkOperationId);
+    assert.equal(stored?.accessToken, "aura-private-token");
+    assert.equal(stored?.primaryLocale, "de");
+    assert.equal(
+      runtime.kv.ttls.get(contextKey(runtime.generation)),
+      BACKFILL_CONTEXT_TTL_SECONDS,
+    );
+    // The import then runs as any other.
+    await runtime.importer.start(bulkOperationId);
+    const { batches, fetcher } = network();
+    await withFetch(fetcher, () => runtime.importer.alarm());
+    assert.deepEqual(
+      batches.map(({ key }) => key),
+      ["shopify-backfill-321-put-0"],
+    );
+    assert.equal((await runtime.importer.status())?.phase, "submitted");
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+  });
+
+  it("reports what Shopify last returned once the setup window closed", async () => {
+    for (const [state, error] of [
+      [{ publication: null }, "MISSING_PUBLICATION"],
+      [{ publication: null, listed: true }, "MISSING_PUBLICATION"],
+      // Reads that keep failing during the wait.
+      [
+        { publication: { id: "gid://shopify/Channel/1" } },
+        "SHOPIFY_READ_FAILED",
+      ],
+    ] satisfies [Parameters<typeof waiting>[0], string][]) {
+      const runtime = await waiting(state);
+      const checks: number[] = [];
+      const warn = mock.method(console, "warn", () => {});
+      try {
+        // Bounded: a wait that never ends fails here instead of hanging.
+        for (
+          let check = 0;
+          check < 50 && runtime.storage.alarm !== null;
+          check++
+        ) {
+          checks.push(runtime.storage.alarm - Date.now());
+          await runtime.due();
+        }
+      } finally {
+        warn.mock.restore();
+      }
+      // Waits double from 2 seconds to a minute, and the last check is due
+      // when the window closes.
+      assert.deepEqual(
+        checks.slice(0, 7),
+        [2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000],
+      );
+      assert.equal(Date.now(), runtime.since + CATALOG_SETUP_WINDOW_MS);
+      assert.ok(checks.length <= 16, String(checks.length));
+      assert.deepEqual(runtime.shopify.exports, []);
+      const status = await runtime.importer.status();
+      assert.equal(status?.phase, "failed", error);
+      assert.equal(status?.error, error);
+      assert.equal(status?.awaiting, undefined);
+      assert.equal(await runtime.setup(), undefined);
+      assert.equal(await runtime.job(), undefined);
+      assert.equal(runtime.kv.entries.has(setupKey(runtime.generation)), false);
+    }
+  });
+
+  it("ends the wait at once on missing access or a missing or foreign connection", async () => {
+    for (const [state, error] of [
+      [{ scopes: ["read_product_listings"] }, "MISSING_SCOPE"],
+      [{ channel: null }, "MISSING_CHANNEL"],
+      [
+        { channel: boundChannel({ accountId: `ls_${"1".repeat(26)}` }) },
+        "MISSING_CHANNEL",
+      ],
+    ] satisfies [Parameters<typeof waiting>[0], string][]) {
+      const runtime = await waiting(state);
+      const warn = mock.method(console, "warn", () => {});
+      try {
+        await runtime.due();
+      } finally {
+        warn.mock.restore();
+      }
+      assert.deepEqual(runtime.shopify.exports, []);
+      assert.equal((await runtime.importer.status())?.error, error);
+      assert.equal(await runtime.setup(), undefined);
+      assert.equal(runtime.storage.alarm, null);
+      assert.equal(runtime.kv.entries.has(setupKey(runtime.generation)), false);
+    }
+  });
+
+  it("reports a failed export submission instead of retrying it", async () => {
+    const runtime = await waiting({
+      publication: { id: publicationId },
+      submission: { errors: [{ message: "Too many bulk operations" }] },
+    });
+    const error = mock.method(console, "error", () => {});
+    try {
+      await runtime.due();
+    } finally {
+      error.mock.restore();
+    }
+    assert.equal(runtime.shopify.exports.length, 1);
+    assert.equal(
+      (await runtime.importer.status())?.error,
+      "SHOPIFY_READ_FAILED",
+    );
+    assert.equal(await runtime.setup(), undefined);
+    assert.equal(await runtime.job(), undefined);
+    assert.equal(runtime.storage.alarm, null);
+    assert.equal(runtime.kv.entries.has(setupKey(runtime.generation)), false);
+  });
+
+  it("awaits a missing context like a failed read and never exports without it", async () => {
+    const runtime = await waiting({ publication: { id: publicationId } });
+    runtime.kv.entries.delete(setupKey(runtime.generation));
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      await runtime.due();
+      assert.equal((await runtime.setup())?.checks, 1);
+      for (let check = 0; check < 50 && runtime.storage.alarm !== null; check++)
+        await runtime.due();
+      assert.equal(runtime.storage.alarm, null);
+    } finally {
+      warn.mock.restore();
+    }
+    assert.deepEqual(runtime.shopify.exports, []);
+    assert.equal(
+      (await runtime.importer.status())?.error,
+      "SHOPIFY_READ_FAILED",
+    );
+  });
+
+  it("checks again as soon as its status is read when its alarm was lost", async () => {
+    const runtime = await waiting({ publication: { id: publicationId } });
+    // For example, the runtime gave up retrying a failed alarm.
+    runtime.storage.alarm = null;
+    assert.equal(
+      (await runtime.importer.status())?.awaiting,
+      "CHANNEL_PUBLICATION",
+    );
+    assert.equal(runtime.storage.alarm, Date.now());
+    await runtime.due();
+    assert.equal(runtime.shopify.exports.length, 1);
+    assert.equal((await runtime.job())?.generation, runtime.generation);
+    // Reading the status re-arms nothing else.
+    const alarm = runtime.storage.alarm;
+    await runtime.importer.status();
+    assert.equal(runtime.storage.alarm, alarm);
+  });
+
+  it("stops waiting on disconnect, uninstall or replacement", async () => {
+    for (const stop of ["stop", "newer import"] as const) {
+      const runtime = await waiting();
+      if (stop === "stop") await runtime.importer.stop();
+      else await runtime.imports.begin();
+      assert.equal(await runtime.setup(), undefined, stop);
+      assert.equal(runtime.storage.alarm, null, stop);
+      assert.equal(
+        runtime.kv.entries.has(setupKey(runtime.generation)),
+        false,
+        stop,
+      );
+      assert.equal(
+        (await runtime.importer.status())?.phase,
+        stop === "stop" ? undefined : "queued",
+      );
+      // A late alarm or a retired generation's writes revive nothing, even
+      // once Shopify returns the publication.
+      runtime.shopify.publication = { id: publicationId };
+      await runtime.importer.alarm();
+      assert.equal(
+        await runtime.imports.awaitPublication(
+          runtime.generation,
+          setupContext(),
+        ),
+        false,
+      );
+      assert.equal(
+        await runtime.importer.fail(runtime.generation, "MISSING_PUBLICATION"),
+        false,
+      );
+      assert.deepEqual(runtime.shopify.exports, [], stop);
+      assert.equal(await runtime.setup(), undefined, stop);
+      assert.equal(await runtime.job(), undefined, stop);
+      assert.equal(
+        runtime.kv.entries.has(setupKey(runtime.generation)),
+        false,
+        stop,
+      );
+    }
+  });
+
+  it("exports nothing for a wait retired while the publication was read", async () => {
+    const runtime = await waiting({ publication: { id: publicationId } });
+    runtime.shopify.onRead = async () => {
+      runtime.shopify.onRead = async () => {};
+      await runtime.importer.stop();
+    };
+    await runtime.due();
+    assert.deepEqual(runtime.shopify.exports, []);
+    assert.equal(await runtime.job(), undefined);
+    assert.equal(runtime.storage.alarm, null);
+    assert.equal(await runtime.importer.status(), null);
+  });
+
+  it("discards an export whose wait was retired while it was submitted", async () => {
+    const runtime = await waiting({ publication: { id: publicationId } });
+    let newer = 0;
+    // "Import catalog again" begins while Shopify accepts the export.
+    runtime.shopify.onSubmit = async () => {
+      newer = (await runtime.imports.begin()) as number;
+    };
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      await runtime.due();
+    } finally {
+      warn.mock.restore();
+    }
+    assert.ok(newer > runtime.generation);
+    // The export was never recorded and is cancelled; its completion admits
+    // nothing.
+    assert.deepEqual(runtime.shopify.cancels, [bulkOperationId]);
+    assert.equal(await runtime.job(), undefined);
+    assert.equal(runtime.kv.entries.has(contextKey(runtime.generation)), false);
+    assert.equal(runtime.kv.entries.has(setupKey(runtime.generation)), false);
+    await runtime.importer.start(bulkOperationId);
+    assert.equal(runtime.storage.alarm, null);
+    assert.equal((await runtime.importer.status())?.phase, "queued");
+    assert.equal(await runtime.storage.get("generation"), newer);
   });
 });

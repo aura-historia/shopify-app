@@ -255,9 +255,12 @@ describe("Aura Historia OAuth callback error boundary", () => {
 // A connected shop: Shopify Admin reads/writes behind the coordinator, Aura's
 // token and ingestion-configuration endpoints, and this app's one channel
 // connection on the shop.
-function connectedEnv({ refuseChannel = false } = {}) {
+// `catalogReady` is false while Shopify has not returned the new
+// connection's app catalog yet.
+function connectedEnv({ refuseChannel = false, catalogReady = true } = {}) {
   const shopify = {
     channel: null as Record<string, unknown> | null,
+    catalogReady,
     created: 0,
     exports: 0,
   };
@@ -299,7 +302,14 @@ function connectedEnv({ refuseChannel = false } = {}) {
       };
     }
     if (isChannelQuery(query))
-      return channelResponse(query, { channel: shopify.channel }, variables);
+      return channelResponse(
+        query,
+        {
+          channel: shopify.channel,
+          ...(shopify.catalogReady ? {} : { publication: null }),
+        },
+        variables,
+      );
     assert.match(query, /bulkOperationRunQuery/);
     shopify.exports++;
     return {
@@ -314,7 +324,8 @@ function connectedEnv({ refuseChannel = false } = {}) {
     };
   };
   const env = makeEnv();
-  const importer = createImporter(new ImporterStorage(), env as never);
+  const importerStorage = new ImporterStorage();
+  const importer = createImporter(importerStorage, env as never);
   // Each stored connection gets a new identity; only the current one begins
   // an import.
   let connections = 0;
@@ -331,9 +342,12 @@ function connectedEnv({ refuseChannel = false } = {}) {
     requestShipping: async () => true,
     graphql,
   };
+  // The importer reads Shopify through the same coordinator.
+  env.SHOP_COORDINATOR = { getByName: () => coordinator } as never;
   return {
     shopify,
     importer,
+    importerStorage,
     env: {
       ...env,
       SHOP_COORDINATOR: { getByName: () => coordinator },
@@ -392,6 +406,33 @@ describe("Aura Historia connection channel setup", () => {
       specificationHandle: "aura-historia",
     });
     assert.equal(shopify.exports, 1);
+  });
+
+  it("imports a new channel's selection once Shopify returns its catalog", async () => {
+    const { env, shopify, importer, importerStorage } = connectedEnv({
+      catalogReady: false,
+    });
+    const result = await connect(env);
+    assert.equal(result.get("oauth"), "connected");
+    assert.equal(result.get("backfill"), "queued");
+    assert.equal(shopify.created, 1);
+    assert.equal(shopify.exports, 0);
+    let status = await importer.status();
+    assert.equal(status?.phase, "queued");
+    assert.equal(status?.awaiting, "CHANNEL_PUBLICATION");
+    // The merchant presses nothing: the importer's own alarm checks again.
+    assert.ok(importerStorage.alarm !== null);
+    await importer.alarm();
+    assert.equal(shopify.exports, 0);
+    assert.ok(importerStorage.alarm !== null);
+    shopify.catalogReady = true;
+    await importer.alarm();
+    assert.equal(shopify.exports, 1);
+    assert.equal(shopify.created, 1);
+    status = await importer.status();
+    assert.equal(status?.phase, "queued");
+    assert.equal(status?.awaiting, undefined);
+    assert.equal(status?.error, undefined);
   });
 
   it("reuses the channel when the callback or connection is retried", async () => {

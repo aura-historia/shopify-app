@@ -401,6 +401,9 @@ export async function findChannelPublication(
     // The catalog must still list the channel when its publication is read.
     if (response.errors || listsChannel(catalog?.channels, channelId) !== true)
       return { state: "unavailable" };
+    // The connection's catalog has no publication (yet), which Shopify
+    // answers with an explicit null. Anything else unexpected is unreadable.
+    if (catalog?.publication === null) return { state: "missing" };
     const id = catalog?.publication?.id;
     return typeof id === "string" && PUBLICATION_GID.test(id)
       ? { state: "ready", publicationId: id }

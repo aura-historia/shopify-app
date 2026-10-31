@@ -21,6 +21,8 @@ export interface ChannelState {
   // Publication of the app catalog listing the channel; `null` lists no
   // catalog for the channel and an Error makes the catalog reads throw.
   publication?: unknown;
+  // An app catalog lists the channel although its publication is `null`.
+  listed?: boolean;
 }
 
 export function boundChannel(
@@ -55,6 +57,7 @@ export function channelResponse(
     scopes = grantedScopes,
     channel = boundChannel(),
     publication = { id: "gid://shopify/Publication/456" },
+    listed = publication !== null,
   }: ChannelState,
   variables: Record<string, unknown>,
 ): GraphqlResponse {
@@ -70,7 +73,7 @@ export function channelResponse(
     if (channel instanceof Error) throw channel;
     return { data: { channelByHandle: channel } };
   }
-  const listed =
+  const listedChannel =
     channel && typeof channel === "object" && "id" in channel
       ? (channel as { id: unknown }).id
       : channelId;
@@ -87,9 +90,9 @@ export function channelResponse(
               id: "gid://shopify/AppCatalog/9001",
               channels: listing("gid://shopify/Channel/9001"),
             },
-            ...(publication === null
-              ? []
-              : [{ id: channelCatalogId, channels: listing(listed) }]),
+            ...(listed
+              ? [{ id: channelCatalogId, channels: listing(listedChannel) }]
+              : []),
           ],
           pageInfo: { hasNextPage: false, endCursor: "end" },
         },
@@ -105,7 +108,9 @@ export function channelResponse(
       !scopes.includes("write_publications")
     )
       throw new Error("Access denied for publication field.");
-    return { data: { catalog: { publication, channels: listing(listed) } } };
+    return {
+      data: { catalog: { publication, channels: listing(listedChannel) } },
+    };
   }
   throw new Error(`Unexpected channel query: ${query.slice(0, 60)}`);
 }
