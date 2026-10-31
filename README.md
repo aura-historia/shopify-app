@@ -95,12 +95,13 @@ Merchants choose which products appear on Aura Historia by publishing them to th
 - **Ongoing changes** use Shopify's own-channel `product_listings/add`, `product_listings/update` and `product_listings/remove` topics, which Shopify scopes to this app's channel. Publishing adds or restores a product, and edits and stock changes arrive as updates. Removal from the channel withdraws the listing, even if the product stays active elsewhere. Out-of-stock products remain listed with their inventory availability.
 - **Initial import, “Import catalog again” and retries** share one bulk export. It resolves the publication of the installation's channel connection and reads `publishedOnPublication(publicationId: …)` for every product. An `ACTIVE` product is upserted only when that membership is explicitly `true`, and withdrawn when it is `false`. A missing value is unknown: the product is reported as a failure and the import is not complete. `DRAFT`/`ARCHIVED` products are withdrawn and other statuses are ignored, as before. Source listing IDs remain Shopify numeric product IDs.
 - **Missing access, channel or publication.** Before exporting, the app verifies that `read_product_listings` and `read_publications` (or their write scopes) were actually granted to the installation, using a separate `accessScopes` query. Without `read_publications`, Shopify denies the channel's publication, and its access-scope reference places products' publication fields such as `publishedOnPublication` under that scope too. It also verifies that the channel connection is bound to the connected listing source and that its publication exists. If any check fails or a read fails, no export runs. A missing grant is reported as `MISSING_SCOPE` with a link to approve the app's permissions in Shopify; other failures are shown as retryable, and failed publication reads log Shopify's error text. There is never a fallback to all active products, `onlineStoreUrl`, Online Store publishing or an aggregate count. Every processing step checks the scope, connection and publication again before writing; a rebound connection or changed publication discards the snapshot.
+- **Channel setup window.** Right after `channelCreate`, Shopify may not return the new connection's app catalog or its publication yet: in production QA, fresh connections' initial imports found no catalog listing the connection, while the embedded app read the selection seconds later ([#405](https://github.com/aura-historia/shopify-app/issues/405)). Delayed visibility is the likely, unconfirmed cause. Such an import waits instead of failing: the importer checks again after 2 seconds, doubling the wait up to a minute, for at most 10 minutes after it began waiting, and exports the channel's membership as soon as the publication is readable. Only when the window closes is the import reported as `MISSING_PUBLICATION`, or as a read failure if the last read failed. Missing access and a missing or foreign connection are never awaited: they are reported at once, also during the wait, and a failed export submission is reported as it would be at the start. While the import waits, the embedded app shows the channel as being prepared and the import as queued.
 
 ### Channel connection
 
 The app is a channel-config-extension sales channel, so it manages explicit channel connections with `channelCreate`/`channelUpdate` instead of Shopify's legacy install-time channel. `create_legacy_channel_on_app_install` stays `false`: installing the app creates no channel and no publication.
 
-- **Setup.** The connection is created after the merchant authorizes Aura Historia and Aura has accepted the listing source's ingestion configuration with that token, immediately before the initial import. Every “Import catalog again” repeats the same idempotent step, so it also repairs a missing or failed setup.
+- **Setup.** The connection is created after the merchant authorizes Aura Historia and Aura has accepted the listing source's ingestion configuration with that token, immediately before the initial import. Every “Import catalog again” repeats the same idempotent step, so it also repairs a missing or failed setup. The initial import waits for the new connection's publication within the [channel setup window](#catalog-synchronization), so a fresh connection needs no manual retry while Shopify does not return the new publication yet.
 - **Identity.** One connection per installation with the fixed handle `aura-historia`, the `aura-historia` specification, `accountId` set to the authorized listing source ID and `accountName` “Aura Historia”. The importer only uses a connection bound to the connected listing source.
 - **Coverage.** Any store can connect, whatever its market coverage: worldwide, a few countries or a single market. The `aura-historia` specification declares every Shopify country with Aura's languages and sets `expectsOnlineStoreParity = false`. Shopify creates product feeds for the store's region markets that cover a declared country, and binds the connection to the store's defaults when none does. The app never creates, changes or removes markets. With parity required, Shopify refused `channelCreate` unless every declared country had a matching region market, so a store with a single United States market could not connect ([#378](https://github.com/aura-historia/shopify-app/issues/378)). One parity specification per country would need market access and a connection and publication per market country. Parity itself only adds Markets warnings about channel-specific prices, which Aura does not use. Shoppers still check out in the merchant's store (`merchantOfRecord = "merchant"`). The import sends each product's own price in the store currency and reads no product feed, so price or currency settings of a channel market for Aura are not applied. The store currency must still be one Aura supports.
 - **Retry, reconnect and concurrency.** A retried callback or import finds the connection by handle and changes nothing. Connecting another listing source rebinds the same connection with `channelUpdate`, so the merchant's product selection is kept. If a concurrent request created the handle first, the existing connection is adopted. No second connection is created.
@@ -145,6 +146,7 @@ These limits are enforced in code, not measured under live load:
 | Retained per step | One segment: at most 100 products and about 2 MiB of product and image lines | By construction |
 | Shopify export | 24 hours from submission; a completion is admitted until one check (five minutes) later | Importer alarm and completion webhook |
 | Import | 24 hours from admission | Importer alarm |
+| Channel publication wait | 10 minutes after the import began waiting, checked after 2 seconds and then twice as long each time, at most a minute apart | Importer alarm |
 
 The export lists every product of the store, not only those published to Aura, so the product limit applies to the whole catalog. A larger export ends as `EXPORT_TOO_LARGE`: before anything is downloaded when Shopify reports its size, otherwise when streaming passes a limit, after the segments before it were submitted. The merchant is asked to contact support.
 
@@ -198,6 +200,15 @@ the current generation too:
   admitted, and an admitted one ends as `INCOMPLETE_EXPORT`: its batches were planned
   differently. A missing context of the current generation is retried like a failed
   read and then reported as failed.
+- **Awaited publications.** An attempt whose channel publication Shopify has not
+  returned yet stores its credentials in its own context, like an export, and
+  records only its shop, listing source, start and checks in the importer. Its alarm
+  checks the publication again; only the current generation's check can submit the
+  export, queue it or record the outcome, each checked in the same transaction as
+  above. Beginning, stopping and failing an import retire the wait with its
+  generation, so “Import catalog again”, disconnect, uninstall and connection
+  replacement end it and release its context. A wait retired during a check submits
+  no export, and an export submitted while it was retired is never admitted.
 - **Failed attempts.** An attempt that cannot export (missing access, channel or
   publication, or a failed submission) records its failure as the current status.
   Because it already retired the previous generation, an older import that was still
@@ -217,7 +228,7 @@ Bulk writes use the existing canonical asynchronous upsert and withdrawal endpoi
 - The channel count is Shopify's `productsCount` of active products published to the channel connection. It is not an import count.
 - “Last import” reports the Shopify products checked, the eligible products submitted, the admitted withdrawals of unpublished or inactive products, and failures.
 - Acceptance by Aura Historia means queue admission. Search visibility follows asynchronously and still applies product-status rules.
-- Missing permissions, a missing or refused channel connection, a missing publication, incomplete or malformed exports, oversized exports and expired exports or imports remain visible as failures with a retry. They are never shown as a successful zero-product import. While an import is processing, the counts cover the segments read so far.
+- Missing permissions, a missing or refused channel connection, a missing publication once its setup window closed, incomplete or malformed exports, oversized exports and expired exports or imports remain visible as failures with a retry. They are never shown as a successful zero-product import. While an import is processing, the counts cover the segments read so far.
 
 ### Rollout
 
@@ -227,6 +238,7 @@ This is a fresh release with no existing installations. Credential records requi
 2. Deploy the Worker, which adds the `CatalogImporter` migration, and release the Shopify configuration.
 3. Verify the following on a development store:
    - A fresh install creates no channel; connecting Aura Historia creates exactly one `aura-historia` connection bound to the listing source, and a retried connection or import creates no second one.
+   - The initial import of a fresh install, and of a reinstall after uninstalling, reaches the channel-filtered export without “Import catalog again”, also when Shopify returns the new connection's publication only after the import began.
    - The connection is created, without changing any market, on a store with a single region market, on one with several markets in different currencies and languages, and on one with a worldwide market.
    - Products can be selected for the channel, and `product_listings/*` events arrive for that selection.
    - Selected and unselected products.

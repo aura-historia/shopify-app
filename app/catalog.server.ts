@@ -34,6 +34,9 @@ export interface CatalogImportStatus {
   // product that was never imported is a no-op downstream.
   withdrawn?: number;
   error?: CatalogImportError;
+  // A queued import waits for Shopify to return the channel's publication
+  // before it exports.
+  awaiting?: "CHANNEL_PUBLICATION";
   updatedAt: string;
 }
 
@@ -60,6 +63,8 @@ export function readCatalogImportStatus(
     !optionalCount(status.withdrawn) ||
     (status.error !== undefined &&
       !CATALOG_IMPORT_ERRORS.includes(status.error)) ||
+    (status.awaiting !== undefined &&
+      status.awaiting !== "CHANNEL_PUBLICATION") ||
     typeof status.updatedAt !== "string" ||
     !Number.isFinite(Date.parse(status.updatedAt))
   )
@@ -77,6 +82,9 @@ export function readCatalogImportStatus(
     eligible: status.eligible,
     withdrawn: status.withdrawn,
     error: status.error,
+    ...(status.awaiting && status.phase === "queued" && !timedOut
+      ? { awaiting: status.awaiting }
+      : {}),
     updatedAt: status.updatedAt,
   };
 }
@@ -100,6 +108,18 @@ export const CHANNEL_PUBLICATION_ERRORS: Record<
   missing_publication: "MISSING_PUBLICATION",
   unavailable: "SHOPIFY_READ_FAILED",
 };
+
+// Shopify may return the app catalog of a new channel connection, or its
+// publication, only some time after `channelCreate`. Until it does, the
+// catalog scan finds no catalog listing the connection, or that catalog
+// returns no publication, which reads as unavailable like a failed read.
+// An import waits for these states within a bounded window. Missing access
+// and a missing or foreign connection are never awaited.
+export function awaitsChannelPublication(
+  state: ChannelPublicationState,
+): boolean {
+  return state === "missing_publication" || state === "unavailable";
+}
 
 export const CHANNEL_PROVISIONING_ERRORS: Record<
   Exclude<ChannelProvisioning["state"], "ready">,

@@ -1,4 +1,5 @@
 import {
+  awaitsChannelPublication,
   type CatalogImportError,
   type CatalogImportStatus,
   CHANNEL_PROVISIONING_ERRORS,
@@ -64,6 +65,26 @@ export const CATALOG_EXPORT_WINDOW_MS = 24 * 3600_000;
 export const CATALOG_IMPORT_WINDOW_MS = 24 * 3600_000;
 export const BACKFILL_CONTEXT_TTL_SECONDS =
   (CATALOG_EXPORT_WINDOW_MS + CATALOG_IMPORT_WINDOW_MS) / 1000 + 3600;
+
+// Shopify may not return the app catalog and publication of a new channel
+// connection right after `channelCreate`, so an import that starts right
+// after setup may not find them yet (#405). The importer checks again after
+// 2 seconds, doubling the wait up to a minute, until the publication is
+// readable or 10 minutes after the import began waiting; then it reports
+// what Shopify last returned. The context written meanwhile is replaced,
+// with a fresh TTL, once the export is submitted.
+export const CATALOG_SETUP_WINDOW_MS = 10 * 60_000;
+export const CATALOG_SETUP_RETRY_MS = 2_000;
+export const CATALOG_SETUP_MAX_RETRY_MS = 60_000;
+
+// The wait before the next publication check, after `checks` checks of the
+// importer.
+export function catalogSetupDelay(checks: number): number {
+  return Math.min(
+    CATALOG_SETUP_RETRY_MS * 2 ** checks,
+    CATALOG_SETUP_MAX_RETRY_MS,
+  );
+}
 
 // Bulk queries take no variables. The validated publication GID is embedded so
 // every product row carries explicit membership in Aura's own channel.
@@ -175,14 +196,18 @@ const SHOPIFY_LOCALE_TO_LANGUAGE: Record<string, LanguageData> = {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface BackfillContext {
+// The Aura credentials and validated shop metadata of an import generation,
+// before its export exists.
+export interface CatalogSetupContext {
   listingSourceId: string;
   accessToken: string;
   apiBaseUrl: string;
   primaryLocale?: string;
   currencyCode: CurrencyData;
   shopDomain: string;
+}
 
+export interface BackfillContext extends CatalogSetupContext {
   bulkOperationId: string;
   // The channel publication whose membership the snapshot reads.
   publicationId: string;
@@ -292,6 +317,21 @@ export interface CatalogImportJob {
   attempts: number;
 }
 
+// A generation whose channel connection is set up but whose publication
+// Shopify has not returned yet. It holds no credentials; they stay in the
+// generation's context.
+export interface CatalogSetupJob {
+  shop: string;
+  generation: number;
+  listingSourceId: string;
+  // When the generation began waiting (epoch milliseconds).
+  since: number;
+  // Publication checks of the importer so far.
+  checks: number;
+  // What is reported if the window closes in the last observed state.
+  error: CatalogImportError;
+}
+
 // The export is not well-formed, grouped JSONL. A retry reads the same file.
 export class MalformedExportError extends Error {}
 
@@ -300,11 +340,18 @@ export class ExportCapacityError extends Error {}
 
 // The shop's import generations, owned by its CatalogImporter. Each import
 // begins a new generation, which retires the previous one; only the current
-// generation can queue an export or record a status.
+// generation can queue an export, await its publication or record a status.
 export interface CatalogImports {
   // Null when the connection no longer acts for the shop.
   begin(): Promise<number | null>;
   queue(generation: number, context: BackfillContext): Promise<boolean>;
+  // The importer checks the publication again within the setup window and
+  // exports as soon as Shopify returns it; `error` is what it last returned.
+  awaitPublication(
+    generation: number,
+    context: CatalogSetupContext,
+    error: CatalogImportError,
+  ): Promise<boolean>;
   fail(generation: number, error: CatalogImportError): Promise<boolean>;
   status(): Promise<CatalogImportStatus | null>;
 }
@@ -317,6 +364,8 @@ export function catalogImportsOf(
   return {
     begin,
     queue: (generation, context) => importer.queue(generation, context),
+    awaitPublication: (generation, context, error) =>
+      importer.awaitPublication(generation, context, error),
     fail: (generation, error) => importer.fail(generation, error),
     status: () => importer.status(),
   };
@@ -864,18 +913,20 @@ export async function storeBackfillContext(
   },
   shop: string,
   generation: number,
-  context: BackfillContext,
+  // A generation awaiting its publication stores only its setup context; the
+  // context of its export replaces it.
+  context: CatalogSetupContext | BackfillContext,
 ): Promise<void> {
   await kv.put(backfillContextKey(shop, generation), JSON.stringify(context), {
     expirationTtl: BACKFILL_CONTEXT_TTL_SECONDS,
   });
 }
 
-export async function loadBackfillContext(
+async function readBackfillContext(
   kv: { get: (key: string) => Promise<string | null> },
   shop: string,
   generation: number,
-): Promise<BackfillContext | null> {
+): Promise<Partial<BackfillContext> | null> {
   const raw = await kv.get(backfillContextKey(shop, generation));
   if (!raw) return null;
   try {
@@ -887,18 +938,50 @@ export async function loadBackfillContext(
       typeof value.accessToken === "string" &&
       typeof value.apiBaseUrl === "string" &&
       typeof value.shopDomain === "string" &&
-      typeof value.bulkOperationId === "string" &&
-      typeof value.publicationId === "string" &&
-      PUBLICATION_GID.test(value.publicationId) &&
       (value.primaryLocale === undefined ||
         typeof value.primaryLocale === "string") &&
-      mapShopifyCurrencyCode(value.currencyCode) &&
-      typeof value.createdAt === "string"
-      ? (value as BackfillContext)
+      mapShopifyCurrencyCode(value.currencyCode)
+      ? value
       : null;
   } catch {
     return null;
   }
+}
+
+// The credentials and metadata of a generation awaiting its publication.
+export async function loadCatalogSetupContext(
+  kv: { get: (key: string) => Promise<string | null> },
+  shop: string,
+  generation: number,
+): Promise<CatalogSetupContext | null> {
+  const value = await readBackfillContext(kv, shop, generation);
+  if (!value) return null;
+  const context = value as CatalogSetupContext;
+  return {
+    listingSourceId: context.listingSourceId,
+    accessToken: context.accessToken,
+    apiBaseUrl: context.apiBaseUrl,
+    ...(context.primaryLocale !== undefined && {
+      primaryLocale: context.primaryLocale,
+    }),
+    currencyCode: context.currencyCode,
+    shopDomain: context.shopDomain,
+  };
+}
+
+export async function loadBackfillContext(
+  kv: { get: (key: string) => Promise<string | null> },
+  shop: string,
+  generation: number,
+): Promise<BackfillContext | null> {
+  const value = await readBackfillContext(kv, shop, generation);
+  return value &&
+    typeof value.bulkOperationId === "string" &&
+    typeof value.publicationId === "string" &&
+    PUBLICATION_GID.test(value.publicationId) &&
+    typeof value.createdAt === "string"
+    ? (value as BackfillContext)
+    : null;
 }
 
 export async function clearBackfillContext(
@@ -1574,10 +1657,37 @@ export async function triggerBackfill(
       listingSourceId,
     );
     if (publication.state !== "ready") {
-      await imports.fail(
-        generation,
-        CHANNEL_PUBLICATION_ERRORS[publication.state],
-      );
+      const error = CHANNEL_PUBLICATION_ERRORS[publication.state];
+      // Shopify may not return a connection's publication right after its
+      // setup. The importer checks again within a bounded window and exports
+      // only once it is readable; missing access or a missing or foreign
+      // connection is reported at once.
+      if (awaitsChannelPublication(publication.state)) {
+        if (
+          !(await imports.awaitPublication(
+            generation,
+            {
+              listingSourceId,
+              accessToken,
+              apiBaseUrl,
+              primaryLocale: validatedMetadata.primaryLocale,
+              currencyCode: validatedMetadata.currencyCode,
+              shopDomain,
+            },
+            error,
+          ))
+        ) {
+          console.warn(
+            `Backfill for ${shopDomain} was retired before queueing`,
+          );
+          return false;
+        }
+        console.warn(
+          `Backfill for ${shopDomain} awaits the channel publication: ${publication.state}`,
+        );
+        return true;
+      }
+      await imports.fail(generation, error);
       console.warn(
         `Backfill not submitted for ${shopDomain}: publication ${publication.state}`,
       );

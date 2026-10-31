@@ -10,7 +10,9 @@ import {
   buildShopifyIngestionConfiguration,
   CATALOG_EXPORT_WINDOW_MS,
   CATALOG_IMPORT_WINDOW_MS,
+  CATALOG_SETUP_RETRY_MS,
   type CatalogImportJob,
+  type CatalogSetupJob,
   cancelBulkOperation,
   classifyShopifyBackfillAction,
   clearBackfillContext,
@@ -27,6 +29,7 @@ import {
   fetchShopMetadata,
   type GraphqlRequestFn,
   loadBackfillContext,
+  loadCatalogSetupContext,
   MAX_EXPORT_BYTES,
   MAX_EXPORT_LINE_BYTES,
   MAX_EXPORT_PRODUCTS,
@@ -2644,6 +2647,7 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
         {
           begin: async () => null,
           queue: mock.fn(async () => true),
+          awaitPublication: mock.fn(async () => true),
           fail: mock.fn(async () => true),
           status,
         },
@@ -2740,22 +2744,27 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
     ],
     ["a refused channel connection", refuse, "CHANNEL_REJECTED"],
     [
-      "a missing app publication",
+      "a connection rebound to another listing source",
       (query: string, variables: Variables) =>
-        publicationResponse(query, variables, { publication: null }),
-      "MISSING_PUBLICATION",
+        query.includes("AuraChannelUpdate")
+          ? {
+              data: {
+                channelUpdate: {
+                  channel: boundChannel(),
+                  userErrors: [],
+                },
+              },
+            }
+          : // A concurrent callback rebinds the connection to its source
+            // right after this import bound it.
+            publicationResponse(query, variables, {
+              channel: boundChannel({ accountId: `ls_${"1".repeat(26)}` }),
+            }),
+      "MISSING_CHANNEL",
     ],
     [
       "a failed channel read",
       () => ({ errors: [{ message: "Throttled" }] }),
-      "SHOPIFY_READ_FAILED",
-    ],
-    [
-      "a malformed publication",
-      (query: string, variables: Variables) =>
-        publicationResponse(query, variables, {
-          publication: { id: "gid://shopify/Channel/1" },
-        }),
       "SHOPIFY_READ_FAILED",
     ],
   ] as const) {
@@ -2833,6 +2842,145 @@ describe("configureShopifyListingSource and triggerBackfill", () => {
       },
     ]);
     assert.equal((await catalog.context())?.publicationId, publicationId);
+  });
+
+  // Shopify 2026-10 right after `channelCreate`: the new connection exists,
+  // but its app catalog or the catalog's publication is not returned yet
+  // (#405).
+  function settingUp(publication: unknown) {
+    const state = { channel: null as unknown, publication, created: 0 };
+    const queries: string[] = [];
+    const graphql: GraphqlRequestFn = async (query, variables) => {
+      queries.push(query);
+      if (query.includes("AuraChannelCreate")) {
+        state.created++;
+        state.channel = boundChannel();
+        return {
+          data: { channelCreate: { channel: state.channel, userErrors: [] } },
+        };
+      }
+      if (isChannelQuery(query))
+        return publicationResponse(query, variables, {
+          channel: state.channel,
+          publication: state.publication,
+        });
+      assert.match(query, /bulkOperationRunQuery/);
+      // Only the channel's own membership is exported.
+      assert.ok(
+        String(variables.query).includes(
+          `publishedOnPublication(publicationId: "${publicationId}")`,
+        ),
+      );
+      return {
+        data: {
+          bulkOperationRunQuery: {
+            bulkOperation: { id: bulkOperationId, status: "CREATED" },
+            userErrors: [],
+          },
+        },
+      };
+    };
+    return { state, queries, graphql };
+  }
+
+  const trigger = (
+    graphql: GraphqlRequestFn,
+    catalog: ReturnType<typeof catalogImports>,
+  ) =>
+    triggerBackfill(
+      graphql,
+      catalog.imports,
+      shopDomain,
+      listingSourceId,
+      accessToken,
+      apiBaseUrl,
+      validatedMetadata,
+    );
+
+  for (const [name, publication, error] of [
+    // No app catalog lists the new connection yet.
+    ["no catalog of the new connection", null, "MISSING_PUBLICATION"],
+    // Its catalog returns no valid publication yet.
+    [
+      "an unreadable publication",
+      { id: "gid://shopify/Channel/1" },
+      "SHOPIFY_READ_FAILED",
+    ],
+  ] as const) {
+    it(`awaits ${name} instead of failing or exporting unfiltered products`, async () => {
+      const catalog = catalogImports();
+      const shopify = settingUp(publication);
+      assert.equal(await trigger(shopify.graphql, catalog), true);
+      assert.equal(shopify.state.created, 1);
+      assert.ok(shopify.queries.every(isChannelQuery));
+      assert.equal(await catalog.job(), undefined);
+      const status = await catalog.imports.status();
+      assert.equal(status?.phase, "queued");
+      assert.equal(status?.awaiting, "CHANNEL_PUBLICATION");
+      assert.equal(status?.error, undefined);
+      const setup = (await catalog.storage.get<CatalogSetupJob>(
+        "setup",
+      )) as CatalogSetupJob;
+      assert.equal(setup.generation, await catalog.storage.get("generation"));
+      assert.equal(setup.shop, shopDomain);
+      assert.equal(setup.listingSourceId, listingSourceId);
+      assert.equal(setup.checks, 0);
+      assert.equal(setup.error, error);
+      // The importer checks again shortly.
+      assert.ok(
+        (catalog.storage.alarm ?? 0) <= Date.now() + CATALOG_SETUP_RETRY_MS,
+      );
+      // The generation keeps the credentials its export needs, and no export
+      // context exists yet.
+      assert.deepEqual(
+        await loadCatalogSetupContext(catalog.kv, shopDomain, setup.generation),
+        {
+          listingSourceId,
+          accessToken,
+          apiBaseUrl,
+          primaryLocale: "de",
+          currencyCode: "EUR",
+          shopDomain,
+        },
+      );
+      assert.equal(
+        await loadBackfillContext(catalog.kv, shopDomain, setup.generation),
+        null,
+      );
+    });
+  }
+
+  it("keeps importing again idempotent while the publication is awaited", async () => {
+    const catalog = catalogImports();
+    const shopify = settingUp(null);
+    assert.equal(await trigger(shopify.graphql, catalog), true);
+    const first = (await catalog.storage.get<CatalogSetupJob>("setup"))
+      ?.generation as number;
+    // "Import catalog again" retires the waiting generation and its context,
+    // and reuses the connection.
+    assert.equal(await trigger(shopify.graphql, catalog), true);
+    const second = (await catalog.storage.get<CatalogSetupJob>("setup"))
+      ?.generation as number;
+    assert.ok(second > first);
+    assert.equal(
+      await loadCatalogSetupContext(catalog.kv, shopDomain, first),
+      null,
+    );
+    assert.ok(await loadCatalogSetupContext(catalog.kv, shopDomain, second));
+    // Once Shopify returns the publication, importing again exports at once
+    // and ends the wait.
+    shopify.state.publication = { id: publicationId };
+    assert.equal(await trigger(shopify.graphql, catalog), true);
+    assert.equal(shopify.state.created, 1);
+    assert.equal(await catalog.storage.get("setup"), undefined);
+    assert.equal((await catalog.context())?.publicationId, publicationId);
+    assert.equal(
+      await loadCatalogSetupContext(catalog.kv, shopDomain, second),
+      null,
+    );
+    const status = await catalog.imports.status();
+    assert.equal(status?.phase, "queued");
+    assert.equal(status?.awaiting, undefined);
   });
 });
 

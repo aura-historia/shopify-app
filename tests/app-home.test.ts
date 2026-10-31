@@ -170,6 +170,81 @@ describe("Aura channel selection in the embedded home", () => {
     });
     assert.match(html, /Sales channel not found/);
   });
+  it("shows a new channel's publication as being prepared while the import awaits it", () => {
+    for (const state of ["missing_publication", "unavailable"]) {
+      const html = renderHome(null, "queued", {
+        publication: { state },
+        catalogImport: {
+          phase: "queued",
+          total: 0,
+          failed: 0,
+          awaiting: "CHANNEL_PUBLICATION",
+        },
+      });
+      assert.match(html, /Sales channel being prepared/);
+      assert.match(html, /starts automatically once Shopify returns it/);
+      assert.match(
+        html,
+        /It starts once Shopify returns the product selection/,
+      );
+      assert.doesNotMatch(html, /Sales channel not found/);
+      assert.doesNotMatch(html, /Catalog import needs attention/);
+      assert.doesNotMatch(html, /Initial product backfill was queued/);
+    }
+    // Shopify may return the selection to the page before the import's next
+    // check: the count is shown and the import still reports its wait.
+    const ready = renderHome(null, "queued", {
+      publication: {
+        state: "ready",
+        count: 2,
+        atLeast: false,
+        editorUrl:
+          "https://admin.shopify.com/store/example/bulk?edit=publications.1.published_at",
+      },
+      catalogImport: {
+        phase: "queued",
+        total: 0,
+        failed: 0,
+        awaiting: "CHANNEL_PUBLICATION",
+      },
+    });
+    assert.match(ready, /2 active products are published/);
+    assert.match(ready, /It starts once Shopify returns the product selection/);
+    assert.doesNotMatch(ready, /Sales channel being prepared/);
+  });
+  it("keeps missing access and a missing connection actionable while an import waits", () => {
+    for (const [state, heading] of [
+      ["missing_scope", /Shopify permission required/],
+      ["missing_channel", /Sales channel not set up/],
+    ] as const) {
+      const html = renderHome(null, "queued", {
+        publication: { state },
+        catalogImport: {
+          phase: "queued",
+          total: 0,
+          failed: 0,
+          awaiting: "CHANNEL_PUBLICATION",
+        },
+      });
+      assert.match(html, heading);
+      assert.doesNotMatch(html, /Sales channel being prepared/);
+    }
+  });
+  it("reports a publication Shopify never returned once the wait ended", () => {
+    const html = renderHome(null, "queued", {
+      publication: { state: "missing_publication" },
+      catalogImport: {
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "MISSING_PUBLICATION",
+      },
+    });
+    assert.match(html, /Sales channel not found/);
+    assert.match(html, /Catalog import needs attention/);
+    assert.match(html, /Import catalog again/);
+    assert.doesNotMatch(html, /Sales channel being prepared/);
+  });
   it("offers setup instead of product selection without a channel connection", () => {
     const html = renderHome(null, "not_queued", {
       publication: { state: "missing_channel" },

@@ -194,6 +194,7 @@ describe("release catalog behavior", () => {
       { withdrawn: -1 },
       { phase: "running" },
       { updatedAt: "yesterday" },
+      { awaiting: "PRIVATE_DIAGNOSTICS" },
     ]) {
       assert.equal(
         readCatalogImportStatus({
@@ -220,6 +221,43 @@ describe("release catalog behavior", () => {
     assert.equal(status?.eligible, 1);
     assert.equal(status?.withdrawn, 3);
     assert.equal(status?.error, "INCOMPLETE_EXPORT");
+  });
+  it("reports an import awaiting its channel publication only while it is queued", () => {
+    const awaiting = (minutes: number) =>
+      readCatalogImportStatus({
+        phase: "queued",
+        total: 0,
+        failed: 0,
+        awaiting: "CHANNEL_PUBLICATION",
+        updatedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
+      });
+    assert.equal(awaiting(1)?.phase, "queued");
+    assert.equal(awaiting(1)?.awaiting, "CHANNEL_PUBLICATION");
+    // A wait that never reported its outcome is a failure, not still waiting.
+    assert.equal(awaiting(61)?.phase, "failed");
+    assert.equal(awaiting(61)?.awaiting, undefined);
+    assert.equal(
+      readCatalogImportStatus({
+        phase: "failed",
+        total: 0,
+        failed: 0,
+        error: "MISSING_PUBLICATION",
+        awaiting: "CHANNEL_PUBLICATION",
+        updatedAt: new Date().toISOString(),
+      })?.awaiting,
+      undefined,
+    );
+    // Other progress keeps its exact shape.
+    assert.equal(
+      "awaiting" in
+        (readCatalogImportStatus({
+          phase: "queued",
+          total: 0,
+          failed: 0,
+          updatedAt: new Date().toISOString(),
+        }) ?? {}),
+      false,
+    );
   });
   it("reports interrupted background imports as failures after their processing window", () => {
     for (const [phase, minutes, expected] of [

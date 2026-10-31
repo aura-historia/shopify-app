@@ -4,22 +4,32 @@ import {
   type BulkOperationState,
   CATALOG_EXPORT_WINDOW_MS,
   CATALOG_IMPORT_WINDOW_MS,
+  CATALOG_SETUP_WINDOW_MS,
   type CatalogImportJob,
+  type CatalogSetupContext,
+  type CatalogSetupJob,
   cancelBulkOperation,
   catalogProgress,
+  catalogSetupDelay,
   clearBackfillContext,
   EXPORT_PLAN_VERSION,
   type GraphqlRequestFn,
   loadBackfillContext,
+  loadCatalogSetupContext,
   readBulkOperationState,
   runCatalogImportStep,
   SupersededImportError,
   storeBackfillContext,
+  submitBulkOperation,
 } from "../app/backfill.server";
 import {
+  awaitsChannelPublication,
   type CatalogImportError,
   type CatalogImportStatus,
+  CHANNEL_PUBLICATION_ERRORS,
+  type ChannelPublicationState,
   readCatalogImportStatus,
+  resolveChannelPublication,
 } from "../app/catalog.server";
 import type { CloudflareShopifyEnv } from "../app/shopify.server";
 
@@ -52,28 +62,32 @@ const resumable = (job: CatalogImportJob) =>
 // The importer is the authority over the shop's import generations. Starting
 // an import, disconnect, uninstall and connection replacement each retire the
 // current generation in one storage transaction before they are acknowledged.
-// Only the current generation can queue or admit its export, schedule the
-// alarm, submit batches or record progress, and each of those writes checks
-// the generation in the same transaction. A request already in flight when
-// its generation is retired completes or times out and is discarded; nothing
-// is resent for it. A batch Aura already admitted stays admitted.
+// Only the current generation can await its channel publication, queue or
+// admit its export, schedule the alarm, submit batches or record progress,
+// and each of those writes checks the generation in the same transaction. A
+// request already in flight when its generation is retired completes or
+// times out and is discarded; nothing is resent for it. A batch Aura already
+// admitted stays admitted.
 export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
-  // Retires the current generation with its job and alarm.
+  // Retires the current generation with its setup, job and alarm.
   private async advance(transaction: DurableObjectTransaction) {
     const retired = (await transaction.get<number>("generation")) ?? 0;
     // Generations stay unique even if storage were erased under an old alarm.
     const generation = Math.max(retired + 1, Date.now());
     await transaction.put("generation", generation);
+    await transaction.delete("setup");
     await transaction.delete("job");
     await transaction.deleteAlarm();
     return { retired, generation };
   }
 
-  // Ends the current generation's job with a failure the merchant retries.
+  // Ends the current generation's setup or job with a failure the merchant
+  // retries.
   private async end(
     transaction: DurableObjectTransaction,
     error: CatalogImportError,
   ) {
+    await transaction.delete("setup");
     await transaction.delete("job");
     await transaction.deleteAlarm();
     await transaction.put(
@@ -141,6 +155,8 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     const queued = await this.ctx.storage.transaction(async (transaction) => {
       if ((await transaction.get<number>("generation")) !== generation)
         return false;
+      // The generation's publication wait, if any, ends with its export.
+      await transaction.delete("setup");
       await transaction.put<CatalogImportJob>("job", {
         shop,
         generation,
@@ -168,6 +184,44 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     });
     if (!queued) await this.release(shop, generation);
     return queued;
+  }
+
+  // A current generation whose channel connection is set up, but whose
+  // publication Shopify did not return yet. Its credentials are stored first,
+  // as for an export, and the alarm checks the publication again within the
+  // setup window. `error` is what Shopify returned.
+  async awaitPublication(
+    generation: number,
+    context: CatalogSetupContext,
+    error: CatalogImportError,
+  ) {
+    const shop = context.shopDomain;
+    await storeBackfillContext(this.env.KV, shop, generation, context);
+    const waiting = await this.ctx.storage.transaction(async (transaction) => {
+      if ((await transaction.get<number>("generation")) !== generation)
+        return false;
+      await transaction.put<CatalogSetupJob>("setup", {
+        shop,
+        generation,
+        listingSourceId: context.listingSourceId,
+        since: Date.now(),
+        checks: 0,
+        error,
+      });
+      await transaction.put(
+        "status",
+        stamp({
+          phase: "queued",
+          total: 0,
+          failed: 0,
+          awaiting: "CHANNEL_PUBLICATION",
+        }),
+      );
+      await transaction.setAlarm(Date.now() + catalogSetupDelay(0));
+      return true;
+    });
+    if (!waiting) await this.release(shop, generation);
+    return waiting;
   }
 
   // A current generation that could not start its export.
@@ -317,7 +371,111 @@ export class CatalogImporter extends DurableObject<CloudflareShopifyEnv> {
     );
   }
 
+  // A generation awaiting its channel publication checks it again. It exports
+  // as soon as Shopify returns the publication, ends at once with missing
+  // access or a missing or foreign connection, and reports what Shopify last
+  // returned once its window closed. It never exports without the
+  // publication. A missing context is awaited like a failed read.
+  private async checkPublication(setup: CatalogSetupJob) {
+    const deadline = setup.since + CATALOG_SETUP_WINDOW_MS;
+    const context = await loadCatalogSetupContext(
+      this.env.KV,
+      setup.shop,
+      setup.generation,
+    ).catch(() => null);
+    const publication =
+      context?.listingSourceId === setup.listingSourceId
+        ? await resolveChannelPublication(
+            this.shopify(setup.shop),
+            setup.listingSourceId,
+          )
+        : null;
+    if (context && publication?.state === "ready")
+      return this.exportPublication(setup, context, publication.publicationId);
+    const state: ChannelPublicationState =
+      publication && publication.state !== "ready"
+        ? publication.state
+        : "unavailable";
+    const error = CHANNEL_PUBLICATION_ERRORS[state];
+    if (!awaitsChannelPublication(state) || Date.now() >= deadline) {
+      if (await this.fail(setup.generation, error))
+        console.warn(
+          `Backfill not submitted for ${setup.shop}: publication ${state} after ${setup.checks + 1} checks`,
+        );
+      return;
+    }
+    await this.ctx.storage.transaction(async (transaction) => {
+      const current = await transaction.get<CatalogSetupJob>("setup");
+      if (current?.generation !== setup.generation) return;
+      const checks = current.checks + 1;
+      await transaction.put<CatalogSetupJob>("setup", {
+        ...current,
+        checks,
+        error,
+      });
+      await transaction.setAlarm(
+        Math.min(Date.now() + catalogSetupDelay(checks), deadline),
+      );
+    });
+  }
+
+  // Submits the channel-filtered export once the publication is readable,
+  // exactly as an import that found it at once. A failed submission is
+  // reported, as it is there.
+  private async exportPublication(
+    setup: CatalogSetupJob,
+    context: CatalogSetupContext,
+    publicationId: string,
+  ) {
+    const failed = async (error: unknown) => {
+      console.error(
+        `Failed to submit backfill for ${setup.shop}:`,
+        (error instanceof Error ? error.message : String(error))
+          .replaceAll(context.accessToken, "[redacted]")
+          .replace(/\s+/g, " ")
+          .slice(0, 180),
+      );
+      await this.fail(setup.generation, "SHOPIFY_READ_FAILED");
+    };
+    // A generation retired during the check exports nothing.
+    if (
+      (await this.ctx.storage.get<CatalogSetupJob>("setup"))?.generation !==
+      setup.generation
+    )
+      return;
+    let bulkOperationId: string;
+    try {
+      bulkOperationId = await submitBulkOperation(
+        this.shopify(setup.shop),
+        publicationId,
+      );
+    } catch (error) {
+      return failed(error);
+    }
+    try {
+      // Retired during the submission, the export is discarded and its
+      // completion admits nothing.
+      if (
+        await this.queue(setup.generation, {
+          ...context,
+          bulkOperationId,
+          publicationId,
+          createdAt: new Date().toISOString(),
+        })
+      )
+        console.log(
+          `Backfill bulk operation submitted for ${setup.shop} after ${setup.checks + 1} publication checks: ${bulkOperationId}`,
+        );
+      else
+        console.warn(`Backfill for ${setup.shop} was retired before queueing`);
+    } catch (error) {
+      await failed(error);
+    }
+  }
+
   async alarm() {
+    const setup = await this.ctx.storage.get<CatalogSetupJob>("setup");
+    if (setup) return this.checkPublication(setup);
     const job = await this.ctx.storage.get<CatalogImportJob>("job");
     if (!job) return;
     if (!resumable(job)) {

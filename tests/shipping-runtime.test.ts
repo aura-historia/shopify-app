@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import type { AppLoadContext } from "react-router";
 import type {
   CatalogImportJob,
+  CatalogSetupJob,
   GraphqlRequestFn,
 } from "../app/backfill.server";
 import { buildAuraHistoriaOAuthAuthorizeUrl } from "../app/oauth.server";
@@ -210,9 +211,10 @@ function coordinatorRuntime<
     beforeRead: async () => {},
     afterRead: async () => {},
   };
-  // The installation's granted scopes for catalog reads and the catalog
-  // exports started through this coordinator.
-  const catalog = { scopes: [] as string[], exports: 0 };
+  // The installation's granted scopes for catalog reads, whether Shopify
+  // returns the channel's app catalog yet, and the catalog exports started
+  // through this coordinator.
+  const catalog = { scopes: [] as string[], ready: true, exports: 0 };
   class FixtureCoordinator extends ShopCoordinator {
     protected override async providerGraphql(
       _shop: string,
@@ -234,6 +236,7 @@ function coordinatorRuntime<
           {
             scopes: catalog.scopes,
             channel: boundChannel({ accountId: credentials.listingSourceId }),
+            ...(catalog.ready ? {} : { publication: null }),
           },
           variables,
         );
@@ -2604,6 +2607,62 @@ describe("catalog imports across the connection lifecycle", () => {
       } finally {
         globalThis.fetch = original;
       }
+    }
+  });
+
+  it("waits for a new channel's publication across uninstall and reinstall", async () => {
+    const runtime = connectionRuntime();
+    const original = globalThis.fetch;
+    globalThis.fetch = runtime.fetcher;
+    try {
+      runtime.catalog.scopes = grantedScopes;
+      // Shopify has not returned the new connection's app catalog yet (#405).
+      runtime.catalog.ready = false;
+      let params = await (await runtime.authorize("first"))();
+      assert.equal(params.get("oauth"), "connected");
+      assert.equal(params.get("backfill"), "queued");
+      const first = (await runtime.importerStorage.get<CatalogSetupJob>(
+        "setup",
+      )) as CatalogSetupJob;
+      assert.ok(first);
+      assert.equal(runtime.catalog.exports, 0);
+      let data = (await runtime.home()) as HomeData;
+      assert.deepEqual(data.publication, { state: "missing_publication" });
+      assert.equal(data.catalogImport?.awaiting, "CHANNEL_PUBLICATION");
+      // Uninstalling stops the wait in the webhook's first step.
+      await runtime.coordinator.disconnectShipping(shop, true);
+      runtime.kv.delete(getShopCredentialsStorageKey(shop));
+      assert.equal(await runtime.importerStorage.get("setup"), undefined);
+      assert.equal(runtime.importerStorage.alarm, null);
+      assert.equal(runtime.kv.has(contextKey(first.generation)), false);
+      runtime.catalog.ready = true;
+      await runtime.importer.alarm();
+      assert.equal(runtime.catalog.exports, 0);
+      // The reinstalled shop's connection waits as well, and exports its
+      // channel's selection once Shopify returns the catalog.
+      runtime.catalog.ready = false;
+      params = await (await runtime.authorize("second"))();
+      assert.equal(params.get("oauth"), "connected");
+      assert.equal(params.get("backfill"), "queued");
+      const second = (await runtime.importerStorage.get<CatalogSetupJob>(
+        "setup",
+      )) as CatalogSetupJob;
+      assert.ok(second.generation > first.generation);
+      runtime.catalog.ready = true;
+      await runtime.importer.alarm();
+      assert.equal(runtime.catalog.exports, 1);
+      assert.equal(
+        (await runtime.importerStorage.get<CatalogImportJob>("job"))
+          ?.generation,
+        second.generation,
+      );
+      assert.equal(token(runtime, second.generation), "aura-token-second");
+      data = (await runtime.home()) as HomeData;
+      assert.equal(data.publication?.state, "ready");
+      assert.equal(data.catalogImport?.phase, "queued");
+      assert.equal(data.catalogImport?.awaiting, undefined);
+    } finally {
+      globalThis.fetch = original;
     }
   });
 

@@ -299,6 +299,11 @@ export default function AppIndex() {
     catalogImport,
   } = useLoaderData<typeof loader>();
   const isConnected = integration.status === "connected";
+  // Shopify has not returned the new channel's product selection to the
+  // import yet; it starts on its own or reports why it cannot.
+  const awaitingPublication =
+    catalogImport?.phase === "queued" &&
+    catalogImport.awaiting === "CHANNEL_PUBLICATION";
   const catalogPhase =
     catalogImport?.phase ??
     (integration.backfill === "queued"
@@ -449,6 +454,18 @@ export default function AppIndex() {
                     then.
                   </s-paragraph>
                 </s-banner>
+              ) : awaitingPublication &&
+                (publication?.state === "missing_publication" ||
+                  publication?.state === "unavailable") ? (
+                <s-banner tone="info" heading="Sales channel being prepared">
+                  <s-paragraph>
+                    Shopify is still preparing the product selection of the Aura
+                    Historia sales channel. The catalog import starts
+                    automatically once Shopify returns it. If Shopify does not
+                    return it within 10 minutes, the import reports the issue
+                    here.
+                  </s-paragraph>
+                </s-banner>
               ) : publication?.state === "missing_publication" ? (
                 <s-banner tone="critical" heading="Sales channel not found">
                   <s-paragraph>
@@ -498,7 +515,11 @@ export default function AppIndex() {
                 </s-banner>
               )}
               {catalogPhase === "queued" && (
-                <s-paragraph>Initial product backfill was queued.</s-paragraph>
+                <s-paragraph>
+                  {awaitingPublication
+                    ? "The catalog import was queued. It starts once Shopify returns the product selection of the Aura Historia sales channel."
+                    : "Initial product backfill was queued."}
+                </s-paragraph>
               )}
               {catalogPhase === "processing" && (
                 <s-paragraph>
