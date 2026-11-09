@@ -25,9 +25,9 @@
     "@react-router/dev": "^7.18.4",
     "@react-router/fs-routes": "^7.18.4",
     "@react-router/node": "^7.18.4",
-    "@shopify/shopify-api": "^15.0.1",
-    "@shopify/shopify-app-react-router": "^4.0.0",
-    "@shopify/shopify-app-session-storage-kv": "^8.0.1",
+    "@shopify/shopify-api": "^15.1.1",
+    "@shopify/shopify-app-react-router": "^4.0.2",
+    "@shopify/shopify-app-session-storage-kv": "^8.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^7.18.4"
