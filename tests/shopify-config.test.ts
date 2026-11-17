@@ -51,6 +51,20 @@ describe("shopify.app.toml", () => {
         "product_listings/add",
         "product_listings/update",
         "product_listings/remove",
+      ]) {
+        const subscription = blocks.find((block) =>
+          block.includes(`"${topic}"`),
+        );
+        assert.ok(subscription);
+        assert.ok(
+          subscription.includes(
+            name.includes("prod")
+              ? 'uri = "https://api.aura-historia.com/v1/webhooks/shopify"'
+              : 'uri = "https://api.stage.aura-historia.com/v1/webhooks/shopify"',
+          ),
+        );
+      }
+      for (const topic of [
         "customers/data_request",
         "customers/redact",
         "shop/redact",
@@ -121,10 +135,10 @@ describe("shopify.app.toml", () => {
     }
   });
 
-  it("routes own-channel product listing topics to EventBridge", () => {
+  it("routes own-channel product listing topics to the stage Aura API webhook", () => {
     assert.match(
       appConfig,
-      /topics = \["product_listings\/add", "product_listings\/update", "product_listings\/remove"\]\s+uri = "arn:aws:events:eu-central-1::event-source\/aws\.partner\/shopify\.com\/359227195393\/aura-historia-backend-dev"/,
+      /topics = \["product_listings\/add", "product_listings\/update", "product_listings\/remove"\]\s+uri = "https:\/\/api\.stage\.aura-historia\.com\/v1\/webhooks\/shopify"/,
     );
   });
 

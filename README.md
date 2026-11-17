@@ -26,13 +26,13 @@ The **Aura Historia** app is a public, embedded Shopify sales-channel app. It le
 
 The app is free to install and use, with no charges or commissions. Shopify has already approved the app. Making it publicly visible in the Shopify App Store is a separate action planned for later.
 
-The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, advertised shipping imports, and uninstall cleanup. Amazon EventBridge routing and downstream catalog consumers are maintained separately.
+The app intentionally owns only the integration edge: authentication, merchant connection, initial catalog backfill, session storage, advertised shipping imports, and uninstall cleanup. The Aura Historia API and its downstream catalog consumers are maintained separately.
 
 | Shopify | Aura Historia |
 | --- | --- |
 | Merchant installs from Shopify App Store or Admin | Merchant authorizes Aura Historia from the embedded app |
 | Shopify supplies trusted shop context and OAuth approval | Connection metadata is stored in Cloudflare KV |
-| Product listing events for the Aura Historia channel are delivered to the configured EventBridge partner source | Products published to the channel are published for discovery |
+| Product listing events for the Aura Historia channel are delivered to the Aura Historia API over HTTPS | Products published to the channel are published for discovery |
 | Shopper continues to the merchant’s Shopify storefront | No checkout or merchant-of-record responsibility moves to Aura Historia |
 
 ## Architecture
@@ -44,7 +44,7 @@ flowchart LR
     I --> O[Aura Historia OAuth]
     O --> K[Cloudflare KV]
     S --> K
-    P[Shopify channel product listing events] --> E[Amazon EventBridge partner source]
+    P[Shopify channel product listing events] --> E[Aura Historia API webhook]
     E --> A[Aura Historia catalog consumers]
     I --> B[Initial catalog backfill]
     B --> A
@@ -78,7 +78,7 @@ flowchart LR
 
 | Topic | Destination | Purpose |
 | --- | --- | --- |
-| `product_listings/add`, `product_listings/update`, `product_listings/remove` | Aura Historia Amazon EventBridge partner source | Keep products published to the Aura Historia channel current; removal from the channel withdraws them |
+| `product_listings/add`, `product_listings/update`, `product_listings/remove` | Aura Historia API `POST /v1/webhooks/shopify`, signed with the app client secret | Keep products published to the Aura Historia channel current; removal from the channel withdraws them |
 | `customers/data_request`, `customers/redact`, `shop/redact` | Aura Historia Amazon EventBridge partner source | Required public-app privacy and compliance handling |
 | `profiles/create`, `profiles/update`, `profiles/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current shipping acquisition |
 | `markets/create`, `markets/update`, `markets/delete` | This app’s HTTPS `/webhooks/shipping` receiver | Durably schedule current acquisition of [market-driven shipping](#market-driven-shipping) |

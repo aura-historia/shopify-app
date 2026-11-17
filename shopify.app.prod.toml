@@ -17,7 +17,7 @@ api_version = "2026-10"
 
   [[webhooks.subscriptions]]
   topics = ["product_listings/add", "product_listings/update", "product_listings/remove"]
-  uri = "arn:aws:events:eu-central-1::event-source/aws.partner/shopify.com/359227195393/aura-historia-backend-prod"
+  uri = "https://api.aura-historia.com/v1/webhooks/shopify"
 
   [[webhooks.subscriptions]]
   topics = ["profiles/create", "profiles/update", "profiles/delete"]
