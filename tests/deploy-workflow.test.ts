@@ -60,7 +60,7 @@ describe("deploy workflow", () => {
   it("deploys and releases the production Shopify app with the tag version", () => {
     assert.match(
       deployWorkflow,
-      /SHOPIFY_APP_AUTOMATION_TOKEN: \$\{\{ secrets\.SHOPIFY_APP_AUTOMATION_TOKEN \}\}/,
+      /SHOPIFY_SERVICE_ACCOUNT_TOKEN: \$\{\{ secrets\.SHOPIFY_APP_AUTOMATION_TOKEN \}\}/,
     );
     assert.match(deployWorkflow, /app deploy/);
     assert.match(deployWorkflow, /--config=prod/);
